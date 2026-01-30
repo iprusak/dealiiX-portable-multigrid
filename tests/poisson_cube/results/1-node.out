@@ -536,3 +536,4 @@ The following modules were not unloaded:
 3: /p/home/jusers/prusak1/juwels/sw/dealii/lib/libdeal_II.so.9.8.0-pre(+0x1f4f7d7)[0x14f8ca7b87d7]
 3: [jwb0903:88810] *** End of error message ***
 srun: error: jwb0903: tasks 0-3: Aborted (core dumped)
+      
