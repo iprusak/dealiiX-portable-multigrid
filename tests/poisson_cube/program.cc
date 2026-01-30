@@ -49,7 +49,7 @@ namespace multigrid
   // range will not do any work.
   const unsigned int dimension      = 3;
   const unsigned int minimal_degree = 1;
-  const unsigned int maximal_degree = 9;
+  const unsigned int maximal_degree = 4;
   const double       wave_number    = 3.;
   const bool         deform_grid    = false;
 
@@ -706,6 +706,64 @@ namespace multigrid
         best_mvs = std::min(best_mvs, stat.max);
       }
 
+    std::vector<double> prolongate_per_level(level_matrices.max_level());
+    std::vector<double> restrict_per_level(level_matrices.max_level());
+
+    for (unsigned int level = 1; level <= level_matrices.max_level(); ++level)
+      {
+        prolongate_per_level[level - 1] = 1e10;
+        restrict_per_level[level - 1]   = 1e10;
+
+        LinearAlgebra::distributed::Vector<double, MemorySpace::Default>
+          vec_fine, vec_coarse;
+
+        level_matrices[level - 1]->initialize_dof_vector(vec_coarse);
+        level_matrices[level]->initialize_dof_vector(vec_fine);
+
+        for (unsigned int i = 0; i < 5; ++i)
+          {
+            const unsigned int n_mv =
+              dof_handler.n_dofs() < 10000000 ? 200 : 50;
+
+            Kokkos::fence();
+            time.restart();
+
+            for (unsigned int i = 0; i < n_mv; ++i)
+              mg_transfers[level]->prolongate_and_add(vec_fine, vec_coarse);
+
+            Kokkos::fence();
+
+            Utilities::MPI::MinMaxAvg stat =
+              Utilities::MPI::min_max_avg(time.wall_time() / n_mv,
+                                          MPI_COMM_WORLD);
+
+            prolongate_per_level[level - 1] =
+              std::min(prolongate_per_level[level - 1], stat.max);
+          }
+
+
+        for (unsigned int i = 0; i < 5; ++i)
+          {
+            const unsigned int n_mv =
+              dof_handler.n_dofs() < 10000000 ? 200 : 50;
+
+            Kokkos::fence();
+            time.restart();
+
+            for (unsigned int i = 0; i < n_mv; ++i)
+              mg_transfers[level]->restrict_and_add(vec_coarse, vec_fine);
+
+            Kokkos::fence();
+
+            Utilities::MPI::MinMaxAvg stat =
+              Utilities::MPI::min_max_avg(time.wall_time() / n_mv,
+                                          MPI_COMM_WORLD);
+
+            restrict_per_level[level - 1] =
+              std::min(restrict_per_level[level - 1], stat.max);
+          }
+      }
+
     if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
       std::cout << "Best timings for ndof = " << dof_handler.n_dofs()
                 << "   mv " << best_mv << "    mv smooth " << best_mvs
@@ -719,6 +777,21 @@ namespace multigrid
     convergence_table.add_value("cg_time", time_cg);
     convergence_table.add_value("cg_its", cg_details.first);
     convergence_table.add_value("cg_reduction", cg_details.second);
+
+    if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+      for (unsigned int level = 1; level <= level_matrices.max_level(); level++)
+        {
+          // convergence_table.add_value("restrict_L_" + std::to_string(level),
+          //                             restrict_per_level[level - 1]);
+          // convergence_table.add_value("prolong_L_" + std::to_string(level),
+          //                             restrict_per_level[level - 1]);
+
+          std::cout << "Best timings for ndof = " << dof_handler.n_dofs()
+                    << "   on level " << level
+                    << "|  restriction = " << restrict_per_level[level - 1]
+                    << "   prolongation  =  " << prolongate_per_level[level - 1]
+                    << std::endl;
+        }
   }
 
   template <int dim, int fe_degree>
@@ -825,23 +898,43 @@ namespace multigrid
 
         solve(n_pre_smooth, n_post_smooth);
         pcout << std::endl;
-      }
 
 
-    if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-      {
-        convergence_table.set_scientific("mv_outer", true);
-        convergence_table.set_precision("mv_outer", 3);
-        convergence_table.set_scientific("mv_inner", true);
-        convergence_table.set_precision("mv_inner", 3);
-        convergence_table.set_scientific("cg_reduction", true);
-        convergence_table.set_precision("cg_reduction", 3);
-        convergence_table.set_scientific("cg_time", true);
-        convergence_table.set_precision("cg_time", 3);
+        if (cycle >= 10)
+          if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+            {
+              convergence_table.set_scientific("mv_outer", true);
+              convergence_table.set_precision("mv_outer", 3);
+              convergence_table.set_scientific("mv_inner", true);
+              convergence_table.set_precision("mv_inner", 3);
+              convergence_table.set_scientific("cg_reduction", true);
+              convergence_table.set_precision("cg_reduction", 3);
+              convergence_table.set_scientific("cg_time", true);
+              convergence_table.set_precision("cg_time", 3);
 
-        convergence_table.write_text(std::cout);
+              // for (unsigned int level = 1; level <=
+              // level_matrices.max_level();
+              //      level++)
+              //   {
+              //     convergence_table.set_scientific("restrict_L_" +
+              //                                        std::to_string(level),
+              //                                      true);
+              //     convergence_table.set_precision("restrict_L_" +
+              //                                       std::to_string(level),
+              //                                     3);
 
-        std::cout << std::endl << std::endl;
+              //     convergence_table.set_scientific("prolong_L_" +
+              //                                        std::to_string(level),
+              //                                      true);
+              //     convergence_table.set_precision("prolong_L_" +
+              //                                       std::to_string(level),
+              //                                     3);
+              //   }
+
+              convergence_table.write_text(std::cout);
+
+              std::cout << std::endl << std::endl;
+            }
       }
   }
   template <int dim, int min_degree, int max_degree>
