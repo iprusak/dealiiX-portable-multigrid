@@ -790,24 +790,6 @@ namespace Portable
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
         &src) const override;
 
-    // void
-    // update_ghost_values(
-    //   const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-    //     &vec) const;
-
-    // void
-    // compress(
-    //   LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &vec,
-    //   const VectorOperation::values op) const;
-
-
-
-    // void
-    // zero_out_ghost_values(
-    //   const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-    //     &vec) const;
-        &src) const override;
-
     void
     setup_weights();
 
@@ -829,6 +811,8 @@ namespace Portable
 
     const unsigned int mg_level_coarse = numbers::invalid_unsigned_int;
     const unsigned int mg_level_fine   = numbers::invalid_unsigned_int;
+
+
 
     dealii::internal::MatrixFreeFunctions::
       ConstraintInfo<dim, VectorizedArray<number, 1>, types::global_dof_index>
