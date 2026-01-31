@@ -143,6 +143,8 @@ def plot_performance_cg_time(dataframes, y_column='cg_time'):
                      marker='o', label=f'DOFs: {dof:,}')
 
     plt.xscale('log', base=2)
+    plt.yscale('log', base=2)
+
     plt.xlabel('Number of GPUs')
     plt.ylabel('Time (s)')
     plt.ylim(0, 4)
@@ -169,6 +171,8 @@ def plot_performance_matvec(dataframes, y_column='mv_outer'):
                      marker='o', label=f'DOFs: {dof:,}')
 
     plt.xscale('log', base=2)
+    plt.yscale('log', base=2)
+
     plt.xlabel('Number of GPUs')
     plt.ylabel('Time (ms)')
     plt.ylim(0,25)
