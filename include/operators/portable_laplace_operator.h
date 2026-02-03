@@ -431,6 +431,19 @@ namespace Portable
     const std::shared_ptr<const Utilities::MPI::Partitioner> &
     get_vector_partitioner() const override;
 
+    void
+    vmult(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+          const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                    &src,
+          const bool ghost_exchange_on,
+          const bool computation_on) const override
+    {
+      (void)dst;
+      (void)src;
+      (void)ghost_exchange_on;
+      (void)computation_on;
+    }
+
   private:
     using TeamHandle = Kokkos::TeamPolicy<
       MemorySpace::Default::kokkos_space::execution_space>::member_type;
