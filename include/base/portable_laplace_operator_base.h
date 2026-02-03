@@ -25,7 +25,11 @@ namespace Portable
             &src) const = 0;
 
     virtual void
+<<<<<<< HEAD
     vmult_dummy(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+=======
+    vmult(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+>>>>>>> e365cf7 (dummy matvec product to measure ghost exchange timing)
           const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
                     &src,
           const bool ghost_exchange_on,
