@@ -809,8 +809,6 @@ namespace Portable
     const unsigned int mg_level_coarse = numbers::invalid_unsigned_int;
     const unsigned int mg_level_fine   = numbers::invalid_unsigned_int;
 
-
-
     dealii::internal::MatrixFreeFunctions::
       ConstraintInfo<dim, VectorizedArray<number, 1>, types::global_dof_index>
         constraint_info_fine;
