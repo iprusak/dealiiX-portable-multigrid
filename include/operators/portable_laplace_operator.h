@@ -8,8 +8,11 @@
 #include <memory>
 
 #include "base/portable_laplace_operator_base.h"
+<<<<<<< HEAD
 #include "operators/portable_laplace_operator_quad.h"
-#include "operators/portable_laplace_operator_quad.h"
+=======
+#include "kernels/bk3_kokkos_kernel.h"
+>>>>>>> a815055 (add BK3 kernel)
 
 DEAL_II_NAMESPACE_OPEN
 
@@ -444,7 +447,12 @@ namespace Portable
       (void)computation_on;
     }
 
+    void
+    compute_G_tensors();
+
   private:
+    using ExecutionSpace =
+      dealii::MemorySpace::Default::kokkos_space::execution_space;
     using TeamHandle = Kokkos::TeamPolicy<
       MemorySpace::Default::kokkos_space::execution_space>::member_type;
     using ViewValues = Kokkos::View<
