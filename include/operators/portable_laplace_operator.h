@@ -8,7 +8,11 @@
 #include <memory>
 
 #include "base/portable_laplace_operator_base.h"
+<<<<<<< HEAD
 #include "operators/portable_laplace_operator_quad.h"
+=======
+#include "kernels/bk3_kokkos_kernel.h"
+>>>>>>> 768ee08 (add BK3 kernel)
 
 DEAL_II_NAMESPACE_OPEN
 
@@ -382,7 +386,12 @@ namespace Portable
       const bool ghost_exchange_on,
       const bool computation_on) const override;
 
+    void
+    compute_G_tensors();
+
   private:
+    using ExecutionSpace =
+      dealii::MemorySpace::Default::kokkos_space::execution_space;
     using TeamHandle = Kokkos::TeamPolicy<
       MemorySpace::Default::kokkos_space::execution_space>::member_type;
     using ViewValues = Kokkos::View<
@@ -463,21 +472,6 @@ namespace Portable
     setup_dof_indices_per_color();
   }
 
-  template <int dim, int fe_degree, typename number>
-  void
-  LaplaceOperator<dim, fe_degree, number>::vmult(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
-    const
-  {
-    dst = 0.;
-
-    LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
-
-    this->cell_loop(cell_operator, src, dst);
-
-    matrix_free.copy_constrained_values(src, dst);
-  }
 
 
 
