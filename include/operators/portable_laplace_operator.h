@@ -177,6 +177,7 @@ namespace Portable
 
     // 1. read dof values
     {
+<<<<<<< HEAD
       Kokkos::parallel_for(Kokkos::TeamThreadRange(data->team_member,
                                                    n_local_dofs),
                            [&](const int &i) {
@@ -186,6 +187,17 @@ namespace Portable
                              else
                                values(i) = src[data->dof_indices(i, cell_id)];
                            });
+=======
+      Kokkos::parallel_for(
+        Kokkos::TeamThreadRange(data->team_member, n_local_dofs),
+        [&](const int &i) {
+          if (data->dirichlet_boundary_dofs_mask(i, cell_id) ==
+              numbers::invalid_unsigned_int)
+            values(i) = 0.;
+          else
+            values(i) = src[data->dirichlet_boundary_dofs_mask(i, cell_id)];
+        });
+>>>>>>> 0fc2062 (fix dof indices mask in the Laplace operator to account for the MPI partition)
 
       data->team_member.team_barrier();
     }
@@ -301,6 +313,7 @@ namespace Portable
     // 7.distribute dofs
     {
       if (precomputed_data.use_coloring)
+<<<<<<< HEAD
         Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member, n_local_dofs),
                              [&](const int &i) {
                                if (data->dof_indices(i, cell_id) !=
@@ -308,13 +321,29 @@ namespace Portable
                                  dst[data->dof_indices(i, cell_id)] +=
                                    values(i);
                              });
+=======
+        Kokkos::parallel_for(
+          Kokkos::TeamThreadRange(team_member, n_local_dofs),
+          [&](const int &i) {
+            if (data->dirichlet_boundary_dofs_mask(i, cell_id) !=
+                numbers::invalid_unsigned_int)
+              dst[data->dirichlet_boundary_dofs_mask(i, cell_id)] += values(i);
+          });
+>>>>>>> 0fc2062 (fix dof indices mask in the Laplace operator to account for the MPI partition)
       else
         Kokkos::parallel_for(
           Kokkos::TeamThreadRange(team_member, n_local_dofs),
           [&](const int &i) {
+<<<<<<< HEAD
             if (data->dof_indices(i, cell_id) != numbers::invalid_unsigned_int)
               Kokkos::atomic_add(&dst[data->dof_indices(i, cell_id)],
                                  values(i));
+=======
+            if (data->dirichlet_boundary_dofs_mask(i, cell_id) !=
+                numbers::invalid_unsigned_int)
+              Kokkos::atomic_add(
+                &dst[data->dirichlet_boundary_dofs_mask(i, cell_id)], values(i));
+>>>>>>> 0fc2062 (fix dof indices mask in the Laplace operator to account for the MPI partition)
           });
     }
   }
