@@ -765,7 +765,6 @@ namespace Portable
 
   template <int dim, int fe_degree, typename number>
   class GeometricTransfer : public internal::GeometricTransferCore<dim, number>
-  class GeometricTransfer : public internal::GeometricTransferCore<dim, number>
   {
   public:
     GeometricTransfer();
@@ -781,7 +780,6 @@ namespace Portable
     prolongate_and_add_internal(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-        &src) const override;
         &src) const override;
 
     void
