@@ -338,7 +338,8 @@ namespace Portable
             if (data->dirichlet_boundary_dofs_mask(i, cell_id) !=
                 numbers::invalid_unsigned_int)
               Kokkos::atomic_add(
-                &dst[data->dirichlet_boundary_dofs_mask(i, cell_id)], values(i));
+                &dst[data->dirichlet_boundary_dofs_mask(i, cell_id)],
+                values(i));
           });
     }
   }
@@ -510,11 +511,8 @@ namespace Portable
               {
                 auto triacell = graph[cell_id];
 
-                typename DoFHandler<dim>::cell_iterator cell(
-                  &(dof_handler.get_triangulation()),
-                  triacell->level(),
-                  triacell->index(),
-                  &dof_handler);
+                typename DoFHandler<dim>::cell_iterator cell =
+                  triacell->as_dof_handler_iterator(dof_handler);
 
                 cell->get_dof_indices(local_dof_indices);
 
@@ -782,4 +780,3 @@ namespace Portable
 DEAL_II_NAMESPACE_CLOSE
 
 #endif
-

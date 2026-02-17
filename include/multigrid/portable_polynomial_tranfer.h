@@ -1327,11 +1327,8 @@ namespace Portable
                 {
                   auto triacell = graph[cell_id];
 
-                  typename DoFHandler<dim>::cell_iterator cell(
-                    &(dof_handler_coarse.get_triangulation()),
-                    triacell->level(),
-                    triacell->index(),
-                    &dof_handler_coarse);
+                  typename DoFHandler<dim>::cell_iterator cell =
+                    triacell->as_dof_handler_iterator(dof_handler_coarse);
 
                   cell->get_dof_indices(local_dof_indices_coarse);
 
@@ -1398,11 +1395,8 @@ namespace Portable
                 {
                   auto triacell = graph[cell_id];
 
-                  typename DoFHandler<dim>::cell_iterator cell(
-                    &(dof_handler_fine.get_triangulation()),
-                    triacell->level(),
-                    triacell->index(),
-                    &dof_handler_fine);
+                  typename DoFHandler<dim>::cell_iterator cell =
+                    triacell->as_dof_handler_iterator(dof_handler_fine);
 
                   cell->get_dof_indices(local_dof_indices_fine);
 
