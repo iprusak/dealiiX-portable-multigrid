@@ -35,7 +35,7 @@ namespace Portable
     const typename MatrixFree<dim, number>::PrecomputedData &precomputed_data;
 
     const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
-      &dirichlet_boundary_dofs_mask;
+      &dof_indices;
 
     /**
      * Memory for dof and quad values.
@@ -75,13 +75,13 @@ namespace Portable
       Functor                                                 func,
       const typename MatrixFree<dim, number>::PrecomputedData precomputed_data,
       const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
-        dirichlet_boundary_dofs_mask,
+        dof_indices,
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
                                                                        &src,
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst)
       : func(func)
       , precomputed_data(precomputed_data)
-      , dirichlet_boundary_dofs_mask(dirichlet_boundary_dofs_mask)
+      , dof_indices(dof_indices)
       , src(src.get_values(), src.locally_owned_size())
       , dst(dst.get_values(), dst.locally_owned_size())
     {}
@@ -91,7 +91,7 @@ namespace Portable
     const typename MatrixFree<dim, number>::PrecomputedData precomputed_data;
 
     const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
-      dirichlet_boundary_dofs_mask;
+      dof_indices;
 
     const DeviceVector<number> src;
     DeviceVector<number>       dst;
@@ -127,7 +127,7 @@ namespace Portable
                                  Functor::n_q_points,
                                  cell_index,
                                  precomputed_data,
-                                 dirichlet_boundary_dofs_mask,
+                                 dof_indices,
                                  values,
                                  gradients,
                                  scratch_pad};
@@ -200,15 +200,15 @@ namespace Portable
 
     // 1. read dof values
     {
-      Kokkos::parallel_for(
-        Kokkos::TeamThreadRange(data->team_member, n_local_dofs),
-        [&](const int &i) {
-          if (data->dirichlet_boundary_dofs_mask(i, cell_id) ==
-              numbers::invalid_unsigned_int)
-            values(i) = 0.;
-          else
-            values(i) = src[data->dirichlet_boundary_dofs_mask(i, cell_id)];
-        });
+      Kokkos::parallel_for(Kokkos::TeamThreadRange(data->team_member,
+                                                   n_local_dofs),
+                           [&](const int &i) {
+                             if (data->dof_indices(i, cell_id) ==
+                                 numbers::invalid_unsigned_int)
+                               values(i) = 0.;
+                             else
+                               values(i) = src[data->dof_indices(i, cell_id)];
+                           });
 
       data->team_member.team_barrier();
     }
@@ -324,22 +324,20 @@ namespace Portable
     // 7.distribute dofs
     {
       if (precomputed_data.use_coloring)
-        Kokkos::parallel_for(
-          Kokkos::TeamThreadRange(team_member, n_local_dofs),
-          [&](const int &i) {
-            if (data->dirichlet_boundary_dofs_mask(i, cell_id) !=
-                numbers::invalid_unsigned_int)
-              dst[data->dirichlet_boundary_dofs_mask(i, cell_id)] += values(i);
-          });
+        Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member, n_local_dofs),
+                             [&](const int &i) {
+                               if (data->dof_indices(i, cell_id) !=
+                                   numbers::invalid_unsigned_int)
+                                 dst[data->dof_indices(i, cell_id)] +=
+                                   values(i);
+                             });
       else
         Kokkos::parallel_for(
           Kokkos::TeamThreadRange(team_member, n_local_dofs),
           [&](const int &i) {
-            if (data->dirichlet_boundary_dofs_mask(i, cell_id) !=
-                numbers::invalid_unsigned_int)
-              Kokkos::atomic_add(
-                &dst[data->dirichlet_boundary_dofs_mask(i, cell_id)],
-                values(i));
+            if (data->dof_indices(i, cell_id) != numbers::invalid_unsigned_int)
+              Kokkos::atomic_add(&dst[data->dof_indices(i, cell_id)],
+                                 values(i));
           });
     }
   }
@@ -372,7 +370,7 @@ namespace Portable
     compute_diagonal() override;
 
     void
-    setup_dirichlet_boundary_dofs_masks();
+    setup_dof_indices_per_color();
 
     std::shared_ptr<DiagonalMatrix<
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
@@ -429,7 +427,7 @@ namespace Portable
 
     std::vector<
       Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>>
-      dirichlet_boundary_dofs_masks;
+      dof_indices_per_color;
   };
 
   template <int dim, int fe_degree, typename number>
@@ -453,12 +451,12 @@ namespace Portable
     matrix_free.reinit(
       mapping, dof_handler, constraints, quadrature_1d, additional_data);
 
-    setup_dirichlet_boundary_dofs_masks();
+    setup_dof_indices_per_color();
   }
 
   template <int dim, int fe_degree, typename number>
   void
-  LaplaceOperator<dim, fe_degree, number>::setup_dirichlet_boundary_dofs_masks()
+  LaplaceOperator<dim, fe_degree, number>::setup_dof_indices_per_color()
   {
     dealii::MemorySpace::Default::kokkos_space::execution_space exec_space;
     const auto        &colored_graph = matrix_free.get_colored_graph();
@@ -478,8 +476,8 @@ namespace Portable
       lex_numbering = shape_info.lexicographic_numbering;
     }
 
-    this->dirichlet_boundary_dofs_masks.clear();
-    this->dirichlet_boundary_dofs_masks.resize(n_colors);
+    this->dof_indices_per_color.clear();
+    this->dof_indices_per_color.resize(n_colors);
 
     std::vector<types::global_dof_index> local_dof_indices(n_local_dofs);
     std::vector<types::global_dof_index> subdomain_local_dof_indices(
@@ -495,16 +493,15 @@ namespace Portable
 
             const auto &graph = colored_graph[color];
 
-            this->dirichlet_boundary_dofs_masks[color] =
+            this->dof_indices_per_color[color] =
               Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>(
-                Kokkos::view_alloc("dirichlet_boundary_dofs_" +
-                                     std::to_string(color),
+                Kokkos::view_alloc("dof_indices_" + std::to_string(color),
                                    Kokkos::WithoutInitializing),
                 n_local_dofs,
                 mf_data.n_cells);
 
-            auto boundary_dofs_mask_host = Kokkos::create_mirror_view(
-              this->dirichlet_boundary_dofs_masks[color]);
+            auto boundary_dofs_mask_host =
+              Kokkos::create_mirror_view(this->dof_indices_per_color[color]);
 
 
             for (unsigned int cell_id = 0; cell_id < mf_data.n_cells; ++cell_id)
@@ -537,7 +534,7 @@ namespace Portable
               }
 
             Kokkos::deep_copy(exec_space,
-                              this->dirichlet_boundary_dofs_masks[color],
+                              this->dof_indices_per_color[color],
                               boundary_dofs_mask_host);
             Kokkos::fence();
           }
@@ -590,7 +587,7 @@ namespace Portable
           ApplyCellKernel<dim, number, Functor> apply_kernel(
             cell_operator,
             gpu_data,
-            this->dirichlet_boundary_dofs_masks[color],
+            this->dof_indices_per_color[color],
             src,
             dst);
 
@@ -648,7 +645,7 @@ namespace Portable
                 ApplyCellKernel<dim, number, Functor> apply_kernel(
                   cell_operator,
                   gpu_data,
-                  this->dirichlet_boundary_dofs_masks[color],
+                  this->dof_indices_per_color[color],
                   src,
                   dst);
 
