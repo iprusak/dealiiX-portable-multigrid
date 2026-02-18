@@ -157,7 +157,7 @@ namespace multigrid
 
     const unsigned int refinement_cycles = 10;
 
-    const bool overlap_communication_computation = true;
+    const bool overlap_communication_computation = false;
 
     double setup_time;
 
