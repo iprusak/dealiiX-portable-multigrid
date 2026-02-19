@@ -453,7 +453,7 @@ LaplaceProblem<dim, fe_degree, mg_levels>::run()
         }
       else
         {
-          triangulation.refine_global(  1);
+          triangulation.refine_global(1);
         }
 
       setup_system();
