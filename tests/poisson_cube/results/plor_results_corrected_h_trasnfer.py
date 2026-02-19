@@ -1,11 +1,14 @@
 import pandas as pd
 import io
 import matplotlib.pyplot as plt
-from matplotlib.ticker import LogLocator, LogFormatterMathtext,LogFormatterSciNotation, FixedLocator, FixedFormatter
+from matplotlib.ticker import LogLocator, LogFormatterMathtext, LogFormatterSciNotation, FixedLocator, FixedFormatter
 import numpy as np
+import matplotlib.ticker as ticker
+
 
 # Your raw data string
-data_1_node = """cells    dofs    mv_outer  mv_inner   cg_time  cg_its cg_reduction 
+data_1_node = """
+    cells    dofs    mv_outer  mv_inner   cg_time  cg_its cg_reduction 
 0:     256     18513 2.564e-04 2.561e-04 8.632e-02      7    4.083e-02 
 0:     512     35937 2.579e-04 2.576e-04 9.721e-02      7    3.992e-02 
 0:    1024     70785 2.588e-04 2.575e-04 9.904e-02      7    4.132e-02 
@@ -122,7 +125,7 @@ data_32_node = """cells      dofs    mv_outer  mv_inner   cg_time  cg_its cg_red
   0: 33554432 2152730625 1.128e-02 1.087e-02 1.700e+00      7    4.591e-02
 """
 
-data_64_node="""cells      dofs    mv_outer  mv_inner   cg_time  cg_its cg_reduction 
+data_64_node = """cells      dofs    mv_outer  mv_inner   cg_time  cg_its cg_reduction 
   0:      256      18513 6.785e-04 6.607e-04 1.744e-01      7    4.083e-02 
   0:      512      35937 9.498e-04 9.474e-04 2.491e-01      7    3.992e-02 
   0:     1024      70785 9.801e-04 9.786e-04 2.929e-01      7    4.132e-02 
@@ -158,17 +161,43 @@ def plot_performance_cg_time(dataframes, y_column='cg_time'):
 
     df_filtered = df[df['dofs'] > 10000000]
 
+    fig, ax = plt.subplots()
+
     for dof, group in df_filtered.groupby('dofs'):
         group = group.sort_values('gpus')
 
         if len(group) >= 1:
-            plt.plot(group['gpus'], group[y_column],
-                     marker='o', label=f'DOFs: {dof:,}')
+            ax.plot(group['gpus'], group[y_column],
+                    marker='o', label=f'DOFs: {dof:,}')
 
-    plt.xscale('log', base=2)
-    plt.yscale('log', base=2)
-    # plt.gca().yaxis.set_major_locator( LogLocator(base=10))
-    plt.gca().yaxis.set_major_formatter(LogFormatterMathtext(base=10))
+    gpu_counts = [4, 8, 16, 32, 64, 128, 256]
+
+    ax.set_xscale('log', base=2)
+    plt.yscale('symlog', base=2, linthresh=0.1)
+
+    ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+
+    ax.set_xticks(gpu_counts)
+    ax.set_xticklabels([str(g) for g in gpu_counts])
+
+    ax.set_xlabel('Number of GPUs')
+    ax.set_ylabel('Time (s)')
+    ax.grid(True, which="both", linestyle='--', alpha=0.7)
+    ax.set_title("CG time")
+
+    plt.legend(
+        title="Problem Size",
+        fontsize=12,
+        loc='lower left',
+        bbox_to_anchor=(0.01, 0.01),
+        borderaxespad=0,
+        ncol=3)
+
+    # plt.xscale('log', base=2)
+    # plt.yscale('log', base=2)
+    # # plt.gca().yaxis.set_major_locator( LogLocator(base=10))
+    # plt.gca().yaxis.set_major_formatter(LogFormatterMathtext(base=10))
     # Locator: base 10, but allow "subs" (multiples) 1 through 9
     # plt.gca().yaxis.set_major_locator(LogLocator(base=10.0, subs=range(1,10)))
     # Formatter: base 10, and labelOnlyBase=False ensures 2x10^1 etc get text
@@ -178,21 +207,30 @@ def plot_performance_cg_time(dataframes, y_column='cg_time'):
 
     # plt.gca().yaxis.set_minor_formatter(LogFormatterSciNotation(base=10.0, labelOnlyBase=False))
 
-    y_ticks = np.array([0.5, 1, 2])
+    # y_ticks = np.array([0.5, 1, 2])
 
-    plt.gca().yaxis.set_major_locator(FixedLocator(y_ticks))
-    plt.gca().yaxis.set_major_formatter(FixedFormatter(y_ticks))
+    # plt.gca().yaxis.set_major_locator(FixedLocator(y_ticks))
+    # plt.gca().yaxis.set_major_formatter(FixedFormatter(y_ticks))
 
-    plt.xlabel('Number of GPUs')
-    plt.ylabel('Time (s)')
-    plt.ylim(0, 4)
-    gpu_counts = [4, 8, 16, 32, 64, 128, 256]
-    plt.xticks(gpu_counts, labels=[str(g) for g in gpu_counts])
-    plt.legend(title="Problem Size")
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.title("CG time")
-    plt.tight_layout()
-    # plt.show()
+    # plt.xlabel('Number of GPUs')
+    # plt.ylabel('Time (s)')
+    # plt.ylim(0, 4)
+    # gpu_counts = [4, 8, 16, 32, 64, 128, 256]
+    # plt.xticks(gpu_counts, labels=[str(g) for g in gpu_counts])
+    # plt.legend(title="Problem Size")
+    # plt.grid(True, linestyle='--', alpha=0.7)
+    # plt.title("CG time")
+    # # plt.tight_layout()
+
+    # plt.legend(
+    #     title="Problem Size",
+    #     fontsize=12,
+    #     loc='lower left',
+    #     bbox_to_anchor=(0.01, 0.01),  # Moves legend outside to the right
+    #     borderaxespad=0,
+    #     ncol=3                    # Increase to 2 if you have many DOFs
+    # )
+    # # plt.show()
 
 
 def plot_performance_matvec(dataframes, y_column='mv_outer'):
@@ -201,28 +239,38 @@ def plot_performance_matvec(dataframes, y_column='mv_outer'):
 
     df_filtered = df[df['dofs'] > 10000000]
 
+    fig, ax = plt.subplots()
+
     for dof, group in df_filtered.groupby('dofs'):
         group = group.sort_values('gpus')
 
         if len(group) >= 1:
-            plt.plot(group['gpus'], group[y_column]*1000,
-                     marker='o', label=f'DOFs: {dof:,}')
+            ax.plot(group['gpus'], group[y_column]*1000,
+                    marker='o', label=f'DOFs: {dof:,}')
 
-    plt.xscale('log', base=2)
-    plt.yscale('log', base=2)
-
-    plt.xlabel('Number of GPUs')
-    plt.ylabel('Time (ms)')
-    plt.ylim(0,25)
     gpu_counts = [4, 8, 16, 32, 64, 128, 256]
-    # plt.gca().yaxis.set_major_locator( LogLocator(base=10))
-    # plt.gca().yaxis.set_major_formatter(LogFormatterMathtext(base=10))
-    plt.xticks(gpu_counts, labels=[str(g) for g in gpu_counts])
-    plt.legend(title="Problem Size")
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.title("Matvec time")
-    plt.tight_layout()
-    # plt.show()
+
+    ax.set_xscale('log', base=2)
+    plt.yscale('symlog', base=2, linthresh=0.1)
+
+    ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+
+    ax.set_xticks(gpu_counts)
+    ax.set_xticklabels([str(g) for g in gpu_counts])
+
+    ax.set_xlabel('Number of GPUs')
+    ax.set_ylabel('Time (ms)')
+    ax.grid(True, which="both", linestyle='--', alpha=0.7)
+    ax.set_title("Matvec time")
+
+    plt.legend(
+        title="Problem Size",
+        fontsize=12,
+        loc='lower left',
+        bbox_to_anchor=(0.01, 0.01),
+        borderaxespad=0,
+        ncol=3)
 
 
 def plot_parallel_efficiency(dataframes):
@@ -230,23 +278,23 @@ def plot_parallel_efficiency(dataframes):
     df = pd.concat(dataframes, ignore_index=True)
 
     df_filtered = df[df['dofs'] > 10000000].copy()
-    
+
     for dof, group in df_filtered.groupby('dofs'):
         group = group.sort_values('gpus')
-        
+
         t_ref = group['mv_outer'].iloc[0]
         p_ref = group['gpus'].iloc[0]
-        
-        efficiency = (t_ref / group['mv_outer']) / (group['gpus'] / p_ref)
-        
-        print(f"efficiency ({dof} dofs): {efficiency}")
-        plt.plot(group['gpus'], efficiency * 100, marker='s', label=f'DOFs: {dof:,}')
 
+        efficiency = (t_ref / group['mv_outer']) / (group['gpus'] / p_ref)
+
+        print(f"efficiency ({dof} dofs): {efficiency}")
+        plt.plot(group['gpus'], efficiency * 100,
+                 marker='s', label=f'DOFs: {dof:,}')
 
     # Formatting
     plt.xscale('log', base=2)
     gpu_counts = [4, 8, 16, 32, 64, 128]
-    
+
     plt.xticks(gpu_counts, labels=[str(g) for g in gpu_counts])
     plt.ylim(0, 110)
     plt.xlabel('Number of GPUs')
@@ -269,7 +317,6 @@ df_32_node = parse_solver_table(data_32_node, 32)
 df_64_node = parse_solver_table(data_64_node, 64)
 
 
-
 # print(df_1_node)
 # print(df_2_node)
 # print(df_4_node)
@@ -277,10 +324,10 @@ df_64_node = parse_solver_table(data_64_node, 64)
 
 
 plot_performance_cg_time(
-    [df_1_node, df_2_node, df_4_node, df_8_node, df_16_node, df_32_node,df_64_node])
+    [df_1_node, df_2_node, df_4_node, df_8_node, df_16_node, df_32_node, df_64_node])
 plt.figure()
 plot_performance_matvec(
-    [df_1_node, df_2_node, df_4_node, df_8_node, df_16_node, df_32_node,df_64_node])
+    [df_1_node, df_2_node, df_4_node, df_8_node, df_16_node, df_32_node, df_64_node])
 plt.show()
 
 # plot_parallel_efficiency([df_1_node, df_2_node, df_4_node, df_8_node, df_16_node, df_32_node])
