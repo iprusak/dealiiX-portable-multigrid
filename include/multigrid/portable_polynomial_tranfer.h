@@ -907,8 +907,6 @@ namespace Portable
                 using TeamPolicy = Kokkos::TeamPolicy<
                   MemorySpace::Default::kokkos_space::execution_space>;
 
-
-
                 Functor cell_prolongator;
 
                 auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
