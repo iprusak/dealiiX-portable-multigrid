@@ -83,8 +83,9 @@ public:
   SubdomainDoFHandler();
 
   void
-  reinit(const SubdomainTriangulation<dim> &subdomain_triangulation,
-         const DoFHandler<dim>             &distributed_dof_handler);
+  reinit(const std::shared_ptr<const SubdomainTriangulation<dim>>
+                                subdomain_triangulation,
+         const DoFHandler<dim> &distributed_dof_handler);
 
   void
   distribute_subdomain_dofs();
@@ -123,7 +124,8 @@ public:
   unsigned int
   n_locally_relevant_interface_indices() const;
 
-  unsigned int n_subdomains() const;
+  unsigned int
+  n_subdomains() const;
 
 
 private:
@@ -134,7 +136,7 @@ private:
 
   DoFHandler<dim> subdomain_dof_handler;
 
-  ObserverPointer<const SubdomainTriangulation<dim>> subdomain_triangulation;
+  std::shared_ptr<const SubdomainTriangulation<dim>> subdomain_triangulation;
   ObserverPointer<const DoFHandler<dim>>             distributed_dof_handler;
 
   unsigned int       subdomain_id;
@@ -158,24 +160,26 @@ SubdomainDoFHandler<dim>::SubdomainDoFHandler()
   subdomain_id = numbers::invalid_unsigned_int;
 }
 
+
 template <int dim>
 void
 SubdomainDoFHandler<dim>::reinit(
-  const SubdomainTriangulation<dim> &subdomain_triangulation,
-  const DoFHandler<dim>             &distributed_dof_handler)
+  const std::shared_ptr<const SubdomainTriangulation<dim>>
+                         subdomain_triangulation,
+  const DoFHandler<dim> &distributed_dof_handler)
 
 {
-  this->subdomain_triangulation = &subdomain_triangulation;
+  this->subdomain_triangulation = subdomain_triangulation;
   this->distributed_dof_handler = &distributed_dof_handler;
 
-  subdomain_dof_handler.reinit(subdomain_triangulation.get_triangulation());
+  subdomain_dof_handler.reinit(subdomain_triangulation->get_triangulation());
   subdomain_dof_info.clear();
 
   interface_indices_partitioner_to_subdomain_numbering.clear();
   interface_indices_partitioner_to_global_numbering.clear();
 
-  subdomain_id = subdomain_triangulation.get_topology_info().subdomain_id;
-  interface_id = subdomain_triangulation.get_topology_info().interface_id;
+  subdomain_id = subdomain_triangulation->get_topology_info().subdomain_id;
+  interface_id = subdomain_triangulation->get_topology_info().interface_id;
 }
 
 template <int dim>

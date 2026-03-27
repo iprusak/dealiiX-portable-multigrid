@@ -10,7 +10,7 @@
 
 #include <memory>
 
-#include "base/portable_laplace_operator_base.h"
+#include "base/portable_subdomain_laplace_operator_base.h"
 #include "domain_decomposition/subdomain_dof_handler.h"
 #include "kernels/portable_local_laplace_operator.h"
 #include "operators/portable_laplace_operator_quad.h"
@@ -21,7 +21,8 @@ namespace Portable
 {
 
   template <int dim, int fe_degree, typename number>
-  class SubdomainLaplaceOperator : public LaplaceOperatorBase<dim, number>
+  class SubdomainLaplaceOperator
+    : public SubdomainLaplaceOperatorBase<dim, number>
   {
   public:
     SubdomainLaplaceOperator(const SubdomainDoFHandler<dim>  &dof_handler,
@@ -45,13 +46,13 @@ namespace Portable
     vmult_interface_cell_range(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-        &src) const;
+        &src) const override;
 
     void
     vmult_neumann(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-        &src) const;
+        &src) const override;
 
     void
     Tvmult(
@@ -88,10 +89,13 @@ namespace Portable
     get_vector_partitioner() const override;
 
     const Kokkos::View<const unsigned int *, MemorySpace::Default::kokkos_space>
-    get_interface_dof_indices_subdomain() const;
+    get_interface_dof_indices_subdomain() const override;
+
+    const Kokkos::View<const unsigned int *, MemorySpace::Default::kokkos_space>
+    get_physical_boundary_dof_indices_subdomain() const override;
 
     const SubdomainDoFHandler<dim> &
-    get_subdomain_dof_handler() const;
+    get_subdomain_dof_handler() const override;
 
   private:
     using TeamHandle = Kokkos::TeamPolicy<
@@ -224,6 +228,15 @@ namespace Portable
   {
     return interface_dof_indices_subdomain;
   }
+
+  template <int dim, int fe_degree, typename number>
+  const Kokkos::View<const unsigned int *, MemorySpace::Default::kokkos_space>
+  SubdomainLaplaceOperator<dim, fe_degree, number>::
+    get_physical_boundary_dof_indices_subdomain() const
+  {
+    return physical_boundary_dof_indices;
+  }
+
 
   template <int dim, int fe_degree, typename number>
   void
@@ -1153,14 +1166,20 @@ namespace Portable
   types::global_dof_index
   SubdomainLaplaceOperator<dim, fe_degree, number>::m() const
   {
-    return matrix_free.get_vector_partitioner()->size();
+    if (matrix_free.get_vector_partitioner())
+      return matrix_free.get_vector_partitioner()->size();
+
+    return subdomain_dof_handler->get_dof_handler().n_dofs();
   }
 
   template <int dim, int fe_degree, typename number>
   types::global_dof_index
   SubdomainLaplaceOperator<dim, fe_degree, number>::n() const
   {
-    return matrix_free.get_vector_partitioner()->size();
+    if (matrix_free.get_vector_partitioner())
+      return matrix_free.get_vector_partitioner()->size();
+
+    return subdomain_dof_handler->get_dof_handler().n_dofs();
   }
 
   template <int dim, int fe_degree, typename number>

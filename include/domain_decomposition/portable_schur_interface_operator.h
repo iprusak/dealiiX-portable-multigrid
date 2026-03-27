@@ -5,7 +5,9 @@
 
 #include <deal.II/lac/lapack_full_matrix.h>
 
+#include "base/portable_mg_transfer_base.h"
 #include "domain_decomposition/subdomain_dof_handler.h"
+#include "multigrid/portable_subdomain_v_cycle_multigrid.h"
 #include "operators/portable_subdomain_laplace_operator.h"
 
 DEAL_II_NAMESPACE_OPEN
@@ -17,9 +19,15 @@ namespace Portable
   class SchurInterfaceOperator : public EnableObserverPointer
   {
   public:
+    using MGMatrixType   = SubdomainLaplaceOperatorBase<dim, number>;
+    using MGTransferType = MGTransferBase<dim, number>;
+    using SubdomainPreconditioner =
+      SubdomainVCycleMultigrid<dim, number, MGTransferType>;
+
     SchurInterfaceOperator(
       const SubdomainLaplaceOperator<dim, fe_degree, number>
-        &subdomain_operator);
+                                    &subdomain_operator,
+      const SubdomainPreconditioner &dirichlet_preconditioner);
 
     void
     vmult(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
@@ -79,8 +87,13 @@ namespace Portable
 
     ObserverPointer<const SubdomainDoFHandler<dim>> subdomain_dof_handler;
 
+    ObserverPointer<const SubdomainPreconditioner> dirichlet_preconditioner;
+
     const Kokkos::View<const unsigned int *, MemorySpace::Default::kokkos_space>
       interface_dof_indices_subdomain;
+
+    const Kokkos::View<const unsigned int *, MemorySpace::Default::kokkos_space>
+      physical_boundary_dof_indices_subdomain;
 
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
       interface_weights;
@@ -133,11 +146,15 @@ namespace Portable
 
   template <int dim, int fe_degree, typename number>
   SchurInterfaceOperator<dim, fe_degree, number>::SchurInterfaceOperator(
-    const SubdomainLaplaceOperator<dim, fe_degree, number> &subdomain_operator)
+    const SubdomainLaplaceOperator<dim, fe_degree, number> &subdomain_operator,
+    const SubdomainPreconditioner &dirichlet_preconditioner)
     : subdomain_operator(&subdomain_operator)
     , subdomain_dof_handler(&subdomain_operator.get_subdomain_dof_handler())
+    , dirichlet_preconditioner(&dirichlet_preconditioner)
     , interface_dof_indices_subdomain(
         subdomain_operator.get_interface_dof_indices_subdomain())
+    , physical_boundary_dof_indices_subdomain(
+        subdomain_operator.get_physical_boundary_dof_indices_subdomain())
     , subdomain_dirichlet_operator(subdomain_operator)
     , subdomain_neumann_operator(subdomain_operator)
   {
@@ -210,13 +227,12 @@ namespace Portable
     cg.solve(this->subdomain_dirichlet_operator,
              dst,
              src,
-             PreconditionIdentity());
+             *dirichlet_preconditioner);
 
     // std::cout << "    Dirichlet solver on subdomain "
     //           << this->subdomain_dof_handler->get_subdomain_id()
-    //           << " converged in " << solver_control.last_step() << "
-    //           iterations"
-    //           << std::endl;
+    //           << " converged in " << solver_control.last_step()
+    //           << " iterations " << std::endl;
   }
 
   /**
@@ -265,8 +281,11 @@ namespace Portable
     SolverControl solver_control(temp_subdomain_vector_src.size(),
                                  1e-12 * temp_subdomain_vector_src.l2_norm());
 
-    number mean_value_src = temp_subdomain_vector_src.mean_value();
-    temp_subdomain_vector_src.add(-mean_value_src);
+    if (physical_boundary_dof_indices_subdomain.size() == 0)
+      {
+        number mean_value_src = temp_subdomain_vector_src.mean_value();
+        temp_subdomain_vector_src.add(-mean_value_src);
+      }
 
     SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>
       cg(solver_control);
@@ -277,14 +296,16 @@ namespace Portable
              temp_subdomain_vector_src,
              PreconditionIdentity());
 
-    number mean_value_dst = temp_subdomain_vector_dst.mean_value();
-    temp_subdomain_vector_dst.add(-mean_value_dst);
+    if (physical_boundary_dof_indices_subdomain.size() == 0)
+      {
+        number mean_value_dst = temp_subdomain_vector_dst.mean_value();
+        temp_subdomain_vector_dst.add(-mean_value_dst);
+      }
 
     // std::cout << "    Neumann solver on subdomain "
     //           << this->subdomain_dof_handler->get_subdomain_id()
-    //           << " converged in " << solver_control.last_step() << "
-    //           iterations"
-    //           << std::endl;
+    //           << " converged in " << solver_control.last_step()
+    //           << " iterations " << std::endl;
 
     // apply weights and write dst interface values
     Kokkos::parallel_for(
@@ -425,7 +446,7 @@ namespace Portable
       KOKKOS_LAMBDA(const int i) {
         const auto idx_subdomain = interface_dofs(i);
         number     output_value  = rhs_subdomain_view(idx_subdomain) -
-                              t_subdomain_dst_view(idx_subdomain);
+                                   t_subdomain_dst_view(idx_subdomain);
         Kokkos::atomic_add(&rhs_schur_view(i), output_value);
       });
 
@@ -476,8 +497,7 @@ namespace Portable
       "read_interface_solution",
       interface_dofs.size(),
       KOKKOS_LAMBDA(const int i) {
-        t_subdomain_src_view(interface_dofs(i)) =
-          interface_solution_view(i);
+        t_subdomain_src_view(interface_dofs(i)) = interface_solution_view(i);
       });
 
     // apply A_IG * src_interface
@@ -497,8 +517,7 @@ namespace Portable
       "distribute_interface_dofs",
       interface_dofs.size(),
       KOKKOS_LAMBDA(const int i) {
-        subdomain_solution_view(interface_dofs(i)) =
-          interface_solution_view(i);
+        subdomain_solution_view(interface_dofs(i)) = interface_solution_view(i);
       });
 
     subdomain_solution.compress(VectorOperation::add);
