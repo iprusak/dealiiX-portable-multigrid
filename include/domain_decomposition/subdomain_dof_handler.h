@@ -178,8 +178,8 @@ SubdomainDoFHandler<dim>::reinit(
   interface_indices_partitioner_to_subdomain_numbering.clear();
   interface_indices_partitioner_to_global_numbering.clear();
 
-  subdomain_id = subdomain_triangulation->get_topology_info().subdomain_id;
-  interface_id = subdomain_triangulation->get_topology_info().interface_id;
+  subdomain_id = subdomain_triangulation->get_subdomain_id();
+  interface_id = subdomain_triangulation->get_interface_id();
 }
 
 template <int dim>
@@ -344,9 +344,6 @@ SubdomainDoFHandler<dim>::fill_dof_info()
   subdomain_dof_info.subdomain_to_global_dof_map.resize(
     subdomain_dof_handler.n_dofs());
 
-  const auto subdomain_topology =
-    this->subdomain_triangulation->get_topology_info();
-
   const auto &fe = this->distributed_dof_handler->get_fe();
 
   const unsigned int n_dofs_per_cell = fe.dofs_per_cell;
@@ -404,7 +401,7 @@ SubdomainDoFHandler<dim>::fill_dof_info()
       for (unsigned int f = 0; f < GeometryInfo<dim>::faces_per_cell; ++f)
         {
           if (cell->at_boundary(f) &&
-              cell->face(f)->boundary_id() != subdomain_topology.interface_id)
+              cell->face(f)->boundary_id() != this->subdomain_triangulation->get_interface_id())
             {
               for (unsigned int i = 0; i < n_dofs_per_cell; ++i)
                 {
@@ -428,7 +425,7 @@ SubdomainDoFHandler<dim>::fill_dof_info()
           for (unsigned int f = 0; f < GeometryInfo<dim>::faces_per_cell; ++f)
             {
               if (cell->at_boundary(f) && cell->face(f)->boundary_id() ==
-                                            subdomain_topology.interface_id)
+                                            this->subdomain_triangulation->get_interface_id())
                 {
                   for (unsigned int i = 0; i < n_dofs_per_cell; ++i)
                     {

@@ -72,6 +72,11 @@ namespace Portable
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
     get_matrix_diagonal_inverse() const override;
 
+
+    std::shared_ptr<DiagonalMatrix<
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
+    get_matrix_diagonal_inverse_neumann() const override;
+
     types::global_dof_index
     m() const override;
 
@@ -155,7 +160,7 @@ namespace Portable
 
     std::shared_ptr<DiagonalMatrix<
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
-      inverse_diagonal_entries;
+      inverse_diagonal_entries_dirichlet, inverse_diagonal_entries_neumann;
 
     std::vector<
       Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>>
@@ -193,12 +198,11 @@ namespace Portable
     const SubdomainDoFHandler<dim>  &subdomain_dof_handler,
     const AffineConstraints<number> &constraints,
     bool                             overlap_communication_computation)
+    : subdomain_dof_handler(&subdomain_dof_handler)
   {
     const MappingQ<dim> mapping(fe_degree);
 
     typename MatrixFree<dim, number>::AdditionalData additional_data;
-
-    this->subdomain_dof_handler = &subdomain_dof_handler;
 
     additional_data.mapping_update_flags =
       update_gradients | update_JxW_values | update_quadrature_points;
@@ -1126,30 +1130,74 @@ namespace Portable
   void
   SubdomainLaplaceOperator<dim, fe_degree, number>::compute_diagonal()
   {
-    this->inverse_diagonal_entries.reset(
+    this->inverse_diagonal_entries_dirichlet.reset(
       new DiagonalMatrix<
         LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>());
+
+    this->inverse_diagonal_entries_neumann.reset(
+      new DiagonalMatrix<
+        LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>());
+
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-      &inverse_diagonal = inverse_diagonal_entries->get_vector();
-    initialize_dof_vector(inverse_diagonal);
+      &inverse_diagonal_dirichlet =
+        inverse_diagonal_entries_dirichlet->get_vector();
+    initialize_dof_vector(inverse_diagonal_dirichlet);
 
-    internal::LaplaceOperatorQuad<dim, fe_degree, number> operator_quad;
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &
+      inverse_diagonal_neumann = inverse_diagonal_entries_neumann->get_vector();
+    initialize_dof_vector(inverse_diagonal_neumann);
 
-    MatrixFreeTools::compute_diagonal<dim, fe_degree, fe_degree + 1, 1, number>(
-      matrix_free,
-      inverse_diagonal,
-      operator_quad,
-      EvaluationFlags::gradients,
-      EvaluationFlags::gradients);
+    using QuadOperatorType =
+      internal::LaplaceOperatorQuad<dim, fe_degree, number>;
+    QuadOperatorType operator_quad;
 
-    double *raw_diagonal = inverse_diagonal.get_values();
+    MatrixFreeTools::internal::ComputeDiagonalCellAction<dim,
+                                                         fe_degree,
+                                                         fe_degree + 1,
+                                                         1,
+                                                         number,
+                                                         QuadOperatorType>
+      cell_action(0,
+                  operator_quad,
+                  EvaluationFlags::gradients,
+                  EvaluationFlags::gradients);
+
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default> dummy;
+
+    matrix_free.cell_loop(cell_action, dummy, inverse_diagonal_dirichlet);
+
+    inverse_diagonal_neumann = inverse_diagonal_dirichlet;
+
+    matrix_free.set_constrained_values(number(1.),
+                                       inverse_diagonal_dirichlet,
+                                       0);
+
+    double *raw_diagonal_dirichlet = inverse_diagonal_dirichlet.get_values();
 
     Kokkos::parallel_for(
-      inverse_diagonal.locally_owned_size(), KOKKOS_LAMBDA(int i) {
-        Assert(raw_diagonal[i] > 0.,
+      inverse_diagonal_dirichlet.locally_owned_size(), KOKKOS_LAMBDA(int i) {
+        Assert(raw_diagonal_dirichlet[i] > 0.,
                ExcMessage("No diagonal entry in a positive definite operator "
                           "should be zero"));
-        raw_diagonal[i] = 1. / raw_diagonal[i];
+        raw_diagonal_dirichlet[i] = 1. / raw_diagonal_dirichlet[i];
+      });
+
+    const auto physical_boundary_dofs = this->physical_boundary_dof_indices;
+
+    double *raw_diagonal_neumann = inverse_diagonal_neumann.get_values();
+
+    Kokkos::parallel_for(
+      physical_boundary_dofs.size(), KOKKOS_LAMBDA(int i) {
+        raw_diagonal_neumann[physical_boundary_dofs[i]] = number(1.);
+      });
+
+
+    Kokkos::parallel_for(
+      inverse_diagonal_neumann.locally_owned_size(), KOKKOS_LAMBDA(int i) {
+        Assert(raw_diagonal_neumann[i] > 0.,
+               ExcMessage("No diagonal entry in a positive definite operator "
+                          "should be zero"));
+        raw_diagonal_neumann[i] = 1. / raw_diagonal_neumann[i];
       });
   }
 
@@ -1159,7 +1207,16 @@ namespace Portable
   SubdomainLaplaceOperator<dim, fe_degree, number>::
     get_matrix_diagonal_inverse() const
   {
-    return inverse_diagonal_entries;
+    return inverse_diagonal_entries_dirichlet;
+  }
+
+  template <int dim, int fe_degree, typename number>
+  std::shared_ptr<DiagonalMatrix<
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
+  SubdomainLaplaceOperator<dim, fe_degree, number>::
+    get_matrix_diagonal_inverse_neumann() const
+  {
+    return inverse_diagonal_entries_neumann;
   }
 
   template <int dim, int fe_degree, typename number>
@@ -1190,11 +1247,11 @@ namespace Portable
   {
     (void)col;
     Assert(row == col, ExcNotImplemented());
-    Assert(inverse_diagonal_entries.get() != nullptr &&
-             inverse_diagonal_entries->m() > 0,
+    Assert(inverse_diagonal_entries_dirichlet.get() != nullptr &&
+             inverse_diagonal_entries_dirichlet->m() > 0,
            ExcNotInitialized());
 
-    return 1.0 / (*inverse_diagonal_entries)(row, row);
+    return 1.0 / (*inverse_diagonal_entries_dirichlet)(row, row);
   }
 
   template <int dim, int fe_degree, typename number>

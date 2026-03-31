@@ -17,52 +17,32 @@
 #include <Kokkos_Core.hpp>
 
 #include "base/portable_subdomain_laplace_operator_base.h"
+#include "base/portable_v_cycle_multigrid_base.h"
 
 DEAL_II_NAMESPACE_OPEN
 
 namespace Portable
 {
 
-  template <typename VectorType, typename SmootherType>
-  class MGCoarseFromSmoother : public MGCoarseGridBase<VectorType>
-  {
-  public:
-    MGCoarseFromSmoother(const SmootherType &mg_smoother, const bool is_empty)
-      : smoother(mg_smoother)
-      , is_empty(is_empty)
-    {}
-
-    virtual void
-    operator()(const unsigned int level,
-               VectorType        &dst,
-               const VectorType  &src) const override
-    {
-      if (is_empty)
-        return;
-      smoother[level].vmult(dst, src);
-    }
-
-    const SmootherType &smoother;
-    const bool          is_empty;
-  };
-
-
-  template <int dim, typename number, typename TransferType>
-  class SubdomainVCycleMultigrid : public EnableObserverPointer
+  template <int dim,
+            typename number,
+            typename LevelMatrixType,
+            typename TransferType,
+            typename SmootherType>
+  class SubdomainVCycleMultigrid : public VCycleMultigridBase<dim, number>
   {
   public:
     using VectorType =
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>;
-    using LevelMatrixType = SubdomainLaplaceOperatorBase<dim, number>;
-    using SmootherType    = PreconditionChebyshev<LevelMatrixType, VectorType>;
 
     SubdomainVCycleMultigrid(
       const MGLevelObject<std::unique_ptr<LevelMatrixType>> &mg_matrices,
       const MGLevelObject<std::unique_ptr<TransferType>>    &mg_transfers,
-      const MGLevelObject<SmootherType>                     &mg_smoothers);
+      const MGLevelObject<SmootherType>                     &mg_smoothers,
+      const bool impose_zero_mean = false);
 
     void
-    vmult(VectorType &dst, const VectorType &src) const;
+    vmult(VectorType &dst, const VectorType &src) const override;
 
   private:
     /**
@@ -101,6 +81,12 @@ namespace Portable
     const MGLevelObject<SmootherType> &mg_smoothers;
 
     /**
+     * Whether to impose zero mean on the coarsest level. This is relevant for
+     * purely Neumann problems.
+     */
+    const bool impose_zero_mean;
+
+    /**
      * The coarse solver
      */
     MGCoarseFromSmoother<VectorType, MGLevelObject<SmootherType>> coarse;
@@ -122,16 +108,27 @@ namespace Portable
     mutable MGLevelObject<VectorType> t;
   };
 
-  template <int dim, typename number, typename TransferType>
-  SubdomainVCycleMultigrid<dim, number, TransferType>::SubdomainVCycleMultigrid(
-    const MGLevelObject<std::unique_ptr<LevelMatrixType>> &mg_matrices,
-    const MGLevelObject<std::unique_ptr<TransferType>>    &mg_transfers,
-    const MGLevelObject<SmootherType>                     &mg_smoothers)
+  template <int dim,
+            typename number,
+            typename LevelMatrixType,
+            typename TransferType,
+            typename SmootherType>
+  SubdomainVCycleMultigrid<dim,
+                           number,
+                           LevelMatrixType,
+                           TransferType,
+                           SmootherType>::
+    SubdomainVCycleMultigrid(
+      const MGLevelObject<std::unique_ptr<LevelMatrixType>> &mg_matrices,
+      const MGLevelObject<std::unique_ptr<TransferType>>    &mg_transfers,
+      const MGLevelObject<SmootherType>                     &mg_smoothers,
+      const bool                                             impose_zero_mean)
     : minlevel(mg_matrices.min_level())
     , maxlevel(mg_matrices.max_level())
     , mg_matrices(mg_matrices)
     , mg_transfers(mg_transfers)
     , mg_smoothers(mg_smoothers)
+    , impose_zero_mean(impose_zero_mean)
     , coarse(mg_smoothers, false)
     , solution(minlevel, maxlevel)
     , defect(minlevel, maxlevel)
@@ -145,11 +142,18 @@ namespace Portable
       }
   }
 
-  template <int dim, typename number, typename TransferType>
+  template <int dim,
+            typename number,
+            typename LevelMatrixType,
+            typename TransferType,
+            typename SmootherType>
   void
-  SubdomainVCycleMultigrid<dim, number, TransferType>::vmult(
-    VectorType       &dst,
-    const VectorType &src) const
+  SubdomainVCycleMultigrid<dim,
+                           number,
+                           LevelMatrixType,
+                           TransferType,
+                           SmootherType>::vmult(VectorType       &dst,
+                                                const VectorType &src) const
   {
     defect[maxlevel] = src;
 
@@ -158,16 +162,36 @@ namespace Portable
     dst = solution[maxlevel];
   }
 
-  template <int dim, typename number, typename TransferType>
+  template <int dim,
+            typename number,
+            typename LevelMatrixType,
+            typename TransferType,
+            typename SmootherType>
   void
-  SubdomainVCycleMultigrid<dim, number, TransferType>::v_cycle(
-    const unsigned int level) const
+  SubdomainVCycleMultigrid<dim,
+                           number,
+                           LevelMatrixType,
+                           TransferType,
+                           SmootherType>::v_cycle(const unsigned int level)
+    const
   {
     if (level == minlevel)
       {
+        if (impose_zero_mean)
+          {
+            number mean_value = defect[level].mean_value();
+            defect[level].add(-mean_value);
+          }
+
         // Accuracy on coarsest level should be comparable to overall level
         // accuracy (~1e-3)
         (coarse)(level, solution[level], defect[level]);
+
+        if (impose_zero_mean)
+          {
+            number mean_value = solution[level].mean_value();
+            solution[level].add(-mean_value);
+          }
 
         return;
       }

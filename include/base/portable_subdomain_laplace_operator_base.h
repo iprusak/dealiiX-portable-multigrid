@@ -23,14 +23,8 @@ namespace Portable
   class SubdomainLaplaceOperatorBase : public EnableObserverPointer
   {
   public:
-    //   SubdomainLaplaceOperatorBase(const SubdomainDoFHandler<dim>
-    //   &dof_handler,
-    //                                const AffineConstraints<number>
-    //                                &constraints, bool
-    //                                overlap_communication_computation =
-    //                                false);
 
-    virtual void
+  virtual void
     vmult(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
           const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
             &src) const = 0;
@@ -72,6 +66,10 @@ namespace Portable
     virtual std::shared_ptr<DiagonalMatrix<
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
     get_matrix_diagonal_inverse() const = 0;
+
+    virtual std::shared_ptr<DiagonalMatrix<
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
+    get_matrix_diagonal_inverse_neumann() const = 0;
 
     virtual types::global_dof_index
     m() const = 0;

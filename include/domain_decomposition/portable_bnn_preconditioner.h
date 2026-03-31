@@ -4,20 +4,21 @@
 
 #include "domain_decomposition/portable_schur_interface_operator.h"
 #include "domain_decomposition/subdomain_dof_handler.h"
-#include "operators/portable_subdomain_laplace_operator.h"
+#include "base/portable_subdomain_laplace_operator_base.h"
+
 
 DEAL_II_NAMESPACE_OPEN
 
 namespace Portable
 {
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   class BNNPreconditioner
   {
   public:
     BNNPreconditioner(
-      const SchurInterfaceOperator<dim, fe_degree, number> &interface_operator,
-      const SubdomainLaplaceOperator<dim, fe_degree, number>
+      const SchurInterfaceOperator<dim, number> &interface_operator,
+      const SubdomainLaplaceOperatorBase<dim, number>
         &subdomain_operator);
 
     void
@@ -52,10 +53,11 @@ namespace Portable
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
         &interface_vector) const;
 
+
   private:
-    ObserverPointer<const SchurInterfaceOperator<dim, fe_degree, number>>
+    ObserverPointer<const SchurInterfaceOperator<dim, number>>
       interface_operator;
-    ObserverPointer<const SubdomainLaplaceOperator<dim, fe_degree, number>>
+    ObserverPointer<const SubdomainLaplaceOperatorBase<dim, number>>
                                                     subdomain_operator;
     ObserverPointer<const SubdomainDoFHandler<dim>> subdomain_dof_handler;
 
@@ -79,10 +81,10 @@ namespace Portable
     mutable Vector<number>      temp_coarse_solution;
   };
 
-  template <int dim, int fe_degree, typename number>
-  BNNPreconditioner<dim, fe_degree, number>::BNNPreconditioner(
-    const SchurInterfaceOperator<dim, fe_degree, number>   &interface_operator,
-    const SubdomainLaplaceOperator<dim, fe_degree, number> &subdomain_operator)
+  template <int dim, typename number>
+  BNNPreconditioner<dim, number>::BNNPreconditioner(
+    const SchurInterfaceOperator<dim, number>   &interface_operator,
+    const SubdomainLaplaceOperatorBase<dim, number> &subdomain_operator)
     : interface_operator(&interface_operator)
     , subdomain_operator(&subdomain_operator)
     , subdomain_dof_handler(&subdomain_operator.get_subdomain_dof_handler())
@@ -102,9 +104,9 @@ namespace Portable
   }
 
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  BNNPreconditioner<dim, fe_degree, number>::vmult(
+  BNNPreconditioner<dim, number>::vmult(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
@@ -132,9 +134,9 @@ namespace Portable
    * values) (Id - R_0^T*S_0^{-1}*R_0) -- returns balanced vector, i.e.
    * compatible for the subdomain Neumann solve
    */
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  BNNPreconditioner<dim, fe_degree, number>::project(
+  BNNPreconditioner<dim, number>::project(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
@@ -172,9 +174,9 @@ namespace Portable
    * (Id - R_0^T*S_0^{-1}*R_0) -- returns balanced vector, i.e. compatible for
    * the subdomain Neumann solve
    */
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  BNNPreconditioner<dim, fe_degree, number>::balance(
+  BNNPreconditioner<dim, number>::balance(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
@@ -211,9 +213,9 @@ namespace Portable
   }
 
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  BNNPreconditioner<dim, fe_degree, number>::global_interface_to_coarse(
+  BNNPreconditioner<dim, number>::global_interface_to_coarse(
     Vector<number> &coarse_vector,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
       &interface_vector) const
@@ -261,9 +263,9 @@ namespace Portable
     interface_vector.zero_out_ghost_values();
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  BNNPreconditioner<dim, fe_degree, number>::coarse_to_global_interface(
+  BNNPreconditioner<dim, number>::coarse_to_global_interface(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
                          &interface_vector,
     const Vector<number> &coarse_vector) const
@@ -306,9 +308,9 @@ namespace Portable
     interface_vector.update_ghost_values();
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  BNNPreconditioner<dim, fe_degree, number>::setup_coarse_matrix()
+  BNNPreconditioner<dim, number>::setup_coarse_matrix()
   {
     if (this->this_subdomain == this->coarse_problem_rank)
       coarse_matrix.reinit(this->n_subdomains, this->n_subdomains);

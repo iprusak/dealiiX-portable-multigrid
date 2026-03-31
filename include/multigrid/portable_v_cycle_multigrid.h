@@ -17,6 +17,8 @@
 #include <Kokkos_Core.hpp>
 
 #include "base/portable_laplace_operator_base.h"
+#include "base/portable_v_cycle_multigrid_base.h"
+
 
 DEAL_II_NAMESPACE_OPEN
 
@@ -46,19 +48,21 @@ namespace Portable
 
 
   template <int dim, typename number, typename TransferType>
-  class VCycleMultigrid : public EnableObserverPointer
+  class VCycleMultigrid : public VCycleMultigridBase<dim, number>
   {
   public:
     using VectorType      = LinearAlgebra::distributed::Vector<number, MemorySpace::Default>;
     using LevelMatrixType = LaplaceOperatorBase<dim, number>;
     using SmootherType    = PreconditionChebyshev<LevelMatrixType, VectorType>;
 
-    VCycleMultigrid(const MGLevelObject<std::unique_ptr<LevelMatrixType>> &mg_matrices,
-                    const MGLevelObject<std::unique_ptr<TransferType>>    &mg_transfers,
-                    const MGLevelObject<SmootherType>                     &mg_smoothers);
+    VCycleMultigrid(
+      const MGLevelObject<std::unique_ptr<LevelMatrixType>> &mg_matrices,
+      const MGLevelObject<std::unique_ptr<TransferType>>    &mg_transfers,
+      const MGLevelObject<SmootherType>                     &mg_smoothers,
+      const bool impose_zero_mean = false);
 
     void
-    vmult(VectorType &dst, const VectorType &src) const;
+    vmult(VectorType &dst, const VectorType &src) const override;
 
   private:
     /**
@@ -96,10 +100,12 @@ namespace Portable
 
     const MGLevelObject<SmootherType> &mg_smoothers;
 
+    const bool impose_zero_mean;
     /**
      * The coarse solver
      */
     MGCoarseFromSmoother<VectorType, MGLevelObject<SmootherType>> coarse;
+
 
     /**
      * The solution update after the multigrid step.
@@ -122,12 +128,14 @@ namespace Portable
   VCycleMultigrid<dim, number, TransferType>::VCycleMultigrid(
     const MGLevelObject<std::unique_ptr<LevelMatrixType>> &mg_matrices,
     const MGLevelObject<std::unique_ptr<TransferType>>    &mg_transfers,
-    const MGLevelObject<SmootherType>                     &mg_smoothers)
+    const MGLevelObject<SmootherType>                     &mg_smoothers,
+    const bool                                             impose_zero_mean)
     : minlevel(mg_matrices.min_level())
     , maxlevel(mg_matrices.max_level())
     , mg_matrices(mg_matrices)
     , mg_transfers(mg_transfers)
     , mg_smoothers(mg_smoothers)
+    , impose_zero_mean(impose_zero_mean)
     , coarse(mg_smoothers, false)
     , solution(minlevel, maxlevel)
     , defect(minlevel, maxlevel)
@@ -158,9 +166,20 @@ namespace Portable
   {
     if (level == minlevel)
       {
+        if (impose_zero_mean)
+          {
+            number mean_value = defect[level].mean_value();
+            defect[level].add(-mean_value);
+          }
         // Accuracy on coarsest level should be comparable to overall level
         // accuracy (~1e-3)
         (coarse)(level, solution[level], defect[level]);
+
+        if (impose_zero_mean)
+          {
+            number mean_value = solution[level].mean_value();
+            solution[level].add(-mean_value);
+          }
 
         return;
       }

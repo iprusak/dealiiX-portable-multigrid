@@ -6,28 +6,28 @@
 #include <deal.II/lac/lapack_full_matrix.h>
 
 #include "base/portable_mg_transfer_base.h"
+#include "base/portable_subdomain_laplace_operator_base.h"
+#include "base/portable_v_cycle_multigrid_base.h"
 #include "domain_decomposition/subdomain_dof_handler.h"
-#include "multigrid/portable_subdomain_v_cycle_multigrid.h"
-#include "operators/portable_subdomain_laplace_operator.h"
+
 
 DEAL_II_NAMESPACE_OPEN
 
 namespace Portable
 {
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   class SchurInterfaceOperator : public EnableObserverPointer
   {
   public:
-    using MGMatrixType   = SubdomainLaplaceOperatorBase<dim, number>;
-    using MGTransferType = MGTransferBase<dim, number>;
-    using SubdomainPreconditioner =
-      SubdomainVCycleMultigrid<dim, number, MGTransferType>;
+    using MGMatrixType            = SubdomainLaplaceOperatorBase<dim, number>;
+    using MGTransferType          = MGTransferBase<dim, number>;
+    using SubdomainPreconditioner = VCycleMultigridBase<dim, number>;
 
     SchurInterfaceOperator(
-      const SubdomainLaplaceOperator<dim, fe_degree, number>
-                                    &subdomain_operator,
-      const SubdomainPreconditioner &dirichlet_preconditioner);
+      const SubdomainLaplaceOperatorBase<dim, number> &subdomain_operator,
+      const SubdomainPreconditioner                   &dirichlet_preconditioner,
+      const SubdomainPreconditioner                   &neumann_preconditioner);
 
     void
     vmult(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
@@ -78,16 +78,56 @@ namespace Portable
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &
     get_interface_weights() const;
 
+    struct NeumannSubdomainOperator
+    {
+      NeumannSubdomainOperator(
+        const SubdomainLaplaceOperatorBase<dim, number> &op)
+        : op(op)
+      {}
+
+      void
+      vmult(
+        LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+          &src) const
+      {
+        op.vmult_neumann(dst, src);
+      }
+
+      const SubdomainLaplaceOperatorBase<dim, number> &op;
+    };
+
+    struct DirichletSubdomainOperator
+    {
+      DirichletSubdomainOperator(
+        const SubdomainLaplaceOperatorBase<dim, number> &op)
+        : op(op)
+      {}
+
+      void
+      vmult(
+        LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+          &src) const
+      {
+        op.vmult(dst, src);
+      }
+
+      const SubdomainLaplaceOperatorBase<dim, number> &op;
+    };
+
   private:
     void
     compute_interface_weights();
 
-    ObserverPointer<const SubdomainLaplaceOperator<dim, fe_degree, number>>
+    ObserverPointer<const SubdomainLaplaceOperatorBase<dim, number>>
       subdomain_operator;
 
     ObserverPointer<const SubdomainDoFHandler<dim>> subdomain_dof_handler;
 
     ObserverPointer<const SubdomainPreconditioner> dirichlet_preconditioner;
+
+    ObserverPointer<const SubdomainPreconditioner> neumann_preconditioner;
 
     const Kokkos::View<const unsigned int *, MemorySpace::Default::kokkos_space>
       interface_dof_indices_subdomain;
@@ -102,55 +142,19 @@ namespace Portable
       temp_subdomain_vector_src, temp_subdomain_vector_dst,
       temp_subdomain_vector_work;
 
-    struct NeumannSubdomainOperator
-    {
-      NeumannSubdomainOperator(
-        const SubdomainLaplaceOperator<dim, fe_degree, number> &op)
-        : op(op)
-      {}
-
-      void
-      vmult(
-        LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-          &src) const
-      {
-        op.vmult_neumann(dst, src);
-      }
-
-      const SubdomainLaplaceOperator<dim, fe_degree, number> &op;
-    };
-
-    struct DirichletSubdomainOperator
-    {
-      DirichletSubdomainOperator(
-        const SubdomainLaplaceOperator<dim, fe_degree, number> &op)
-        : op(op)
-      {}
-
-      void
-      vmult(
-        LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-          &src) const
-      {
-        op.vmult(dst, src);
-      }
-
-      const SubdomainLaplaceOperator<dim, fe_degree, number> &op;
-    };
-
     DirichletSubdomainOperator subdomain_dirichlet_operator;
     NeumannSubdomainOperator   subdomain_neumann_operator;
   };
 
-  template <int dim, int fe_degree, typename number>
-  SchurInterfaceOperator<dim, fe_degree, number>::SchurInterfaceOperator(
-    const SubdomainLaplaceOperator<dim, fe_degree, number> &subdomain_operator,
-    const SubdomainPreconditioner &dirichlet_preconditioner)
+  template <int dim, typename number>
+  SchurInterfaceOperator<dim, number>::SchurInterfaceOperator(
+    const SubdomainLaplaceOperatorBase<dim, number> &subdomain_operator,
+    const SubdomainPreconditioner                   &dirichlet_preconditioner,
+    const SubdomainPreconditioner                   &neumann_preconditioner)
     : subdomain_operator(&subdomain_operator)
     , subdomain_dof_handler(&subdomain_operator.get_subdomain_dof_handler())
     , dirichlet_preconditioner(&dirichlet_preconditioner)
+    , neumann_preconditioner(&neumann_preconditioner)
     , interface_dof_indices_subdomain(
         subdomain_operator.get_interface_dof_indices_subdomain())
     , physical_boundary_dof_indices_subdomain(
@@ -168,10 +172,9 @@ namespace Portable
     compute_interface_weights();
   }
 
-
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  SchurInterfaceOperator<dim, fe_degree, number>::compute_interface_weights()
+  SchurInterfaceOperator<dim, number>::compute_interface_weights()
   {
     this->interface_weights.reinit(
       this->subdomain_dof_handler->get_interface_vector_partitioner());
@@ -204,16 +207,16 @@ namespace Portable
     interface_weights.update_ghost_values();
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &
-  SchurInterfaceOperator<dim, fe_degree, number>::get_interface_weights() const
+  SchurInterfaceOperator<dim, number>::get_interface_weights() const
   {
     return interface_weights;
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  SchurInterfaceOperator<dim, fe_degree, number>::dirichlet_solve_subdomain(
+  SchurInterfaceOperator<dim, number>::dirichlet_solve_subdomain(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
@@ -244,9 +247,9 @@ namespace Portable
    * compatible for Neumann solve, but it is still good to keep it for numerical
    * stability.
    */
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  SchurInterfaceOperator<dim, fe_degree, number>::neumann_solve_subdomain(
+  SchurInterfaceOperator<dim, number>::neumann_solve_subdomain(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
@@ -281,6 +284,7 @@ namespace Portable
     SolverControl solver_control(temp_subdomain_vector_src.size(),
                                  1e-12 * temp_subdomain_vector_src.l2_norm());
 
+
     if (physical_boundary_dof_indices_subdomain.size() == 0)
       {
         number mean_value_src = temp_subdomain_vector_src.mean_value();
@@ -294,7 +298,10 @@ namespace Portable
     cg.solve(this->subdomain_neumann_operator,
              temp_subdomain_vector_dst,
              temp_subdomain_vector_src,
-             PreconditionIdentity());
+             *neumann_preconditioner);
+
+    // neumann_preconditioner->vmult(temp_subdomain_vector_dst,
+    //                               temp_subdomain_vector_src);
 
     if (physical_boundary_dof_indices_subdomain.size() == 0)
       {
@@ -326,9 +333,9 @@ namespace Portable
    * 3. vv =  A_GI*z
    * Result y = w - vv
    */
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  SchurInterfaceOperator<dim, fe_degree, number>::vmult(
+  SchurInterfaceOperator<dim, number>::vmult(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
@@ -406,9 +413,9 @@ namespace Portable
   }
 
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  SchurInterfaceOperator<dim, fe_degree, number>::assemble_rhs_schur(
+  SchurInterfaceOperator<dim, number>::assemble_rhs_schur(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs_schur,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
       &rhs_subdomain) const
@@ -455,9 +462,9 @@ namespace Portable
     rhs_schur.update_ghost_values();
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  SchurInterfaceOperator<dim, fe_degree, number>::
+  SchurInterfaceOperator<dim, number>::
     reconstruct_subdomain_solution_from_interface(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
         &subdomain_solution,
@@ -524,9 +531,9 @@ namespace Portable
   }
 
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   void
-  SchurInterfaceOperator<dim, fe_degree, number>::Tvmult(
+  SchurInterfaceOperator<dim, number>::Tvmult(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
@@ -534,25 +541,25 @@ namespace Portable
     this->vmult(dst, src);
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   types::global_dof_index
-  SchurInterfaceOperator<dim, fe_degree, number>::m() const
+  SchurInterfaceOperator<dim, number>::m() const
   {
     return this->subdomain_dof_handler->get_interface_vector_partitioner()
       ->size();
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   types::global_dof_index
-  SchurInterfaceOperator<dim, fe_degree, number>::n() const
+  SchurInterfaceOperator<dim, number>::n() const
   {
     return this->subdomain_dof_handler->get_interface_vector_partitioner()
       ->size();
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, typename number>
   bool
-  SchurInterfaceOperator<dim, fe_degree, number>::enable_printing() const
+  SchurInterfaceOperator<dim, number>::enable_printing() const
   {
     return (this->subdomain_dof_handler->get_subdomain_id() == 0);
   }

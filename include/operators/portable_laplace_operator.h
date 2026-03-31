@@ -524,6 +524,10 @@ namespace Portable
   std::shared_ptr<DiagonalMatrix<LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
   LaplaceOperator<dim, fe_degree, number>::get_matrix_diagonal_inverse() const
   {
+    // std::cout << "Diagonal entries: ";
+    // for (const number value : inverse_diagonal_entries->get_vector())
+    //   std::cout << value << " ";
+    // std::cout << std::endl;
     return inverse_diagonal_entries;
   }
 
