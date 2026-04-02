@@ -211,6 +211,7 @@ namespace multigrid
     void
     v_cycle(const unsigned int level) const
     {
+      // std::cout << "Entering v-cycle level " << level << std::endl;
       if (level == minlevel)
         {
           Kokkos::fence();
@@ -218,6 +219,9 @@ namespace multigrid
           (coarse)(level, solution[level], defect[level]);
           Kokkos::fence();
           timings[level][0] += time.wall_time();
+
+          // std::cout << "After coarse solve "  << level << std::endl;
+
           return;
         }
 
@@ -244,7 +248,11 @@ namespace multigrid
       Kokkos::fence();
       timings[level][1] += time.wall_time();
 
+      // std::cout << "After restrict_and_add " << level << std::endl;
+
+
       v_cycle(level - 1);
+
 
       Kokkos::fence();
       time.restart();
@@ -252,11 +260,15 @@ namespace multigrid
       Kokkos::fence();
       timings[level][2] += time.wall_time();
 
+        // std::cout << "After prolongate_and_add " << level << std::endl;
+
       Kokkos::fence();
       time.restart();
       (smooth)[level].step(solution[level], defect[level]);
       Kokkos::fence();
       timings[level][5] += time.wall_time();
+
+        // std::cout << "After post smooth " << level << std::endl;
     }
 
     /**

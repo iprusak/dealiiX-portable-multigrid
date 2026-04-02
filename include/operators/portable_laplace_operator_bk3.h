@@ -352,6 +352,8 @@ namespace Portable
             matrix_free.copy_constrained_values(src, dst);
           }
       }
+
+      std::cout << "After vmult_dummy\n";
   }
 
 
