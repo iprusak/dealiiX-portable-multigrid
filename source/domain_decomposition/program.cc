@@ -491,6 +491,9 @@ template <int dim, int fe_degree>
 void
 LaplaceProblem<dim, fe_degree>::compute_interface_weights()
 {
+  if (!level_subdomain_dof_handlers.back().get_interface_vector_partitioner())
+    return;
+
   level_subdomain_dof_handlers.back().initialize_interface_dof_vector(
     global_interface_weights);
 
@@ -925,7 +928,6 @@ LaplaceProblem<dim, fe_degree>::solve_interface()
   timing_table.add_value("CG time/iter", time_solve / iterations);
   timing_table.add_value("Max-dir-mg-its", max_mg_iterations.first);
   timing_table.add_value("Max-neu-mg-its", max_mg_iterations.second);
-
 }
 
 
@@ -1179,42 +1181,112 @@ template <int dim, int fe_degree>
 void
 LaplaceProblem<dim, fe_degree>::test_coarse_problem()
 {
-  LinearAlgebra::distributed::Vector<double, MemorySpace::Default> rhs, tmp;
+  MGLevelObject<
+    LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>
+    temp1, temp2, src, err;
 
-  const auto &matrix = *level_subdomain_neumann_matrices.back();
-  matrix.initialize_dof_vector(rhs);
+  temp1.resize(0, this->level_subdomain_matrices.max_level());
+  temp2.resize(0, this->level_subdomain_matrices.max_level());
+  src.resize(0, this->level_subdomain_matrices.max_level());
+  err.resize(0, this->level_subdomain_matrices.max_level());
 
-  tmp.reinit(rhs);
+  for (unsigned int level = 0;
+       level <= this->level_subdomain_matrices.max_level();
+       ++level)
+    {
+      level_subdomain_matrices[level]->initialize_dof_vector(src[level]);
+      src[level] = 1.;
 
-  Portable::DeviceVector<double> rhs_device(rhs.get_values(), rhs.size());
+      temp1[level].reinit(src[level]);
+      temp2[level].reinit(src[level]);
 
-  Kokkos::parallel_for(
-    "Initialize RHS", rhs.size(), KOKKOS_LAMBDA(const unsigned int i) {
-      rhs_device(i) = i;
-    });
-  // for (unsigned int i = 0; i < rhs.size(); ++i)
-  //   { // rhs.local_element(i) = random() / static_cast<double>(RAND_MAX);
-  //     rhs.local_element(i) = i;
+      // level_subdomain_constraints[level].distribute(src[level]);
+
+
+      this->level_subdomain_matrices[level]->vmult(temp1[level], src[level]);
+      this->level_subdomain_matrices[level]->vmult_bk3(temp2[level],
+                                                       src[level]);
+
+      // temp1[level].print(std::cout);
+      // temp2[level].print(std::cout);
+
+
+
+      err[level] = temp1[level];
+      err[level] -= temp2[level];
+
+      MPI_Barrier(mpi_communicator);
+
+      // std::cout << "temp1[" << level << "] = ";
+      // for (const auto x : temp1[level])
+      //   std::cout << x << "  ";
+      // std::cout << std::endl;
+
+      // MPI_Barrier(mpi_communicator);
+
+      // std::cout << "temp2[" << level << "] = ";
+      // for (const auto x : temp2[level])
+      //   std::cout << x << "  ";
+      // std::cout << std::endl;
+      // MPI_Barrier(mpi_communicator);
+
+      std::cout << "  temp1[" << level
+                << "].l2_norm() = " << temp1[level].l2_norm() << std::endl;
+      std::cout << "  temp2[" << level
+                << "].l2_norm() = " << temp2[level].l2_norm() << std::endl;
+      std::cout << "  error[" << level
+                << "].l2_norm() = " << err[level].l2_norm() << std::endl;
+      MPI_Barrier(mpi_communicator);
+    }
+
+  // LinearAlgebra::distributed::Vector<double, MemorySpace::Default> temp1,
+  // temp2,
+  //   src, err;
+
+  // const auto &matrix = *level_subdomain_matrices.back();
+  // matrix.initialize_dof_vector(src);
+  // src = 1.;
+
+  // temp1.reinit(src);
+  // temp2.reinit(src);
+
+  // MPI_Barrier(mpi_communicator);
+
+  // if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+  //   matrix.vmult(temp1, src);
+  // MPI_Barrier(mpi_communicator);
+
+  // if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+  //   matrix.vmult_bk3(temp2, src);
+
+  // MPI_Barrier(mpi_communicator);
+
+  // err = temp1;
+  // err -= temp2;
+
+  // MPI_Barrier(mpi_communicator);
+
+  // std::cout << "temp1[" << level << "] = ";
+  // for (const auto x : temp1[level])
+  //   std::cout << x << "  ";
+  // std::cout << std::endl;
+
+  // MPI_Barrier(mpi_communicator);
+
+  // std::cout << "temp2[" << level << "] = ";
+  // for (const auto x : temp2[level])
+  //   std::cout << x << "  ";
+  // std::cout << std::endl;
+  // MPI_Barrier(mpi_communicator);
+
+  // if (Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
+  //   {
+  //     std::cout << "  temp1.l2_norm() = " << temp1.l2_norm() << std::endl;
+  //     std::cout << "  temp2.l2_norm() = " << temp2.l2_norm() << std::endl;
+  //     std::cout << "  error.l2_norm() = " << err.l2_norm() << std::endl;
   //   }
-  // rhs = 1.;
-
-  double mean_value = rhs.mean_value();
-  rhs.add(-mean_value);
-
-
-
-  ReductionControl solver_control(1000, 1e-16, 1e-12);
-  SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>> cg(
-    solver_control);
-  cg.solve(matrix, tmp, rhs, *subdomain_mg_preconditioner_neumann);
-
-
-  std::cout << "Neumann problem on subdomain "
-            << level_subdomain_dof_handlers.back().get_subdomain_id()
-            << " solved in " << solver_control.last_step() << " iterations."
-            << std::endl;
-  // const double mean_value_solution = temp.l2_norm();
-  // pcout << "Mean value of solution: " << mean_value_solution << std::endl;
+  // Kokkos::fence();
+  // MPI_Barrier(mpi_communicator);
 }
 
 

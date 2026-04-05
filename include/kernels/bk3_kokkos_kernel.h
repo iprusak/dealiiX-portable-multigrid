@@ -813,6 +813,25 @@ namespace BK3
                 }
             }
 
+            // std::cout << "BK3 kernel shape_values:";
+            // for (unsigned int i = 0; i < n_local_dofs_1d * n_q_points_1d;
+            // ++i)
+            //   std::cout << shape_values_device(i) << " ";
+            // std::cout << std::endl << std::endl;
+
+            // std::cout << "BK3 kernel shape_grads:";
+            // for (unsigned int i = 0; i < n_local_dofs_1d * n_q_points_1d;
+            // ++i)
+            //   std::cout << co_shape_gradients_device(i) << " ";
+            // std::cout << std::endl << std::endl;
+
+
+            // std::cout << "BK3 kernel G_device:";
+            // for (unsigned int i = 0; i < G_device.size(); ++i)
+            //   std::cout << G_device(i) << " ";
+            // std::cout << std::endl << std::endl;
+
+
             team_member.team_barrier();
 
             /*
@@ -823,12 +842,10 @@ namespace BK3
 
             while (cell_index < nelmt)
               {
-
                 unsigned int cell_id = cell_index;
-                // if (cell_range_ids.size() > 0)
-                //   cell_id = cell_range_ids(cell_index);
-                // else
-                //   cell_id = cell_index;
+
+                if (cell_range_ids.size() > 0)
+                  cell_id = cell_range_ids(cell_index);
 
                 // std::cout << "cell_id: " << cell_id << std::endl;
 
@@ -846,6 +863,12 @@ namespace BK3
                     }
                 }
                 team_member.team_barrier();
+
+                // std::cout << "BK3 kernel cell_id = " << cell_id << ": ";
+                // for (unsigned int i = 0; i < n_local_dofs_total; ++i)
+                //   std::cout << s_wsp0(i) << " ";
+                // std::cout << std::endl << std::endl;
+
 
                 if constexpr (dim == 3)
                   {
@@ -911,10 +934,18 @@ namespace BK3
                     team_member.team_barrier();
                   }
 
+                // std::cout << "BK3 kernel cell_id = " << cell_id << ": ";
+                // for (unsigned int i = 0; i < n_local_dofs_total; ++i)
+                //   std::cout << s_wsp1(i) << " ";
+                // std::cout << std::endl << std::endl;
+
                 // Geometric vals
                 Number        Grr, Grs, Grt, Gss, Gst, Gtt;
                 Number        qr, qs, qt;
                 constexpr int symmetric_tensor_dimension = (dim * (dim + 1)) / 2;
+
+                // std::cout << "BK3 kernel cell_id = " << cell_id << ": "
+                //           << std::endl;
 
                 for (unsigned int tid = threadIdx;
                      tid < n_q_points_1d * n_q_points_1d * n_q_points_1d;
@@ -967,6 +998,10 @@ namespace BK3
                               co_shape_gradients_scratch[n * n_q_points_1d + r];
                       }
 
+                    // std::cout << "BK3 kernel cell_id = " << cell_id << ": ";
+                    // std::cout << qt << " " << qs << " " << qr << " ";
+                    // std::cout << std::endl << std::endl;
+
                     // step-7 : Apply chain rule
                     rqr[r * n_q_points_1d * n_q_points_1d + q * n_q_points_1d + p] =
                       Grr * qr + Grs * qs + Grt * qt;
@@ -976,6 +1011,25 @@ namespace BK3
                       Grt * qr + Gst * qs + Gtt * qt;
                   }
                 team_member.team_barrier();
+
+
+                // std::cout << "BK3 kernel cell_id = " << cell_id << ": "
+                //           << std::endl
+                //           << std::endl;
+
+                // for (unsigned int tid = 0;
+                //      tid < n_q_points_1d * n_q_points_1d * n_q_points_1d;
+                //      tid += 1)
+                //   {
+                //     // std::cout << qt << " " << qs << " " << qr << " ";
+                //     std::cout << rqr[tid] << " " << rqs[tid] << " " <<
+                //     rqt[tid]
+                //               << " ";
+
+                //     std::cout << std::endl << std::endl;
+                //   }
+
+
 
                 // step-8 : Compute out vector in GL nodes
                 for (unsigned int tid = threadIdx;
@@ -1003,9 +1057,16 @@ namespace BK3
                   }
                 team_member.team_barrier();
 
+                // std::cout << "BK3 kernel cell_id = " << cell_id << ": ";
+                // for (unsigned int i = 0; i < n_local_dofs_total; ++i)
+                //   std::cout << s_wsp1(i) << " ";
+                // std::cout << std::endl << std::endl;
+
                 /*
                 Interpolate to GLL nodes
                 */
+
+
 
                 // step-9 : direction 2
                 for (unsigned int tid = threadIdx;

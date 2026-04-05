@@ -42,6 +42,17 @@ namespace Portable
     }
 
     void
+    vmult_bk3(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const override
+    {
+      (void)dst;
+      (void)src;
+      DEAL_II_NOT_IMPLEMENTED();
+    }
+
+    void
     vmult_dummy(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>

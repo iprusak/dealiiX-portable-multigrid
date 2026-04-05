@@ -204,6 +204,11 @@ SubdomainDoFHandler<dim>::distribute_subdomain_dofs()
     }
   all_interface_dofs.compress();
 
+  if (all_interface_dofs.n_elements() == 0)
+    {
+      this->interface_vector_partitioner = nullptr;
+      return;
+    }
   const unsigned int n_global_interface_dofs = all_interface_dofs.n_elements();
 
   const unsigned int n_ranks =
@@ -401,7 +406,8 @@ SubdomainDoFHandler<dim>::fill_dof_info()
       for (unsigned int f = 0; f < GeometryInfo<dim>::faces_per_cell; ++f)
         {
           if (cell->at_boundary(f) &&
-              cell->face(f)->boundary_id() != this->subdomain_triangulation->get_interface_id())
+              cell->face(f)->boundary_id() !=
+                this->subdomain_triangulation->get_interface_id())
             {
               for (unsigned int i = 0; i < n_dofs_per_cell; ++i)
                 {
@@ -424,8 +430,9 @@ SubdomainDoFHandler<dim>::fill_dof_info()
 
           for (unsigned int f = 0; f < GeometryInfo<dim>::faces_per_cell; ++f)
             {
-              if (cell->at_boundary(f) && cell->face(f)->boundary_id() ==
-                                            this->subdomain_triangulation->get_interface_id())
+              if (cell->at_boundary(f) &&
+                  cell->face(f)->boundary_id() ==
+                    this->subdomain_triangulation->get_interface_id())
                 {
                   for (unsigned int i = 0; i < n_dofs_per_cell; ++i)
                     {

@@ -494,8 +494,8 @@ namespace Portable
                         {
                           number sum = 0;
                           for (int k = 0; k < dim; ++k)
-                            sum += inv_jacobian(q_point, cell_id, k, d1) *
-                                   inv_jacobian(q_point, cell_id, k, d2);
+                            sum += inv_jacobian(q_point, cell_id, d1, k) *
+                                   inv_jacobian(q_point, cell_id, d2, k);
                           components[idx] = JxW(q_point, cell_id) * sum;
                           ++idx;
                         }

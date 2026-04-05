@@ -23,11 +23,16 @@ namespace Portable
   class SubdomainLaplaceOperatorBase : public EnableObserverPointer
   {
   public:
-
-  virtual void
+    virtual void
     vmult(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
           const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
             &src) const = 0;
+
+    virtual void
+    vmult_bk3(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const = 0;
 
     virtual void
     vmult_dummy(

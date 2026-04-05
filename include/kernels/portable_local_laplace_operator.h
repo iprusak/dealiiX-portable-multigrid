@@ -259,6 +259,11 @@ namespace Portable
       data->team_member.team_barrier();
     }
 
+    // std::cout << "dealii kernel cell_id = " << cell_id << ": ";
+    // for (unsigned int i = 0; i < n_local_dofs; ++i)
+    //   std::cout << values(i) << " ";
+    // std::cout << std::endl << std::endl;
+
     // 2. define scratch pad for the evaluation
     constexpr int scratch_size = Utilities::pow(n_q_points_1d, dim);
     auto scratch_for_eval      = Kokkos::subview(scratch_pad, Kokkos::make_pair(0, scratch_size));
@@ -285,6 +290,10 @@ namespace Portable
       if constexpr (dim > 2)
         eval.template values<2, true, false, true>(values, values);
 
+      // std::cout << "dealii kernel cell_id = " << cell_id << ": ";
+      // for (unsigned int i = 0; i < n_local_dofs; ++i)
+      //   std::cout << values(i) << " ";
+      // std::cout << std::endl << std::endl;
 
       // 4b. evaluate gradients in the colloction space
       eval.template co_gradients<0, true, false, false>(values,
@@ -298,6 +307,18 @@ namespace Portable
 
       team_member.team_barrier();
     }
+
+
+    // std::cout << "dealii kernel cell_id = " << cell_id << ": " << std::endl
+    //           << std::endl;
+    // for (unsigned int i = 0; i < n_local_dofs; ++i)
+    //   {
+    //     std::cout << gradients(i, 0) << " " << gradients(i, 1) << " "
+    //               << gradients(i, 2) << " ";
+    //     std::cout << std::endl << std::endl;
+    //   }
+
+
 
     // 5.compute Laplace kernel at each quadrature point
     {
@@ -329,6 +350,17 @@ namespace Portable
       team_member.team_barrier();
     }
 
+
+    // std::cout << "dealii kernel cell_id = " << cell_id << ": " << std::endl
+    //           << std::endl;
+    // for (unsigned int i = 0; i < n_local_dofs; ++i)
+    //   {
+    //     std::cout << gradients(i, 0) << " " << gradients(i, 1) << " "
+    //               << gradients(i, 2) << " ";
+    //     std::cout << std::endl << std::endl;
+    //   }
+
+
     // 6. integrate using time factorization
     {
       // 6a. apply derivatives in collocation space
@@ -351,6 +383,12 @@ namespace Portable
           eval.template co_gradients<0, false, true, false>(
             Kokkos::subview(gradients, Kokkos::ALL, 0), values);
         }
+
+
+      // std::cout << "dealii kernel cell_id = " << cell_id << ": ";
+      // for (unsigned int i = 0; i < n_local_dofs; ++i)
+      //   std::cout << values(i) << " ";
+      // std::cout << std::endl << std::endl;
 
       // 6b. transform back to the original space
       if constexpr (dim > 2)

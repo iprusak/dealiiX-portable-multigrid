@@ -36,6 +36,12 @@ namespace Portable
             &src) const override;
 
     void
+    vmult_bk3(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const override;
+
+    void
     vmult_dummy(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
@@ -258,54 +264,109 @@ namespace Portable
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
   {
-    dst = 0.;
-    LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
-    this->cell_loop(cell_operator, src, dst);
-    matrix_free.copy_constrained_values(src, dst);
-
     // dst = 0.;
-
-    // DeviceVector<number> src_device(src.get_values(), src.size()),
-    //   dst_device(dst.get_values(), dst.size());
-
-    // src.update_ghost_values();
-
-    // const auto        &colored_graph = matrix_free.get_colored_graph();
-    // const unsigned int n_colors      = colored_graph.size();
-
-    // for (unsigned int color = 0; color < n_colors; ++color)
-    //   {
-    //     const unsigned int n_cells = colored_graph[color].size();
-
-    //     // std::cout << "color: " << color << ", n_cells: " << n_cells
-    //     //           << std::endl;
-
-    //     if (n_cells > 0)
-    //       {
-    //         const auto &precomputed_data = matrix_free.get_data(color);
-
-    //         Kokkos::fence();
-
-    //         BK3::Parallel::
-    //           KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
-    //           number>(
-    //             precomputed_data.shape_values,
-    //             precomputed_data.co_shape_gradients,
-    //             G_tensors[color],
-    //             src_device,
-    //             dst_device,
-    //             interior_dof_indices_per_color[color],
-    //             n_cells,
-    //             1u,
-    //             1u);
-
-    //         Kokkos::fence();
-    //       }
-    //   }
-
-    // dst.compress(VectorOperation::add);
-    // src.zero_out_ghost_values();
+    // LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
+    // this->cell_loop(cell_operator, src, dst);
     // matrix_free.copy_constrained_values(src, dst);
+
+    dst = 0.;
+
+    DeviceVector<number> src_device(src.get_values(), src.size()),
+      dst_device(dst.get_values(), dst.size());
+
+    src.update_ghost_values();
+
+    const auto        &colored_graph = matrix_free.get_colored_graph();
+    const unsigned int n_colors      = colored_graph.size();
+
+    for (unsigned int color = 0; color < n_colors; ++color)
+      {
+        const unsigned int n_cells = colored_graph[color].size();
+
+        // std::cout << "color: " << color << ", n_cells: " << n_cells
+        //           << std::endl;
+
+        if (n_cells > 0)
+          {
+            const auto &precomputed_data = matrix_free.get_data(color);
+
+            Kokkos::fence();
+
+            BK3::Parallel::
+              KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1, number>(
+                precomputed_data.shape_values,
+                precomputed_data.co_shape_gradients,
+                G_tensors[color],
+                src_device,
+                dst_device,
+                interior_dof_indices_per_color[color],
+                n_cells,
+                1u,
+                1u);
+
+            Kokkos::fence();
+          }
+      }
+
+    dst.compress(VectorOperation::add);
+    src.zero_out_ghost_values();
+    matrix_free.copy_constrained_values(src, dst);
+  }
+
+  template <int dim, int fe_degree, typename number>
+  void
+  SubdomainLaplaceOperator<dim, fe_degree, number>::vmult_bk3(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
+    const
+  {
+    // dst = 0.;
+    // LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
+    // this->cell_loop(cell_operator, src, dst);
+    // matrix_free.copy_constrained_values(src, dst);
+
+    dst = 0.;
+
+    DeviceVector<number> src_device(src.get_values(), src.size()),
+      dst_device(dst.get_values(), dst.size());
+
+    src.update_ghost_values();
+
+    const auto        &colored_graph = matrix_free.get_colored_graph();
+    const unsigned int n_colors      = colored_graph.size();
+
+    for (unsigned int color = 0; color < n_colors; ++color)
+      {
+        const unsigned int n_cells = colored_graph[color].size();
+
+        // std::cout << "color: " << color << ", n_cells: " << n_cells
+        //           << std::endl;
+
+        if (n_cells > 0)
+          {
+            const auto &precomputed_data = matrix_free.get_data(color);
+
+            Kokkos::fence();
+
+            BK3::Parallel::
+              KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1, number>(
+                precomputed_data.shape_values,
+                precomputed_data.co_shape_gradients,
+                G_tensors[color],
+                src_device,
+                dst_device,
+                interior_dof_indices_per_color[color],
+                n_cells,
+                1u,
+                1u);
+
+            Kokkos::fence();
+          }
+      }
+
+    dst.compress(VectorOperation::add);
+    src.zero_out_ghost_values();
+    matrix_free.copy_constrained_values(src, dst);
   }
 
   template <int dim, int fe_degree, typename number>
@@ -315,45 +376,44 @@ namespace Portable
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
   {
-    dst = 0.;
-    LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
-    this->cell_loop_neumann(cell_operator, src, dst);
-
     // dst = 0.;
+    // LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
+    // this->cell_loop_neumann(cell_operator, src, dst);
+
 
     DeviceVector<number> src_device(src.get_values(), src.size()),
       dst_device(dst.get_values(), dst.size());
 
-    // const auto        &colored_graph = matrix_free.get_colored_graph();
-    // const unsigned int n_colors      = colored_graph.size();
+    dst = 0.;
 
-    // for (unsigned int color = 0; color < n_colors; ++color)
-    //   {
-    //     const unsigned int n_cells = colored_graph[color].size();
+    const auto        &colored_graph = matrix_free.get_colored_graph();
+    const unsigned int n_colors      = colored_graph.size();
 
-    //     if (n_cells > 0)
-    //       {
-    //         const auto &precomputed_data = matrix_free.get_data(color);
+    for (unsigned int color = 0; color < n_colors; ++color)
+      {
+        const unsigned int n_cells = colored_graph[color].size();
 
-    //         Kokkos::fence();
+        if (n_cells > 0)
+          {
+            const auto &precomputed_data = matrix_free.get_data(color);
 
-    //         BK3::Parallel::
-    //           KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
-    //           number>(
-    //             precomputed_data.shape_values,
-    //             precomputed_data.co_shape_gradients,
-    //             G_tensors[color],
-    //             src_device,
-    //             dst_device,
-    //             plain_dof_indices_per_color[color],
-    //             n_cells,
-    //             1u,
-    //             1u);
+            Kokkos::fence();
 
-    //         Kokkos::fence();
-    //       }
-    //   }
+            BK3::Parallel::
+              KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1, number>(
+                precomputed_data.shape_values,
+                precomputed_data.co_shape_gradients,
+                G_tensors[color],
+                src_device,
+                dst_device,
+                plain_dof_indices_per_color[color],
+                n_cells,
+                1u,
+                1u);
 
+            Kokkos::fence();
+          }
+      }
 
     // copy physical constrained values
     const auto boundary_dofs = this->physical_boundary_dof_indices;
@@ -373,49 +433,47 @@ namespace Portable
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
   {
-    dst = 0.;
-    LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
-    this->cell_range_loop(cell_operator, src, dst);
-
     // dst = 0.;
+    // LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
+    // this->cell_range_loop(cell_operator, src, dst);
 
     DeviceVector<number> src_device(src.get_values(), src.size()),
       dst_device(dst.get_values(), dst.size());
 
-    // const auto        &colored_graph = matrix_free.get_colored_graph();
-    // const unsigned int n_colors      = colored_graph.size();
+    dst                              = 0.;
+    const auto        &colored_graph = matrix_free.get_colored_graph();
+    const unsigned int n_colors      = colored_graph.size();
 
-    // for (unsigned int color = 0; color < n_colors; ++color)
-    //   {
-    //     const unsigned int n_interface_cells
-    //     =interface_cell_ids_per_color[color].size();
+    for (unsigned int color = 0; color < n_colors; ++color)
+      {
+        const unsigned int n_interface_cells =
+          interface_cell_ids_per_color[color].size();
 
-    //     if (n_interface_cells > 0)
-    //       {
-    //         const auto &precomputed_data = matrix_free.get_data(color);
+        if (n_interface_cells > 0)
+          {
+            const auto &precomputed_data = matrix_free.get_data(color);
 
-    //         Kokkos::fence();
+            Kokkos::fence();
 
-    //         BK3::Parallel::
-    //           KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
-    //           number>(
-    //             precomputed_data.shape_values,
-    //             precomputed_data.co_shape_gradients,
-    //             G_tensors[color],
-    //             src_device,
-    //             dst_device,
-    //             plain_dof_indices_per_color[color],
-    //             n_interface_cells,
-    //             1u,
-    //             1u,
-    //             interface_cell_ids_per_color[color]);
+            BK3::Parallel::
+              KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1, number>(
+                precomputed_data.shape_values,
+                precomputed_data.co_shape_gradients,
+                G_tensors[color],
+                src_device,
+                dst_device,
+                plain_dof_indices_per_color[color],
+                n_interface_cells,
+                1u,
+                1u,
+                interface_cell_ids_per_color[color]);
 
-    //         Kokkos::fence();
-    //       }
-    //   }
+            Kokkos::fence();
+          }
+      }
 
-    // DeviceVector<number> t_dst(dst.get_values(), dst.size());
-    // DeviceVector<number> t_src(src.get_values(), src.size());
+    DeviceVector<number> t_dst(dst.get_values(), dst.size());
+    DeviceVector<number> t_src(src.get_values(), src.size());
 
     // copy constrained values only for physical boundary dofs
     const auto boundary_dofs = this->physical_boundary_dof_indices;
@@ -901,6 +959,9 @@ namespace Portable
     const unsigned int n_colors      = colored_graph.size();
     const auto        &partitioner   = matrix_free.get_vector_partitioner();
 
+    const auto &interface_partitioner =
+      this->subdomain_dof_handler->get_interface_vector_partitioner();
+
     const auto &dof_handler = matrix_free.get_dof_handler();
 
     std::vector<unsigned int> lex_numbering(n_local_dofs);
@@ -1013,55 +1074,56 @@ namespace Portable
         }
     }
 
-    {
-      const unsigned int n_locally_relevant_interface_indices =
-        this->subdomain_dof_handler->n_locally_relevant_interface_indices();
+    if (interface_partitioner)
+      {
+        const unsigned int n_locally_relevant_interface_indices =
+          this->subdomain_dof_handler->n_locally_relevant_interface_indices();
 
-      this->interface_dof_indices_partitioner =
-        Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space>(
-          Kokkos::view_alloc("interface_dof_indices_partitioner",
-                             Kokkos::WithoutInitializing),
-          n_locally_relevant_interface_indices);
-
-
-      this->interface_dof_indices_subdomain =
-        Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space>(
-          Kokkos::view_alloc("interface_dof_indices_subdomain",
-                             Kokkos::WithoutInitializing),
-          n_locally_relevant_interface_indices);
-
-      auto interface_dof_indices_partitioner_host =
-        Kokkos::create_mirror_view(this->interface_dof_indices_partitioner);
+        this->interface_dof_indices_partitioner =
+          Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space>(
+            Kokkos::view_alloc("interface_dof_indices_partitioner",
+                               Kokkos::WithoutInitializing),
+            n_locally_relevant_interface_indices);
 
 
-      auto interface_dof_indices_subdomain_host =
-        Kokkos::create_mirror_view(this->interface_dof_indices_subdomain);
+        this->interface_dof_indices_subdomain =
+          Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space>(
+            Kokkos::view_alloc("interface_dof_indices_subdomain",
+                               Kokkos::WithoutInitializing),
+            n_locally_relevant_interface_indices);
 
-      for (unsigned int i = 0; i < n_locally_relevant_interface_indices; ++i)
-        {
-          unsigned int local_index =
-            this->subdomain_dof_handler->local_to_global_interface_partitioner(
-              i);
-          unsigned int subdomain_index =
-            this->subdomain_dof_handler->local_interface_to_subdomain(i);
+        auto interface_dof_indices_partitioner_host =
+          Kokkos::create_mirror_view(this->interface_dof_indices_partitioner);
 
 
-          interface_dof_indices_partitioner_host(i) = local_index;
+        auto interface_dof_indices_subdomain_host =
+          Kokkos::create_mirror_view(this->interface_dof_indices_subdomain);
 
-          interface_dof_indices_subdomain_host(i) = subdomain_index;
-        }
+        for (unsigned int i = 0; i < n_locally_relevant_interface_indices; ++i)
+          {
+            unsigned int local_index =
+              this->subdomain_dof_handler
+                ->local_to_global_interface_partitioner(i);
+            unsigned int subdomain_index =
+              this->subdomain_dof_handler->local_interface_to_subdomain(i);
 
-      Kokkos::deep_copy(exec_space,
-                        this->interface_dof_indices_partitioner,
-                        interface_dof_indices_partitioner_host);
 
-      Kokkos::fence();
+            interface_dof_indices_partitioner_host(i) = local_index;
 
-      Kokkos::deep_copy(exec_space,
-                        this->interface_dof_indices_subdomain,
-                        interface_dof_indices_subdomain_host);
-      Kokkos::fence();
-    }
+            interface_dof_indices_subdomain_host(i) = subdomain_index;
+          }
+
+        Kokkos::deep_copy(exec_space,
+                          this->interface_dof_indices_partitioner,
+                          interface_dof_indices_partitioner_host);
+
+        Kokkos::fence();
+
+        Kokkos::deep_copy(exec_space,
+                          this->interface_dof_indices_subdomain,
+                          interface_dof_indices_subdomain_host);
+        Kokkos::fence();
+      }
 
     {
       const auto &physical_boundary_dofs =
@@ -1088,124 +1150,125 @@ namespace Portable
                         boundary_dof_indices_host);
     }
 
-    {
-      this->interface_cell_ids_per_color.clear();
-      this->interface_cell_ids_per_color.resize(n_colors);
-
-      const auto &interior_dofs_set =
-        this->subdomain_dof_handler->get_dof_info().subdomain_interior_dofs;
-
-      IndexSet interior_dofs_interface(
-        this->subdomain_dof_handler->get_dof_handler().n_dofs());
-
-      const auto &physical_boundary_dofs =
-        this->subdomain_dof_handler->get_dof_info()
-          .subdomain_physical_boundary_dofs;
-
-      std::vector<types::global_dof_index> local_dof_indices(n_local_dofs);
-
-      for (unsigned int color = 0; color < n_colors; ++color)
-        {
-          if (colored_graph[color].size() > 0)
-            {
-              const auto &graph   = colored_graph[color];
-              const auto  n_cells = graph.size();
-              const auto &mf_data = matrix_free.get_data(color);
-
-              std::vector<unsigned int> interface_cell_ids;
-              std::vector<unsigned int> interface_cell_dof_indices;
-
-              for (unsigned int cell_id = 0; cell_id < n_cells; ++cell_id)
-                {
-                  typename DoFHandler<dim>::cell_iterator cell =
-                    graph[cell_id]->as_dof_handler_iterator(dof_handler);
-
-
-                  cell->get_dof_indices(local_dof_indices);
-                  if (partitioner)
-                    for (auto &index : local_dof_indices)
-                      index = partitioner->global_to_local(index);
-
-                  if (cell->at_boundary())
-                    for (unsigned int f = 0;
-                         f < GeometryInfo<dim>::faces_per_cell;
-                         ++f)
-                      if (cell->at_boundary(f) &&
-                          cell->face(f)->boundary_id() ==
-                            subdomain_dof_handler->get_interface_id())
-                        {
-                          interface_cell_ids.push_back(cell_id);
-
-                          for (unsigned int i = 0; i < n_local_dofs; ++i)
-                            {
-                              const unsigned int global_dof =
-                                local_dof_indices[lex_numbering[i]];
-
-                              if (physical_boundary_dofs.is_element(global_dof))
-                                interface_cell_dof_indices.push_back(
-                                  numbers::invalid_unsigned_int);
-                              else
-                                interface_cell_dof_indices.push_back(
-                                  global_dof);
-
-                              if (interior_dofs_set.is_element(global_dof))
-                                interior_dofs_interface.add_index(global_dof);
-                            }
-
-                          break;
-                        }
-                }
-
-              this->interface_cell_ids_per_color[color] =
-                Kokkos::View<unsigned int *,
-                             MemorySpace::Default::kokkos_space>(
-                  Kokkos::view_alloc("interface_cell_ids_" +
-                                       std::to_string(color),
-                                     Kokkos::WithoutInitializing),
-                  interface_cell_ids.size());
-
-              {
-                Kokkos::View<unsigned int *,
-                             Kokkos::LayoutLeft,
-                             Kokkos::HostSpace,
-                             Kokkos::MemoryTraits<Kokkos::Unmanaged>>
-                  host_view(interface_cell_ids.data(),
-                            interface_cell_ids.size());
-
-                Kokkos::deep_copy(exec_space,
-                                  this->interface_cell_ids_per_color[color],
-                                  host_view);
-                Kokkos::fence();
-              }
-            }
-        }
+    if (interface_partitioner)
       {
-        this->interface_cell_interior_dof_indices =
-          Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space>(
-            Kokkos::view_alloc("interface_cell_interior_dof_indices",
-                               Kokkos::WithoutInitializing),
-            interior_dofs_interface.n_elements());
+        this->interface_cell_ids_per_color.clear();
+        this->interface_cell_ids_per_color.resize(n_colors);
 
-        std::vector<unsigned int> interior_dofs_interface_vec;
+        const auto &interior_dofs_set =
+          this->subdomain_dof_handler->get_dof_info().subdomain_interior_dofs;
 
-        for (auto index : interior_dofs_interface)
+        IndexSet interior_dofs_interface(
+          this->subdomain_dof_handler->get_dof_handler().n_dofs());
+
+        const auto &physical_boundary_dofs =
+          this->subdomain_dof_handler->get_dof_info()
+            .subdomain_physical_boundary_dofs;
+
+        std::vector<types::global_dof_index> local_dof_indices(n_local_dofs);
+
+        for (unsigned int color = 0; color < n_colors; ++color)
           {
-            interior_dofs_interface_vec.push_back(index);
+            if (colored_graph[color].size() > 0)
+              {
+                const auto &graph   = colored_graph[color];
+                const auto  n_cells = graph.size();
+                const auto &mf_data = matrix_free.get_data(color);
+
+                std::vector<unsigned int> interface_cell_ids;
+                std::vector<unsigned int> interface_cell_dof_indices;
+
+                for (unsigned int cell_id = 0; cell_id < n_cells; ++cell_id)
+                  {
+                    typename DoFHandler<dim>::cell_iterator cell =
+                      graph[cell_id]->as_dof_handler_iterator(dof_handler);
+
+
+                    cell->get_dof_indices(local_dof_indices);
+                    if (partitioner)
+                      for (auto &index : local_dof_indices)
+                        index = partitioner->global_to_local(index);
+
+                    if (cell->at_boundary())
+                      for (unsigned int f = 0;
+                           f < GeometryInfo<dim>::faces_per_cell;
+                           ++f)
+                        if (cell->at_boundary(f) &&
+                            cell->face(f)->boundary_id() ==
+                              subdomain_dof_handler->get_interface_id())
+                          {
+                            interface_cell_ids.push_back(cell_id);
+
+                            for (unsigned int i = 0; i < n_local_dofs; ++i)
+                              {
+                                const unsigned int global_dof =
+                                  local_dof_indices[lex_numbering[i]];
+
+                                if (physical_boundary_dofs.is_element(
+                                      global_dof))
+                                  interface_cell_dof_indices.push_back(
+                                    numbers::invalid_unsigned_int);
+                                else
+                                  interface_cell_dof_indices.push_back(
+                                    global_dof);
+
+                                if (interior_dofs_set.is_element(global_dof))
+                                  interior_dofs_interface.add_index(global_dof);
+                              }
+
+                            break;
+                          }
+                  }
+
+                this->interface_cell_ids_per_color[color] =
+                  Kokkos::View<unsigned int *,
+                               MemorySpace::Default::kokkos_space>(
+                    Kokkos::view_alloc("interface_cell_ids_" +
+                                         std::to_string(color),
+                                       Kokkos::WithoutInitializing),
+                    interface_cell_ids.size());
+
+                {
+                  Kokkos::View<unsigned int *,
+                               Kokkos::LayoutLeft,
+                               Kokkos::HostSpace,
+                               Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+                    host_view(interface_cell_ids.data(),
+                              interface_cell_ids.size());
+
+                  Kokkos::deep_copy(exec_space,
+                                    this->interface_cell_ids_per_color[color],
+                                    host_view);
+                  Kokkos::fence();
+                }
+              }
+
+            this->interface_cell_interior_dof_indices =
+              Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space>(
+                Kokkos::view_alloc("interface_cell_interior_dof_indices",
+                                   Kokkos::WithoutInitializing),
+                interior_dofs_interface.n_elements());
+
+            std::vector<unsigned int> interior_dofs_interface_vec;
+
+            for (auto index : interior_dofs_interface)
+              {
+                interior_dofs_interface_vec.push_back(index);
+              }
+
+            Kokkos::View<unsigned int *,
+                         Kokkos::LayoutLeft,
+                         Kokkos::HostSpace,
+                         Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+              host_view(interior_dofs_interface_vec.data(),
+                        interior_dofs_interface_vec.size());
+
+            Kokkos::deep_copy(exec_space,
+                              this->interface_cell_interior_dof_indices,
+                              host_view);
+            Kokkos::fence();
           }
-
-        Kokkos::View<unsigned int *,
-                     Kokkos::LayoutLeft,
-                     Kokkos::HostSpace,
-                     Kokkos::MemoryTraits<Kokkos::Unmanaged>>
-          host_view(interior_dofs_interface_vec.data(),
-                    interior_dofs_interface_vec.size());
-
-        Kokkos::deep_copy(exec_space,
-                          this->interface_cell_interior_dof_indices,
-                          host_view);
-        Kokkos::fence();
       }
-    }
     exec_space.fence();
   }
 

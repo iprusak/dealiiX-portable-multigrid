@@ -177,6 +177,12 @@ namespace Portable
     , subdomain_dirichlet_operator(subdomain_operator)
     , subdomain_neumann_operator(subdomain_operator)
   {
+    Assert(
+      this->subdomain_operator->get_subdomain_dof_handler()
+          .get_interface_vector_partitioner() != nullptr,
+      ExcMessage(
+        "The subdomain dof handler does not have an interface vector partitioner."));
+
     this->subdomain_operator->initialize_dof_vector(
       this->temp_subdomain_vector_src);
     this->subdomain_operator->initialize_dof_vector(
