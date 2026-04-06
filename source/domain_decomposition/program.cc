@@ -359,9 +359,9 @@ LaplaceProblem<dim, fe_degree>::create_subdomain_triangulations(
         }
     }
   setup_time += time.wall_time();
-  time_details << "           Subdomain triangulations extracted    (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           Subdomain triangulations extracted        (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 
   // const double subdomain_diameter = Utilities::MPI::max(
   //   GridTools::diameter(
@@ -403,7 +403,6 @@ LaplaceProblem<dim, fe_degree>::setup_dofs()
   level_subdomain_dof_handlers.resize(0,
                                       n_h_levels - 1 + p_level_fes.max_level());
 
-
   level_subdomain_constraints.resize(0, level_dof_handlers.max_level());
   level_subdomain_constraints_physical.resize(0,
                                               level_dof_handlers.max_level());
@@ -424,10 +423,9 @@ LaplaceProblem<dim, fe_degree>::setup_dofs()
       dof_h.reinit(*level_triangulations[std::min(level, n_h_levels - 1)]);
 
       if (level < n_h_levels)
-
         dof_h.distribute_dofs(*p_level_fes[0]);
       else
-        dof_h.distribute_dofs(*p_level_fes[n_h_levels + 1 - level]);
+        dof_h.distribute_dofs(*p_level_fes[level + 1 - n_h_levels]);
 
       SubdomainDoFHandler<dim> &subdomain_dof_h =
         level_subdomain_dof_handlers[level];
@@ -482,9 +480,9 @@ LaplaceProblem<dim, fe_degree>::setup_dofs()
     level_subdomain_dof_handlers.back().get_dof_handler().n_dofs());
 
   setup_time += time.wall_time();
-  time_details << "           Subdomain DoFs setup                (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           Subdomain DoFs setup                      (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 }
 
 template <int dim, int fe_degree>
@@ -569,9 +567,9 @@ LaplaceProblem<dim, fe_degree>::setup_matrix_free()
 
   Kokkos::fence();
   setup_time += time.wall_time();
-  time_details << "           Matrix-free operators setup          (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           Matrix-free operators setup               (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 }
 
 template <int dim, int fe_degree>
@@ -641,9 +639,9 @@ LaplaceProblem<dim, fe_degree>::setup_mg_transfers()
 
   Kokkos::fence();
   setup_time += time.wall_time();
-  time_details << "           MG transfers setup          (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           MG transfers setup                        (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 }
 
 
@@ -705,9 +703,9 @@ LaplaceProblem<dim, fe_degree>::setup_smoothers()
 
   Kokkos::fence();
   setup_time += time.wall_time();
-  time_details << "           Smoothers setup          (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           Smoothers setup                           (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 }
 
 
@@ -747,9 +745,9 @@ LaplaceProblem<dim, fe_degree>::setup_mg_preconditioners()
 
   Kokkos::fence();
   setup_time += time.wall_time();
-  time_details << "           MG Preconditioners setup          (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           MG Preconditioners setup                  (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 }
 
 
@@ -774,9 +772,9 @@ LaplaceProblem<dim, fe_degree>::setup_interface_system()
 
   Kokkos::fence();
   setup_time += time.wall_time();
-  time_details << "           Interface system setup              (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           Interface system setup                    (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 }
 
 template <int dim, int fe_degree>
@@ -792,9 +790,9 @@ LaplaceProblem<dim, fe_degree>::setup_bnn_preconditioner()
 
   Kokkos::fence();
   setup_time += time.wall_time();
-  time_details << "           BNN preconditioner setup            (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           BNN preconditioner setup                  (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 
   Kokkos::fence();
   time.restart();
@@ -803,9 +801,9 @@ LaplaceProblem<dim, fe_degree>::setup_bnn_preconditioner()
 
   Kokkos::fence();
   setup_time += time.wall_time();
-  time_details << "           Coarse matrix for BNN computed      (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           Coarse matrix for BNN computed            (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 }
 template <int dim, int fe_degree>
 void
@@ -863,9 +861,9 @@ LaplaceProblem<dim, fe_degree>::assemble_rhs()
 
   Kokkos::fence();
   setup_time += time.wall_time();
-  time_details << "           RHS assembled                       (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           RHS assembled                             (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 
   Kokkos::fence();
   time.restart();
@@ -873,9 +871,9 @@ LaplaceProblem<dim, fe_degree>::assemble_rhs()
                                                subdomain_rhs_device);
   Kokkos::fence();
   setup_time += time.wall_time();
-  time_details << "           Schur RHS assembled                 (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           Schur RHS assembled                       (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 }
 
 
@@ -1115,9 +1113,9 @@ LaplaceProblem<dim, fe_degree>::postprocess_subdomain_solution()
   global_solution_host.update_ghost_values();
 
   Kokkos::fence();
-  time_details << "           Subdomain solution post-processed    (CPU/wall) "
-               << time.cpu_time() << "s/" << time.wall_time() << 's'
-               << std::endl;
+  time_details
+    << "           Subdomain solution post-processed         (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 }
 
 template <int dim, int fe_degree>
@@ -1155,8 +1153,9 @@ LaplaceProblem<dim, fe_degree>::output_results(const unsigned int cycle) const
   pcout << "        solution norm: " << global_norm << std::endl;
 
   Kokkos::fence();
-  time_details << "           Output results    (CPU/wall) " << time.cpu_time()
-               << "s/" << time.wall_time() << 's' << std::endl;
+  time_details
+    << "           Output results                            (CPU/wall) "
+    << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
 
   // Vector<float> cellwise_norm_subdomain(
   //   subdomain_triangulation.get_triangulation().n_active_cells());
@@ -1307,7 +1306,7 @@ LaplaceProblem<dim, fe_degree>::run()
 
       create_subdomain_triangulations(cycle + 1);
 
-      pcout << "N_cells = "
+      pcout << "    N_cells = "
             << level_triangulations.back()->n_global_active_cells()
             << std::endl;
 
@@ -1401,7 +1400,7 @@ main(int argc, char *argv[])
       Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
 
       constexpr int dim       = 3;
-      constexpr int fe_degree = 1;
+      constexpr int fe_degree = 4;
 
       const unsigned int n_pre_smooth  = 5;
       const unsigned int n_post_smooth = 5;
