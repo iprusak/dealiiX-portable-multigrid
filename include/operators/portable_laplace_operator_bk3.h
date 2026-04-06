@@ -353,7 +353,7 @@ namespace Portable
           }
       }
 
-      std::cout << "After vmult_dummy\n";
+    // std::cout << "After vmult_dummy\n";
   }
 
 

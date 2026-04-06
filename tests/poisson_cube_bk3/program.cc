@@ -37,6 +37,8 @@
 #include "multigrid/portable_v_cycle_multigrid.h"
 #include "operators/portable_laplace_operator.h"
 #include "operators/portable_laplace_operator_bk3.h"
+#include "operators/portable_laplace_operator.h"
+
 #include "portable_multigrid_solver.h"
 
 
@@ -58,7 +60,7 @@ namespace multigrid
   // We also select a mixed-precision approach as default. You can
   // independently change the number type for the outer iteration via
   // full_number and the number type for the multigrid v-cycle.
-  using vcycle_number = float;
+  using vcycle_number = double;
   using full_number   = double;
 
 
@@ -303,12 +305,26 @@ namespace multigrid
     while (p_levels.back() > 1)
       p_levels.push_back(std::max(p_levels.back() - 2, 1u));
 
+    for (const auto p : p_levels)
+      pcout << p << "  ";
+    pcout << std::endl;
+
     p_level_fes.resize(0, p_levels.size() - 1);
 
     for (unsigned int level = 0; level < p_levels.size(); ++level)
       {
+<<<<<<< HEAD
         p_level_fes[level] = std::make_unique<FE_Q<dim>>(p_levels[p_levels.size() - 1 - level]);
       }
+=======
+        p_level_fes[level] =
+          std::make_unique<FE_Q<dim>>(p_levels[p_levels.size() - 1 - level]);
+
+        pcout << p_levels[p_levels.size() - 1 - level] << "  ";
+      }
+    pcout << std::endl;
+
+>>>>>>> 7d68ce1 (add batched fp64 test)
 
     level_dof_handlers.resize(0, coarse_triangulations.size() - 1 + p_level_fes.max_level());
     level_constraints.resize(0, level_dof_handlers.max_level());
@@ -902,6 +918,7 @@ namespace multigrid
     // pcout << std::endl << std::endl;
   }
 
+
   template <int dim, int fe_degree>
   void
   LaplaceProblem<dim, fe_degree>::run(const std::size_t  min_size,
@@ -992,16 +1009,16 @@ namespace multigrid
 
         compute_rhs();
 
-        pcout << "Total setup time: " << setup_time << std::endl;
+        // pcout << "Total setup time: " << setup_time << std::endl;
 
         // solve(n_pre_smooth, n_post_smooth);
-        pcout << std::endl;
+        // pcout << std::endl;
 
-        pcout << std::endl;
-        pcout << std::endl;
-        matvec_ghost_timing();
-        pcout << std::endl;
-        pcout << std::endl;
+        // pcout << std::endl;
+        // pcout << std::endl;
+        // matvec_ghost_timing();
+        // pcout << std::endl;
+        // pcout << std::endl;
 
         if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
           {
