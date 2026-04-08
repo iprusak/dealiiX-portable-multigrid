@@ -450,24 +450,25 @@ LaplaceProblem<dim, fe_degree, mg_levels>::test_prolongation()
 {
   for (unsigned int level = 1; level <= mg_matrices.max_level(); ++level)
     {
-      LinearAlgebra::distributed::Vector<double, MemorySpace::Default> src_fine,
-        dst_coarse;
-
+      LinearAlgebra::distributed::Vector<double, MemorySpace::Default>
+      src,
+        dst;
 
       const unsigned int level_coarse = level - 1;
       const unsigned int level_fine   = level;
 
-      mg_matrices[level_fine]->initialize_dof_vector(src_fine);
+      // mg_matrices[level_coarse]->initialize_dof_vector(src);
+      mg_matrices[level_fine]->initialize_dof_vector(src);
       // src_coarse = 1.;
 
-      Portable::DeviceVector<double> src_device(src_fine.get_values(),
-                                                src_fine.locally_owned_size());
+      Portable::DeviceVector<double> src_device(src.get_values(),
+                                                src.locally_owned_size());
 
       Kokkos::Random_XorShift64_Pool<> rand_pool(5374835);
 
       Kokkos::parallel_for(
         "set_values",
-        src_fine.locally_owned_size(),
+        src.locally_owned_size(),
         KOKKOS_LAMBDA(const unsigned int i) {
           auto generator = rand_pool.get_state();
 
@@ -478,31 +479,37 @@ LaplaceProblem<dim, fe_degree, mg_levels>::test_prolongation()
           rand_pool.free_state(generator);
         });
 
-      mg_matrices[level_coarse]->initialize_dof_vector(dst_coarse);
+        // mg_matrices[level_fine]->initialize_dof_vector(dst);
+      mg_matrices[level_coarse]->initialize_dof_vector(dst);
 
-      mg_transfers[level_fine]->restrict_and_add(dst_coarse, src_fine);
+      // mg_transfers[level_fine]->prolongate_and_add(dst, src);
+      mg_transfers[level_fine]->restrict_and_add(dst, src);
     }
 
-  LinearAlgebra::distributed::Vector<double, MemorySpace::Default> src_fine,
-    dst_coarse;
+  // LinearAlgebra::distributed::Vector<double, MemorySpace::Default> src, dst;
 
-  const unsigned int level_coarse = 0;
-  const unsigned int level_fine   = 1;
+  // const unsigned int level_coarse = 0;
+  // const unsigned int level_fine   = 1;
 
-  mg_matrices[level_fine]->initialize_dof_vector(src_fine);
-  // src_coarse = 1.;
+  // // mg_matrices[level_coarse]->initialize_dof_vector(src);
+  // mg_matrices[level_fine]->initialize_dof_vector(src);
 
-  Portable::DeviceVector<double> src_device(src_fine.get_values(),
-                                            src_fine.locally_owned_size());
+  // // src_coarse = 1.;
 
-  Kokkos::parallel_for(
-    "set_values",
-    src_fine.locally_owned_size(),
-    KOKKOS_LAMBDA(const unsigned int i) { src_device(i) = i + 1; });
+  // Portable::DeviceVector<double> src_device(src.get_values(),
+  //                                           src.locally_owned_size());
 
-  mg_matrices[level_coarse]->initialize_dof_vector(dst_coarse);
+  // Kokkos::parallel_for(
+  //   "set_values",
+  //   src.locally_owned_size(),
+  //   KOKKOS_LAMBDA(const unsigned int i) { src_device(i) = i + 1; });
 
-  mg_transfers[level_fine]->restrict_and_add(dst_coarse, src_fine);
+  // // mg_matrices[level_fine]->initialize_dof_vector(dst);
+  // mg_matrices[level_coarse]->initialize_dof_vector(dst);
+
+  // // mg_transfers[level_fine]->prolongate_and_add(dst, src);
+
+  // mg_transfers[level_fine]->restrict_and_add(dst, src);
 }
 
 template <int dim, int fe_degree, int mg_levels>

@@ -835,7 +835,6 @@ namespace Portable
       (n_colors > 1) ||
       matrix_free_fine->use_overlap_communication_computation();
 
-
     if (matrix_free_fine->use_overlap_communication_computation())
       {
         // helper to process one color
@@ -900,10 +899,10 @@ namespace Portable
       }
     else
       {
+        src.update_ghost_values();
+
         DeviceVector<number> src_device(src.get_values(), src.size()),
           dst_device(dst.get_values(), dst.locally_owned_size());
-
-        src.update_ghost_values();
 
         // Execute the loop on the cells
         for (unsigned int color = 0; color < n_colors; ++color)
@@ -949,10 +948,24 @@ namespace Portable
                   }
 
 
-                BK1::Parallel::KokkosProlongationKernel<dim,
-                                                        p_coarse + 1,
-                                                        p_fine + 1,
-                                                        number>(
+                // BK1::Parallel::KokkosProlongationKernel<dim,
+                //                                         p_coarse + 1,
+                //                                         p_fine + 1,
+                //                                         number>(
+                //   this->prolongation_matrix_1d,
+                //   src_device,
+                //   dst_device,
+                //   this->dof_indices_coarse[color],
+                //   this->plain_dof_indices_fine[color],
+                //   this->weights_view_kokkos[color],
+                //   n_cells,
+                //   numBlocks,
+                //   threadsPerBlock);
+
+                BK1::Parallel::KokkosProlongationBatchedKernel<dim,
+                                                               p_coarse + 1,
+                                                               p_fine + 1,
+                                                               number>(
                   this->prolongation_matrix_1d,
                   src_device,
                   dst_device,
@@ -980,7 +993,6 @@ namespace Portable
     MemorySpace::Default::kokkos_space::execution_space exec;
     using Functor =
       p_mg_transfer::CellRestrictionKernel<dim, p_coarse, p_fine, number>;
-
 
     const auto &colored_graph = matrix_free_fine->get_colored_graph();
 
@@ -1101,10 +1113,24 @@ namespace Portable
                   }
 
 
-                BK1::Parallel::KokkosRestrictionKernel<dim,
-                                                       p_coarse + 1,
-                                                       p_fine + 1,
-                                                       number>(
+                // BK1::Parallel::KokkosRestrictionKernel<dim,
+                //                                        p_coarse + 1,
+                //                                        p_fine + 1,
+                //                                        number>(
+                //   this->prolongation_matrix_1d,
+                //   src_device,
+                //   dst_device,
+                //   this->dof_indices_coarse[color],
+                //   this->plain_dof_indices_fine[color],
+                //   this->weights_view_kokkos[color],
+                //   n_cells,
+                //   numBlocks,
+                //   threadsPerBlock);
+
+                BK1::Parallel::KokkosRestrictionBatchedKernel<dim,
+                                                              p_coarse + 1,
+                                                              p_fine + 1,
+                                                              number>(
                   this->prolongation_matrix_1d,
                   src_device,
                   dst_device,
@@ -1118,7 +1144,6 @@ namespace Portable
           }
         dst.compress(VectorOperation::add);
       }
-
     src.zero_out_ghost_values();
   }
 

@@ -883,7 +883,21 @@ namespace Portable
           }
 
 
-        BK1::Parallel::KokkosProlongationKernel<dim,
+        // BK1::Parallel::KokkosProlongationKernel<dim,
+        //                                         fe_degree + 1,
+        //                                         2 * fe_degree + 1,
+        //                                         number>(
+        //   scheme.prolongation_matrix_shared_memory,
+        //   src_device,
+        //   dst_device,
+        //   scheme.dof_indices_coarse,
+        //   scheme.dof_indices_fine,
+        //   scheme.weights,
+        //   scheme.n_coarse_cells,
+        //   numBlocks,
+        //   threadsPerBlock);
+
+        BK1::Parallel::KokkosProlongationBatchedKernel<dim,
                                                 fe_degree + 1,
                                                 2 * fe_degree + 1,
                                                 number>(
@@ -958,7 +972,22 @@ namespace Portable
           }
 
 
-        BK1::Parallel::KokkosRestrictionKernel<dim,
+        // BK1::Parallel::KokkosRestrictionKernel<dim,
+        //                                        fe_degree + 1,
+        //                                        2 * fe_degree + 1,
+        //                                        number>(
+        //   scheme.prolongation_matrix_shared_memory,
+        //   src_device,
+        //   dst_device,
+        //   scheme.dof_indices_coarse,
+        //   scheme.dof_indices_fine,
+        //   scheme.weights,
+        //   scheme.n_coarse_cells,
+        //   numBlocks,
+        //   threadsPerBlock);
+
+
+        BK1::Parallel::KokkosRestrictionBatchedKernel<dim,
                                                fe_degree + 1,
                                                2 * fe_degree + 1,
                                                number>(
