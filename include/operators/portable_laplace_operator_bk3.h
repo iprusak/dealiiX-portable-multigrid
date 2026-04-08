@@ -160,6 +160,18 @@ namespace Portable
           {
             const auto &precomputed_data = matrix_free.get_data(color);
 
+            constexpr bool is_serial =
+              std::is_same<Kokkos::DefaultExecutionSpace,
+                           Kokkos::DefaultHostExecutionSpace>::value;
+
+            unsigned int numBlocks       = numbers::invalid_unsigned_int;
+            unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+            if (is_serial)
+              {
+                numBlocks       = 1u;
+                threadsPerBlock = 1u;
+              }
+
             Kokkos::fence();
 
             BK3::Parallel::
@@ -170,7 +182,9 @@ namespace Portable
                 src_device,
                 dst_device,
                 dof_indices_per_color[color],
-                n_cells);
+                n_cells,
+                numBlocks,
+                threadsPerBlock);
 
             Kokkos::fence();
           }
@@ -211,6 +225,19 @@ namespace Portable
               {
                 const auto &precomputed_data = matrix_free.get_data(color);
 
+
+                constexpr bool is_serial =
+                  std::is_same<Kokkos::DefaultExecutionSpace,
+                               Kokkos::DefaultHostExecutionSpace>::value;
+
+                unsigned int numBlocks       = numbers::invalid_unsigned_int;
+                unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+                if (is_serial)
+                  {
+                    numBlocks       = 1u;
+                    threadsPerBlock = 1u;
+                  }
+
                 Kokkos::fence();
 
                 BK3::Parallel::KokkosKernel_1D_Block<dim,
@@ -223,7 +250,9 @@ namespace Portable
                   src_device,
                   dst_device,
                   dof_indices_per_color[color],
-                  n_cells);
+                  n_cells,
+                  numBlocks,
+                  threadsPerBlock);
 
                 Kokkos::fence();
               }

@@ -233,12 +233,6 @@ namespace Portable
         });
       team_member.team_barrier();
 
-      // std::cout << "cell_id = " << cell_id << ": ";
-
-      // for (unsigned int i = 0; i < n_local_dofs_coarse; ++i)
-      //   std::cout << values_coarse[i] << "   ";
-      // std::cout << std::endl << std::endl;
-
       // apply kernel in each direction
       if constexpr (dim == 2)
         {
@@ -317,8 +311,6 @@ namespace Portable
                             Kokkos::make_pair(temp1_size,
                                               temp1_size + temp2_size));
 
-          // std::cout << "cell_id = " << cell_id << ": ";
-
           {
             constexpr int Ni = p_coarse + 1;
             constexpr int Nj = p_coarse + 1;
@@ -339,36 +331,19 @@ namespace Portable
                 number sum =
                   prolongation_matrix(base_kernel) * values_coarse(base_coarse);
 
-                // std::cout << prolongation_matrix(base_kernel) << " ";
-
-
                 for (int k = 1; k < Nk; ++k)
                   {
                     sum +=
                       prolongation_matrix(base_kernel + k * stride_kernel) *
                       values_coarse(base_coarse + k * stride_coarse);
-
-                    // std::cout
-                    //   << prolongation_matrix(base_kernel + k * stride_kernel)
-                    //   << " ";
                   }
 
                 const int index_tmp1 = (i * Nj + j) * Nm + m;
                 tmp1(index_tmp1)     = sum;
               });
           }
-          // std::cout << std::endl << std::endl;
 
           team_member.team_barrier();
-
-          // std::cout << "cell_id = " << cell_id << ": ";
-
-          // for (unsigned int i = 0;
-          //      i < Utilities::pow(p_coarse + 1, 2) * (p_fine + 1);
-          //      ++i)
-          //   std::cout << tmp1[i] << "   ";
-          // std::cout << std::endl << std::endl;
-
 
           {
             constexpr int Ni = p_fine + 1;
@@ -400,15 +375,6 @@ namespace Portable
 
           team_member.team_barrier();
 
-          // std::cout << "cell_id = " << cell_id << ": ";
-          // for (unsigned int i = 0;
-          //      i < Utilities::pow(p_fine + 1, 2) * (p_coarse + 1);
-          //      ++i)
-          //   std::cout << tmp2[i] << "   ";
-          // std::cout << std::endl << std::endl;
-
-
-
           {
             constexpr int Ni = p_fine + 1;
             constexpr int Nj = p_fine + 1;
@@ -438,14 +404,6 @@ namespace Portable
           }
           team_member.team_barrier();
         }
-
-      //  std::cout << "cell_id = " << cell_id << ": ";
-      //   for (unsigned int i = 0;
-      //        i < Utilities::pow(p_fine + 1, 2) * (p_fine + 1);
-      //        ++i)
-      //     std::cout << values_fine[i] << "   ";
-      //   std::cout << std::endl << std::endl;
-
 
       // apply weights
       Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member,
@@ -868,12 +826,6 @@ namespace Portable
     using Functor =
       p_mg_transfer::CellProlongationKernel<dim, p_coarse, p_fine, number>;
 
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default> dst_bk1,
-      err;
-    dst_bk1.reinit(dst);
-
-    DeviceVector<number> src_device(src.get_values(), src.size()),
-      dst_bk1_device(dst_bk1.get_values(), dst_bk1.locally_owned_size());
 
     const auto &colored_graph = matrix_free_fine->get_colored_graph();
 
@@ -948,6 +900,9 @@ namespace Portable
       }
     else
       {
+        DeviceVector<number> src_device(src.get_values(), src.size()),
+          dst_device(dst.get_values(), dst.locally_owned_size());
+
         src.update_ghost_values();
 
         // Execute the loop on the cells
@@ -957,29 +912,29 @@ namespace Portable
 
             if (n_cells > 0)
               {
-                using TeamPolicy = Kokkos::TeamPolicy<
-                  MemorySpace::Default::kokkos_space::execution_space>;
+                // using TeamPolicy = Kokkos::TeamPolicy<
+                //   MemorySpace::Default::kokkos_space::execution_space>;
 
-                Functor cell_prolongator;
+                // Functor cell_prolongator;
 
-                auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
+                // auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
 
-                p_mg_transfer::
-                  ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
-                    apply_kernel(cell_prolongator,
-                                 this->prolongation_matrix_1d,
-                                 this->weights_view_kokkos[color],
-                                 this->dof_indices_coarse[color],
-                                 this->plain_dof_indices_fine[color],
-                                 use_coloring,
-                                 src,
-                                 dst);
+                // p_mg_transfer::
+                //   ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
+                //     apply_kernel(cell_prolongator,
+                //                  this->prolongation_matrix_1d,
+                //                  this->weights_view_kokkos[color],
+                //                  this->dof_indices_coarse[color],
+                //                  this->plain_dof_indices_fine[color],
+                //                  use_coloring,
+                //                  src,
+                //                  dst);
 
-                Kokkos::parallel_for(
-                  "dealii::MatrixFree::prolongate_and_add_color " +
-                    std::to_string(color),
-                  team_policy,
-                  apply_kernel);
+                // Kokkos::parallel_for(
+                //   "dealii::MatrixFree::prolongate_and_add_color " +
+                //     std::to_string(color),
+                //   team_policy,
+                //   apply_kernel);
 
                 constexpr bool is_serial =
                   std::is_same<Kokkos::DefaultExecutionSpace,
@@ -1000,7 +955,7 @@ namespace Portable
                                                         number>(
                   this->prolongation_matrix_1d,
                   src_device,
-                  dst_bk1_device,
+                  dst_device,
                   this->dof_indices_coarse[color],
                   this->plain_dof_indices_fine[color],
                   this->weights_view_kokkos[color],
@@ -1010,23 +965,9 @@ namespace Portable
               }
           }
         dst.compress(VectorOperation::add);
-        dst_bk1.compress(VectorOperation::add);
       }
 
     src.zero_out_ghost_values();
-
-    // dst.print(std::cout);
-    // dst_bk1.print(std::cout);
-
-    err = dst;
-    err -= dst_bk1;
-
-    // std::cout << "dst.l2_norm()     = " << dst.l2_norm() << std::endl;
-    // std::cout << "dst_bk1.l2_norm() = " << dst_bk1.l2_norm() << std::endl;
-    // std::cout << "err.l2_norm()     = " << err.l2_norm() << std::endl;
-
-    std::cout << dst.l2_norm() << " | " << dst_bk1.l2_norm() << " | "
-              << err.l2_norm() << std::endl;
   }
 
   template <int dim, int p_coarse, int p_fine, typename number>
@@ -1040,6 +981,7 @@ namespace Portable
     using Functor =
       p_mg_transfer::CellRestrictionKernel<dim, p_coarse, p_fine, number>;
 
+
     const auto &colored_graph = matrix_free_fine->get_colored_graph();
 
     const unsigned int n_colors = colored_graph.size();
@@ -1047,7 +989,6 @@ namespace Portable
     const bool use_coloring =
       (n_colors > 1) ||
       matrix_free_fine->use_overlap_communication_computation();
-
 
     if (matrix_free_fine->use_overlap_communication_computation())
       {
@@ -1113,6 +1054,9 @@ namespace Portable
       {
         src.update_ghost_values();
 
+        DeviceVector<number> src_device(src.get_values(), src.size()),
+          dst_device(dst.get_values(), dst.locally_owned_size());
+
         // Execute the loop on the cells
         for (unsigned int color = 0; color < n_colors; ++color)
           {
@@ -1120,29 +1064,56 @@ namespace Portable
 
             if (n_cells > 0)
               {
-                using TeamPolicy = Kokkos::TeamPolicy<
-                  MemorySpace::Default::kokkos_space::execution_space>;
+                // using TeamPolicy = Kokkos::TeamPolicy<
+                //   MemorySpace::Default::kokkos_space::execution_space>;
 
-                Functor cell_restrictor;
+                // Functor cell_restrictor;
 
-                auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
+                // auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
 
-                p_mg_transfer::
-                  ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
-                    apply_kernel(cell_restrictor,
-                                 this->prolongation_matrix_1d,
-                                 this->weights_view_kokkos[color],
-                                 this->dof_indices_coarse[color],
-                                 this->plain_dof_indices_fine[color],
-                                 use_coloring,
-                                 src,
-                                 dst);
+                // p_mg_transfer::
+                //   ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
+                //     apply_kernel(cell_restrictor,
+                //                  this->prolongation_matrix_1d,
+                //                  this->weights_view_kokkos[color],
+                //                  this->dof_indices_coarse[color],
+                //                  this->plain_dof_indices_fine[color],
+                //                  use_coloring,
+                //                  src,
+                //                  dst);
 
-                Kokkos::parallel_for(
-                  "dealii::MatrixFree::restrict_and_add_color " +
-                    std::to_string(color),
-                  team_policy,
-                  apply_kernel);
+                // Kokkos::parallel_for(
+                //   "dealii::MatrixFree::restrict_and_add_color " +
+                //     std::to_string(color),
+                //   team_policy,
+                //   apply_kernel);
+
+                constexpr bool is_serial =
+                  std::is_same<Kokkos::DefaultExecutionSpace,
+                               Kokkos::DefaultHostExecutionSpace>::value;
+
+                unsigned int numBlocks       = numbers::invalid_unsigned_int;
+                unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+                if (is_serial)
+                  {
+                    numBlocks       = 1u;
+                    threadsPerBlock = 1u;
+                  }
+
+
+                BK1::Parallel::KokkosRestrictionKernel<dim,
+                                                       p_coarse + 1,
+                                                       p_fine + 1,
+                                                       number>(
+                  this->prolongation_matrix_1d,
+                  src_device,
+                  dst_device,
+                  this->dof_indices_coarse[color],
+                  this->plain_dof_indices_fine[color],
+                  this->weights_view_kokkos[color],
+                  n_cells,
+                  numBlocks,
+                  threadsPerBlock);
               }
           }
         dst.compress(VectorOperation::add);
