@@ -23,12 +23,16 @@
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/vector_tools.h>
 
+#include <Kokkos_Core.hpp>
+#include <Kokkos_Random.hpp>
+
 #include <fstream>
 #include <iostream>
 
 #include "multigrid/portable_polynomial_tranfer.h"
 #include "multigrid/portable_v_cycle_multigrid.h"
 #include "operators/portable_laplace_operator_bk3.h"
+
 
 using namespace dealii;
 
@@ -64,6 +68,9 @@ private:
 
   void
   output_results(const unsigned int cycle) const;
+
+  void
+  test_prolongation();
 
   MPI_Comm mpi_communicator;
 
@@ -439,9 +446,78 @@ LaplaceProblem<dim, fe_degree, mg_levels>::output_results(
 
 template <int dim, int fe_degree, int mg_levels>
 void
+LaplaceProblem<dim, fe_degree, mg_levels>::test_prolongation()
+{
+  for (unsigned int level = 1; level <= mg_matrices.max_level(); ++level)
+    {
+      LinearAlgebra::distributed::Vector<double, MemorySpace::Default>
+      src,
+        dst;
+
+      const unsigned int level_coarse = level - 1;
+      const unsigned int level_fine   = level;
+
+      // mg_matrices[level_coarse]->initialize_dof_vector(src);
+      mg_matrices[level_fine]->initialize_dof_vector(src);
+      // src_coarse = 1.;
+
+      Portable::DeviceVector<double> src_device(src.get_values(),
+                                                src.locally_owned_size());
+
+      Kokkos::Random_XorShift64_Pool<> rand_pool(5374835);
+
+      Kokkos::parallel_for(
+        "set_values",
+        src.locally_owned_size(),
+        KOKKOS_LAMBDA(const unsigned int i) {
+          auto generator = rand_pool.get_state();
+
+          double random_val = generator.drand(0.0, 1.0);
+
+          src_device(i) = random_val;
+
+          rand_pool.free_state(generator);
+        });
+
+        // mg_matrices[level_fine]->initialize_dof_vector(dst);
+      mg_matrices[level_coarse]->initialize_dof_vector(dst);
+
+      // mg_transfers[level_fine]->prolongate_and_add(dst, src);
+      mg_transfers[level_fine]->restrict_and_add(dst, src);
+    }
+
+  // LinearAlgebra::distributed::Vector<double, MemorySpace::Default> src, dst;
+
+  // const unsigned int level_coarse = 0;
+  // const unsigned int level_fine   = 1;
+
+  // // mg_matrices[level_coarse]->initialize_dof_vector(src);
+  // mg_matrices[level_fine]->initialize_dof_vector(src);
+
+  // // src_coarse = 1.;
+
+  // Portable::DeviceVector<double> src_device(src.get_values(),
+  //                                           src.locally_owned_size());
+
+  // Kokkos::parallel_for(
+  //   "set_values",
+  //   src.locally_owned_size(),
+  //   KOKKOS_LAMBDA(const unsigned int i) { src_device(i) = i + 1; });
+
+  // // mg_matrices[level_fine]->initialize_dof_vector(dst);
+  // mg_matrices[level_coarse]->initialize_dof_vector(dst);
+
+  // // mg_transfers[level_fine]->prolongate_and_add(dst, src);
+
+  // mg_transfers[level_fine]->restrict_and_add(dst, src);
+}
+
+template <int dim, int fe_degree, int mg_levels>
+void
 LaplaceProblem<dim, fe_degree, mg_levels>::run()
 {
   for (unsigned int cycle = 0; cycle < 9 - dim; ++cycle)
+    // for (unsigned int cycle = 0; cycle < 1; ++cycle)
     {
       pcout << std::endl << std::endl;
       pcout << "Cycle " << cycle << std::endl;
@@ -450,6 +526,7 @@ LaplaceProblem<dim, fe_degree, mg_levels>::run()
         {
           GridGenerator::hyper_cube(triangulation, 0., 1.);
           triangulation.refine_global(3 - dim);
+          // triangulation.refine_global(1);
         }
       else
         {
@@ -463,6 +540,8 @@ LaplaceProblem<dim, fe_degree, mg_levels>::run()
       solve();
       post_process_solution();
       output_results(cycle);
+
+      // test_prolongation();
 
       pcout << std::endl;
     }
@@ -479,8 +558,8 @@ main(int argc, char *argv[])
       const int fe_degree = 4;
       const int mg_levels = 4;
 
-      const unsigned int n_pre_smooth  = 3;
-      const unsigned int n_post_smooth = 3;
+      const unsigned int n_pre_smooth  = 5;
+      const unsigned int n_post_smooth = 5;
 
       const bool overlap_communication_computation = false;
 

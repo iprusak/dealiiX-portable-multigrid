@@ -11,7 +11,9 @@
 
 #include <Kokkos_Core.hpp>
 
+#include "kernels/bk1_kokkos_kernels.h"
 #include "multigrid/portable_geometric_transfer_core.h"
+
 
 DEAL_II_NAMESPACE_OPEN
 
@@ -838,31 +840,77 @@ namespace Portable
 
     MemorySpace::Default::kokkos_space::execution_space exec;
 
+    DeviceVector<number> src_device(src.get_values(), src.size()),
+      dst_device(dst.get_values(), dst.locally_owned_size());
+
+
     unsigned int scheme_index = 0;
     for (auto &scheme : transfer_schemes)
       {
         if (scheme.n_coarse_cells == 0)
           continue;
 
-        h_mg_transfer::CellProlongationKernel<dim, fe_degree, number>
-          prolongator;
+        // h_mg_transfer::CellProlongationKernel<dim, fe_degree, number>
+        //   prolongator;
 
-        auto team_policy =
-          TeamPolicy(exec, scheme.n_coarse_cells, Kokkos::AUTO);
+        // auto team_policy =
+        //   TeamPolicy(exec, scheme.n_coarse_cells, Kokkos::AUTO);
 
-        h_mg_transfer::ApplyCellKernel<dim, fe_degree, number, Functor>
-          apply_prolongation(prolongator,
-                             scheme.prolongation_matrix_shared_memory,
-                             scheme.weights,
-                             scheme.dof_indices_coarse,
-                             scheme.dof_indices_fine,
-                             src,
-                             dst);
+        // h_mg_transfer::ApplyCellKernel<dim, fe_degree, number, Functor>
+        //   apply_prolongation(prolongator,
+        //                      scheme.prolongation_matrix_shared_memory,
+        //                      scheme.weights,
+        //                      scheme.dof_indices_coarse,
+        //                      scheme.dof_indices_fine,
+        //                      src,
+        //                      dst);
 
-        Kokkos::parallel_for("prolongate_and_add_h_transfer_scheme_" +
-                               std::to_string(scheme_index),
-                             team_policy,
-                             apply_prolongation);
+        // Kokkos::parallel_for("prolongate_and_add_h_transfer_scheme_" +
+        //                        std::to_string(scheme_index),
+        //                      team_policy,
+        //                      apply_prolongation);
+
+        constexpr bool is_serial =
+          std::is_same<Kokkos::DefaultExecutionSpace,
+                       Kokkos::DefaultHostExecutionSpace>::value;
+
+        unsigned int numBlocks       = numbers::invalid_unsigned_int;
+        unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+        if (is_serial)
+          {
+            numBlocks       = 1u;
+            threadsPerBlock = 1u;
+          }
+
+
+        // BK1::Parallel::KokkosProlongationKernel<dim,
+        //                                         fe_degree + 1,
+        //                                         2 * fe_degree + 1,
+        //                                         number>(
+        //   scheme.prolongation_matrix_shared_memory,
+        //   src_device,
+        //   dst_device,
+        //   scheme.dof_indices_coarse,
+        //   scheme.dof_indices_fine,
+        //   scheme.weights,
+        //   scheme.n_coarse_cells,
+        //   numBlocks,
+        //   threadsPerBlock);
+
+        BK1::Parallel::KokkosProlongationBatchedKernel<dim,
+                                                fe_degree + 1,
+                                                2 * fe_degree + 1,
+                                                number>(
+          scheme.prolongation_matrix_shared_memory,
+          src_device,
+          dst_device,
+          scheme.dof_indices_coarse,
+          scheme.dof_indices_fine,
+          scheme.weights,
+          scheme.n_coarse_cells,
+          numBlocks,
+          threadsPerBlock);
+
         ++scheme_index;
       }
   }
@@ -881,30 +929,78 @@ namespace Portable
 
     MemorySpace::Default::kokkos_space::execution_space exec;
 
+    DeviceVector<number> src_device(src.get_values(), src.size()),
+      dst_device(dst.get_values(), dst.locally_owned_size());
+
+
     unsigned int scheme_index = 0;
     for (auto &scheme : transfer_schemes)
       {
         if (scheme.n_coarse_cells == 0)
           continue;
 
-        h_mg_transfer::CellRestrictionKernel<dim, fe_degree, number> restrictor;
+        // h_mg_transfer::CellRestrictionKernel<dim, fe_degree, number>
+        // restrictor;
 
-        auto team_policy =
-          TeamPolicy(exec, scheme.n_coarse_cells, Kokkos::AUTO);
+        // auto team_policy =
+        //   TeamPolicy(exec, scheme.n_coarse_cells, Kokkos::AUTO);
 
-        h_mg_transfer::ApplyCellKernel<dim, fe_degree, number, Functor>
-          apply_restriction(restrictor,
-                            scheme.prolongation_matrix_shared_memory,
-                            scheme.weights,
-                            scheme.dof_indices_coarse,
-                            scheme.dof_indices_fine,
-                            src,
-                            dst);
+        // h_mg_transfer::ApplyCellKernel<dim, fe_degree, number, Functor>
+        //   apply_restriction(restrictor,
+        //                     scheme.prolongation_matrix_shared_memory,
+        //                     scheme.weights,
+        //                     scheme.dof_indices_coarse,
+        //                     scheme.dof_indices_fine,
+        //                     src,
+        //                     dst);
 
-        Kokkos::parallel_for("restrict_and_add_h_transfer_scheme_" +
-                               std::to_string(scheme_index),
-                             team_policy,
-                             apply_restriction);
+        // Kokkos::parallel_for("restrict_and_add_h_transfer_scheme_" +
+        //                        std::to_string(scheme_index),
+        //                      team_policy,
+        //                      apply_restriction);
+
+        constexpr bool is_serial =
+          std::is_same<Kokkos::DefaultExecutionSpace,
+                       Kokkos::DefaultHostExecutionSpace>::value;
+
+        unsigned int numBlocks       = numbers::invalid_unsigned_int;
+        unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+        if (is_serial)
+          {
+            numBlocks       = 1u;
+            threadsPerBlock = 1u;
+          }
+
+
+        // BK1::Parallel::KokkosRestrictionKernel<dim,
+        //                                        fe_degree + 1,
+        //                                        2 * fe_degree + 1,
+        //                                        number>(
+        //   scheme.prolongation_matrix_shared_memory,
+        //   src_device,
+        //   dst_device,
+        //   scheme.dof_indices_coarse,
+        //   scheme.dof_indices_fine,
+        //   scheme.weights,
+        //   scheme.n_coarse_cells,
+        //   numBlocks,
+        //   threadsPerBlock);
+
+
+        BK1::Parallel::KokkosRestrictionBatchedKernel<dim,
+                                               fe_degree + 1,
+                                               2 * fe_degree + 1,
+                                               number>(
+          scheme.prolongation_matrix_shared_memory,
+          src_device,
+          dst_device,
+          scheme.dof_indices_coarse,
+          scheme.dof_indices_fine,
+          scheme.weights,
+          scheme.n_coarse_cells,
+          numBlocks,
+          threadsPerBlock);
+
         ++scheme_index;
       }
   }

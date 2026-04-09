@@ -26,8 +26,6 @@ namespace BK3
 
     using DoFIndicesView =
       Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>;
-    using DoFIndicesView =
-      Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>;
 
     template <int dim, int n_local_dofs_1d, int n_q_points_1d, typename number>
     void
