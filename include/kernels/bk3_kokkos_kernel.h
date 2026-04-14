@@ -145,14 +145,6 @@ namespace BK3
                           const unsigned int dof_index =
                             dof_indices(local_idx, global_cell_index);
 
-                          // std::cout<<"Thread " << team_member.team_rank()
-                          //           << " processing element " << e
-                          //           << ", local_idx " << local_idx
-                          //           << ", global_cell_index " <<
-                          //           global_cell_index
-                          //           << ", dof_index " << dof_index
-                          //           << std::endl;
-
                           // The index in the batched shared memory array
                           const int shared_idx = e * nm_total + local_idx;
 
@@ -160,13 +152,6 @@ namespace BK3
                             s_wsp0[shared_idx] = 0;
                           else
                             s_wsp0[shared_idx] = d_in[dof_index];
-
-                          // std::cout
-                          //   << "[ " << dof_index << ", " <<
-                          //   s_wsp0[shared_idx]
-                          //   << " ]"
-                          //   << " "; // print the value read from global
-                          //   memory
                         }
                     }
                 }
@@ -613,16 +598,6 @@ namespace BK3
                   for (unsigned int tid = threadIdx; tid < n_local_dofs_total;
                        tid += blockSize)
                     {
-                      // const int i = tid / (n_local_dofs_1d *
-                      // n_local_dofs_1d); const int j =
-                      //   (tid % (n_local_dofs_1d * n_local_dofs_1d)) /
-                      //   n_local_dofs_1d;
-                      // const int k = tid % n_local_dofs_1d;
-
-                      // const int local_idx =
-                      //   i * n_local_dofs_1d * n_local_dofs_1d +
-                      //   j * n_local_dofs_1d + k;
-
                       const unsigned int dof_index =
                         dof_indices(tid, cell_index);
 
@@ -888,16 +863,6 @@ namespace BK3
                 for (unsigned int tid = threadIdx; tid < n_local_dofs_total;
                      tid += blockSize)
                   {
-                    // const int i = tid / (n_local_dofs_1d * n_local_dofs_1d);
-                    // const int j = (tid % (n_local_dofs_1d * n_local_dofs_1d))
-                    // /
-                    //               n_local_dofs_1d;
-                    // const int k = tid % n_local_dofs_1d;
-
-                    // const int local_idx =
-                    //   i * n_local_dofs_1d * n_local_dofs_1d +
-                    //   j * n_local_dofs_1d + k;
-
                     const unsigned int dof_index = dof_indices(tid, cell_index);
 
                     if (dof_index != numbers::invalid_unsigned_int)
