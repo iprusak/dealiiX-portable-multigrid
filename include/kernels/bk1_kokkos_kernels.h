@@ -19,11 +19,6 @@ namespace BK1
     using DeviceView =
       Kokkos::View<Number *, MemorySpace::Default::kokkos_space>;
 
-    template <typename Number>
-    using SharedView =
-      Kokkos::View<Number *,
-                   MemorySpace::Default::kokkos_space::execution_space>;
-
     using DoFIndicesView =
       Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>;
 
@@ -77,11 +72,13 @@ namespace BK1
 
         Kokkos::parallel_for(
           policy, KOKKOS_LAMBDA(member_type team_member) {
-            SharedView<Number> s_shape_values(team_member.team_shmem(),
-                                              nm_coarse * nm_fine);
+            Number *scratch =
+              (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
-            SharedView<Number> s_wsp0(team_member.team_shmem(), nm_fine_total);
-            SharedView<Number> s_wsp1(team_member.team_shmem(), nm_fine_total);
+            Number *s_shape_values = scratch;
+
+            Number *s_wsp0 = s_shape_values + nm_coarse * nm_fine;
+            Number *s_wsp1 = s_wsp0 + nm_fine_total;
 
             unsigned int threadIdx = team_member.team_rank();
             unsigned int blockSize = team_member.team_size();
@@ -251,11 +248,13 @@ namespace BK1
 
         Kokkos::parallel_for(
           policy, KOKKOS_LAMBDA(member_type team_member) {
-            SharedView<Number> s_shape_values(team_member.team_shmem(),
-                                              nm_coarse * nm_fine);
+            Number *scratch =
+              (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
-            SharedView<Number> s_wsp0(team_member.team_shmem(), nm_fine_total);
-            SharedView<Number> s_wsp1(team_member.team_shmem(), nm_fine_total);
+            Number *s_shape_values = scratch;
+
+            Number *s_wsp0 = s_shape_values + nm_coarse * nm_fine;
+            Number *s_wsp1 = s_wsp0 + nm_fine_total;
 
             unsigned int threadIdx = team_member.team_rank();
             unsigned int blockSize = team_member.team_size();
@@ -429,13 +428,13 @@ namespace BK1
 
         Kokkos::parallel_for(
           policy, KOKKOS_LAMBDA(member_type team_member) {
-            SharedView<Number> s_shape_values(team_member.team_shmem(),
-                                              nm_coarse * nm_fine);
+            Number *scratch =
+              (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
-            SharedView<Number> s_wsp0(team_member.team_shmem(),
-                                      nelmtPerBatch * nm_fine_total);
-            SharedView<Number> s_wsp1(team_member.team_shmem(),
-                                      nelmtPerBatch * nm_fine_total);
+            Number *s_shape_values = scratch;
+
+            Number *s_wsp0 = s_shape_values + nm_coarse * nm_fine;
+            Number *s_wsp1 = s_wsp0 + nelmtPerBatch * nm_fine_total;
 
             Number reg[nm_fine];
 
@@ -695,13 +694,13 @@ namespace BK1
 
         Kokkos::parallel_for(
           policy, KOKKOS_LAMBDA(member_type team_member) {
-            SharedView<Number> s_shape_values(team_member.team_shmem(),
-                                              nm_coarse * nm_fine);
+            Number *scratch =
+              (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
-            SharedView<Number> s_wsp0(team_member.team_shmem(),
-                                      nelmtPerBatch * nm_fine_total);
-            SharedView<Number> s_wsp1(team_member.team_shmem(),
-                                      nelmtPerBatch * nm_fine_total);
+            Number *s_shape_values = scratch;
+
+            Number *s_wsp0 = s_shape_values + nm_coarse * nm_fine;
+            Number *s_wsp1 = s_wsp0 + nelmtPerBatch * nm_fine_total;
 
             Number reg[nm_fine];
 
