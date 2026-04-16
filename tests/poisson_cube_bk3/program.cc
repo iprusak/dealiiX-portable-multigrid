@@ -1201,11 +1201,11 @@ main(int argc, char *argv[])
 
 
       if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-        std::cout << "Settings of parameters: " << std::endl
-                  << "Number of MPI ranks:            "
+        std::cout << "Settings of parameters:                " << std::endl
+                  << "Number of MPI ranks:                   "
                   << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)
                   << std::endl
-                  << "Polynomial degree:                    " << degree
+                  << "Polynomial degree:                     " << degree
                   << std::endl
                   << "Minimum size:                          " << minsize
                   << std::endl
