@@ -47,6 +47,13 @@ namespace Portable
           VectorType               &x,
           const VectorType         &b,
           const PreconditionerType &preconditioner);
+
+    template <typename MatrixType, typename PreconditionerType>
+    void
+    solve_enhanced(const MatrixType         &A,
+                   VectorType               &x,
+                   const VectorType         &b,
+                   const PreconditionerType &preconditioner);
   };
 
 
@@ -80,11 +87,15 @@ namespace Portable
     typename VectorMemory<VectorType>::Pointer p_pointer(this->memory);
     typename VectorMemory<VectorType>::Pointer v_pointer(this->memory);
     typename VectorMemory<VectorType>::Pointer z_pointer(this->memory);
+    typename VectorMemory<VectorType>::Pointer w_pointer(this->memory);
+
 
     VectorType &r = *r_pointer;
     VectorType &p = *p_pointer;
     VectorType &v = *v_pointer;
     VectorType &z = *z_pointer;
+    VectorType &w = *w_pointer;
+
 
     // resize the vectors, but do not set the values since they'd be
     // overwritten soon anyway.
@@ -92,6 +103,7 @@ namespace Portable
     p.reinit(x, true);
     v.reinit(x, true);
     z.reinit(x, true);
+    w.reinit(x, true);
 
     int it = 0;
 
@@ -99,7 +111,9 @@ namespace Portable
     number beta                       = number();
     number alpha                      = number();
 
-    preconditioner.balance(x, b);
+
+    if (std::is_same<PreconditionerType, PreconditionIdentity>::value == false)
+      preconditioner.balance(x, b);
 
     // compute residual. if vector is zero, then short-circuit the full
     // computation
@@ -114,7 +128,9 @@ namespace Portable
     double residual_norm = r.l2_norm();
     solver_state         = this->iteration_status(0, residual_norm, x);
 
-    preconditioner.reset_timings();
+
+    if (std::is_same<PreconditionerType, PreconditionIdentity>::value == false)
+      preconditioner.reset_timings();
 
     if (solver_state != SolverControl::iterate)
       return;
@@ -132,6 +148,14 @@ namespace Portable
             preconditioner.vmult(z, r);
 
             preconditioner.project(v, z);
+
+            // preconditioner.balance(w, r);
+
+            // preconditioner.vmult(z, r);
+
+            // preconditioner.project(v, z);
+
+            // v += w;
 
             r_dot_preconditioner_dot_r = r * v;
           }
@@ -163,6 +187,120 @@ namespace Portable
         x.add(alpha, p);
 
         residual_norm = std::sqrt(std::abs(r.add_and_dot(-alpha, v, r)));
+
+        if (A.enable_printing())
+          std::cout << "residual_norm = " << residual_norm << std::endl;
+
+        solver_state = this->iteration_status(it, residual_norm, x);
+      }
+
+    AssertThrow(solver_state == SolverControl::success,
+                SolverControl::NoConvergence(it, residual_norm));
+  }
+
+
+  template <typename VectorType>
+  template <typename MatrixType, typename PreconditionerType>
+  void
+  SolverProjectedCG<VectorType>::solve_enhanced(
+    const MatrixType         &A,
+    VectorType               &x,
+    const VectorType         &b,
+    const PreconditionerType &preconditioner)
+  {
+    using number                      = typename VectorType::value_type;
+    SolverControl::State solver_state = SolverControl::iterate;
+
+    // Memory allocation
+    typename VectorMemory<VectorType>::Pointer r_pointer(this->memory);
+    typename VectorMemory<VectorType>::Pointer p_pointer(this->memory);
+    typename VectorMemory<VectorType>::Pointer v_pointer(this->memory);
+    typename VectorMemory<VectorType>::Pointer z_pointer(this->memory);
+    typename VectorMemory<VectorType>::Pointer s_pointer(this->memory);
+
+    typename VectorMemory<VectorType>::Pointer s_tilde_pointer(this->memory);
+
+
+    VectorType &r = *r_pointer;
+    VectorType &p = *p_pointer;
+    VectorType &v = *v_pointer;
+    VectorType &z = *z_pointer;
+    VectorType &s = *z_pointer;
+
+
+    VectorType &s_tilde = *s_tilde_pointer;
+
+
+    // resize the vectors, but do not set the values since they'd be
+    // overwritten soon anyway.
+    r.reinit(x, true);
+    p.reinit(x, true);
+    v.reinit(x, true);
+    z.reinit(x, true);
+    s.reinit(x, true);
+
+    s_tilde.reinit(x, true);
+
+    int it = 0;
+
+    number r_dot_preconditioner_dot_r = number();
+    number beta                       = number();
+    number alpha                      = number();
+
+
+    // compute residual. if vector is zero, then short-circuit the full
+    // computation
+    if (!x.all_zero())
+      {
+        A.vmult(r, x);
+        r.sadd(-1., 1., b);
+      }
+    else
+      r.equ(1., b);
+
+    double residual_norm = r.l2_norm();
+    solver_state         = this->iteration_status(0, residual_norm, x);
+
+    preconditioner.reset_timings();
+
+    preconditioner.vmult_enhanced(z, s_tilde, r);
+
+    p = z;
+
+    r_dot_preconditioner_dot_r = r * z;
+
+    if (solver_state != SolverControl::iterate)
+      return;
+
+    while (solver_state == SolverControl::iterate)
+      {
+        it++;
+
+        s.sadd(beta, s_tilde);
+
+        const number old_r_dot_preconditioner_dot_r =
+          r_dot_preconditioner_dot_r;
+
+        const number p_dot_A_dot_p = p * s;
+        Assert(std::abs(p_dot_A_dot_p) != 0., ExcDivideByZero());
+        alpha = r_dot_preconditioner_dot_r / p_dot_A_dot_p;
+
+        x.add(alpha, p);
+
+        r.add(-alpha, s);
+
+
+        preconditioner.vmult_enhanced(z, s_tilde, r);
+
+        r_dot_preconditioner_dot_r = r * z;
+
+        beta = r_dot_preconditioner_dot_r / old_r_dot_preconditioner_dot_r;
+
+        p.sadd(beta, z);
+
+        // residual_norm = std::sqrt(std::abs(r.add_and_dot(-alpha, v, r)));
+
+        residual_norm = std::sqrt(std::abs(r * r));
 
         if (A.enable_printing())
           std::cout << "residual_norm = " << residual_norm << std::endl;

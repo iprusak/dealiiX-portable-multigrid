@@ -891,11 +891,25 @@ LaplaceProblem<dim, fe_degree>::solve_interface()
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>
     cg(solver_control);
 
+  // SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>> cg(
+  //   solver_control);
+
   solution_interface_device = 0.;
-  cg.solve(*interface_operator,
-           solution_interface_device,
-           rhs_schur_device,
-           *bnn_preconditioner);
+  // cg.solve(*interface_operator,
+  //          solution_interface_device,
+  //          rhs_schur_device,
+  //          *bnn_preconditioner);
+
+  cg.solve_enhanced(*interface_operator,
+                    solution_interface_device,
+                    rhs_schur_device,
+                    *bnn_preconditioner);
+
+
+  // cg.solve(*interface_operator,
+  //          solution_interface_device,
+  //          rhs_schur_device,
+  //          PreconditionIdentity());
 
   solution_interface_device.update_ghost_values();
 
@@ -909,10 +923,10 @@ LaplaceProblem<dim, fe_degree>::solve_interface()
   const auto max_mg_iterations =
     interface_operator->get_maximum_subdomain_mg_iterations();
 
-  const auto max_mg_iterations_dir  =
+  const auto max_mg_iterations_dir =
     Utilities::MPI::max(max_mg_iterations.first, mpi_communicator);
 
-  const auto  max_mg_iterations_neu =
+  const auto max_mg_iterations_neu =
     Utilities::MPI::max(max_mg_iterations.second, mpi_communicator);
 
   const auto iterations = std::max(solver_control.last_step(), 1u);

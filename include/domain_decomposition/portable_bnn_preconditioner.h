@@ -46,6 +46,14 @@ namespace Portable
       const bool communication_on) const;
 
     void
+    balance_and_vmult(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &S_per_dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const;
+
+    void
     setup_coarse_matrix();
 
     void
@@ -53,6 +61,24 @@ namespace Portable
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
                            &interface_vector,
       const Vector<number> &coarse_vector) const;
+
+
+
+    void
+    coarse_to_global_interface_and_S_update(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &interface_vector,
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                           &S_per_interface_vector,
+      const Vector<number> &coarse_vector) const;
+
+
+    void
+    vmult_enhanced(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &z,
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &s_tilde,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &r)
+      const;
 
     void
     global_interface_to_coarse(
@@ -93,7 +119,13 @@ namespace Portable
       interface_dof_indices_subdomain;
 
     mutable LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-      temp_interface;
+      temp_interface, z0, S_z0;
+
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      S_per_coarse_basis_function;
+
+    // LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+    //   temp_interface, z0;
 
     mutable std::vector<number> temp_coarse_gather;
     mutable Vector<number>      temp_coarse_rhs;
@@ -125,6 +157,11 @@ namespace Portable
     temp_interface.reinit(
       this->subdomain_dof_handler->get_interface_vector_partitioner());
 
+    S_per_coarse_basis_function.reinit(temp_interface);
+
+    z0.reinit(temp_interface);
+    S_z0.reinit(temp_interface);
+
     temp_coarse_gather.resize(n_subdomains);
     temp_coarse_rhs.reinit(n_subdomains);
     temp_coarse_solution.reinit(n_subdomains);
@@ -143,6 +180,45 @@ namespace Portable
   BNNPreconditioner<dim, number>::get_timings() const
   {
     return timings;
+  }
+
+
+  template <int dim, typename number>
+  void
+  BNNPreconditioner<dim, number>::vmult_enhanced(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &z,
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &s_tilde,
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &r)
+    const
+  {
+    Assert(
+      z.get_partitioner() ==
+        this->subdomain_dof_handler->get_interface_vector_partitioner(),
+      ExcMessage(
+        "This function expects a vector initialized by SubdomainDoFHandler's \
+             interface vector partitioner."));
+    Assert(
+      r.get_partitioner() ==
+        this->subdomain_dof_handler->get_interface_vector_partitioner(),
+      ExcMessage(
+        "This function expects a vector initialized by SubdomainDoFHandler's \
+            interface vector partitioner."));
+
+
+    // local NN preconditioner
+    this->vmult(z, r);
+
+    this->vmult_interface(s_tilde, z);
+
+    temp_interface = r;
+    temp_interface -= s_tilde;
+
+    this->balance_and_vmult(z0, S_z0, temp_interface);
+
+    s_tilde += S_z0;
+    z += z0;
+
+    // sz0=
   }
 
   template <int dim, typename number>
@@ -299,6 +375,48 @@ namespace Portable
 
   template <int dim, typename number>
   void
+  BNNPreconditioner<dim, number>::balance_and_vmult(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &S_per_dst,
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
+    const
+  {
+    Assert(
+      dst.get_partitioner() ==
+        this->subdomain_dof_handler->get_interface_vector_partitioner(),
+      ExcMessage(
+        "This function expects a vector initialized by SubdomainDoFHandler's \
+             interface vector partitioner."));
+    Assert(
+      src.get_partitioner() ==
+        this->subdomain_dof_handler->get_interface_vector_partitioner(),
+      ExcMessage(
+        "This function expects a vector initialized by SubdomainDoFHandler's \
+            interface vector partitioner."));
+
+    this->temp_coarse_rhs = 0.;
+
+    // project from global interface to coarse space
+    this->global_interface_to_coarse(this->temp_coarse_rhs, src);
+
+    // solve coarse problem
+    if (this->this_subdomain == this->coarse_problem_rank)
+      {
+        this->temp_coarse_solution = 0.;
+
+        this->coarse_matrix.vmult(this->temp_coarse_solution,
+                                  this->temp_coarse_rhs);
+      }
+
+    // project back to the global interface space
+    this->coarse_to_global_interface_and_S_update(dst,
+                                                  S_per_dst,
+                                                  this->temp_coarse_solution);
+  }
+
+
+  template <int dim, typename number>
+  void
   BNNPreconditioner<dim, number>::balance_dummy(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
@@ -439,6 +557,60 @@ namespace Portable
 
   template <int dim, typename number>
   void
+  BNNPreconditioner<dim, number>::coarse_to_global_interface_and_S_update(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      &interface_vector,
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                         &S_per_interface_vector,
+    const Vector<number> &coarse_vector) const
+  {
+    Assert(interface_vector.get_partitioner() ==
+             this->subdomain_dof_handler->get_interface_vector_partitioner(),
+           ExcMessage("Interface vector is not initialized correctly."));
+
+    DeviceVector<number> interface_vector_view(interface_vector.get_values(),
+                                               interface_vector.size());
+
+    DeviceVector<number> weights_view(interface_weights.get_values(),
+                                      interface_weights.size());
+
+
+    // copy coarse Vector to std::vector for MPi::scatter
+    if (this->this_subdomain == this->coarse_problem_rank)
+      {
+        for (unsigned int i = 0; i < coarse_vector.size(); ++i)
+          this->temp_coarse_gather[i] = coarse_vector[i];
+      }
+
+    // retrieve subdomain coarse value (i.e., mean value)
+    const number subdomain_coarse_value = Utilities::MPI::scatter(
+      this->subdomain_dof_handler->get_mpi_communicator(),
+      this->temp_coarse_gather,
+      this->coarse_problem_rank);
+
+    // propagate coarse value to the interface by applying weights
+    interface_vector = 0.;
+    Kokkos::parallel_for(
+      "SubdomainLaplaceOperator::coarse_to_subdomain_interface",
+      interface_dof_indices_subdomain.size(),
+      KOKKOS_LAMBDA(const unsigned int i) {
+        interface_vector_view(i) = subdomain_coarse_value * weights_view(i);
+      });
+
+    S_per_interface_vector = 0;
+    S_per_interface_vector.add(subdomain_coarse_value,
+                               S_per_coarse_basis_function);
+
+    S_per_interface_vector.compress(VectorOperation::add);
+    S_per_interface_vector.update_ghost_values();
+
+    // condense
+    interface_vector.compress(VectorOperation::add);
+    interface_vector.update_ghost_values();
+  }
+
+  template <int dim, typename number>
+  void
   BNNPreconditioner<dim, number>::setup_coarse_matrix()
   {
     if (this->this_subdomain == this->coarse_problem_rank)
@@ -460,6 +632,9 @@ namespace Portable
         this->coarse_to_global_interface(phi_j, e_j);
 
         this->interface_operator->vmult(S_phi_j, phi_j);
+
+        if (this->this_subdomain == this->coarse_problem_rank)
+          S_per_coarse_basis_function = S_phi_j;
 
         this->global_interface_to_coarse(coarse_column, S_phi_j);
 
