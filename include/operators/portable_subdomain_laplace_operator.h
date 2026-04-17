@@ -237,7 +237,8 @@ namespace Portable
 
     setup_dof_indices_per_color(constraints);
 
-    compute_G_tensors();
+    if constexpr (dim == 3)
+      compute_G_tensors();
   }
 
   template <int dim, int fe_degree, typename number>
@@ -264,79 +265,86 @@ namespace Portable
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
   {
-    // dst = 0.;
-    // LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
-    // this->cell_loop(cell_operator, src, dst);
-    // matrix_free.copy_constrained_values(src, dst);
-
-    dst = 0.;
-
-    DeviceVector<number> src_device(src.get_values(), src.size()),
-      dst_device(dst.get_values(), dst.size());
-
-    src.update_ghost_values();
-
-    const auto        &colored_graph = matrix_free.get_colored_graph();
-    const unsigned int n_colors      = colored_graph.size();
-
-    for (unsigned int color = 0; color < n_colors; ++color)
+    if constexpr (dim == 2)
       {
-        const unsigned int n_cells = colored_graph[color].size();
-
-        // std::cout << "color: " << color << ", n_cells: " << n_cells
-        //           << std::endl;
-
-        if (n_cells > 0)
-          {
-            const auto &precomputed_data = matrix_free.get_data(color);
-
-            Kokkos::fence();
-
-
-            constexpr bool is_serial =
-              std::is_same<Kokkos::DefaultExecutionSpace,
-                           Kokkos::DefaultHostExecutionSpace>::value;
-
-            unsigned int numBlocks       = numbers::invalid_unsigned_int;
-            unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
-            if (is_serial)
-              {
-                numBlocks       = 1u;
-                threadsPerBlock = 1u;
-              }
-
-            // BK3::Parallel::
-            //   KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
-            //   number>(
-            //     precomputed_data.shape_values,
-            //     precomputed_data.co_shape_gradients,
-            //     G_tensors[color],
-            //     src_device,
-            //     dst_device,
-            //     interior_dof_indices_per_color[color],
-            //     n_cells,
-            //     numBlocks,
-            //     threadsPerBlock);
-
-            BK3::Parallel::
-              KokkosKernel<dim, fe_degree + 1, fe_degree + 1, number>(
-                precomputed_data.shape_values,
-                precomputed_data.co_shape_gradients,
-                G_tensors[color],
-                src_device,
-                dst_device,
-                interior_dof_indices_per_color[color],
-                n_cells,
-                numBlocks,
-                threadsPerBlock);
-
-            Kokkos::fence();
-          }
+        dst = 0.;
+        LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
+        this->cell_loop(cell_operator, src, dst);
+        matrix_free.copy_constrained_values(src, dst);
       }
+    else
+      {
+        dst = 0.;
 
-    dst.compress(VectorOperation::add);
-    src.zero_out_ghost_values();
-    matrix_free.copy_constrained_values(src, dst);
+        DeviceVector<number> src_device(src.get_values(), src.size()),
+          dst_device(dst.get_values(), dst.size());
+
+
+        src.update_ghost_values();
+
+        const auto        &colored_graph = matrix_free.get_colored_graph();
+        const unsigned int n_colors      = colored_graph.size();
+
+        for (unsigned int color = 0; color < n_colors; ++color)
+          {
+            const unsigned int n_cells = colored_graph[color].size();
+
+            // std::cout << "color: " << color << ", n_cells: " << n_cells
+            //           << std::endl;
+
+            if (n_cells > 0)
+              {
+                const auto &precomputed_data = matrix_free.get_data(color);
+
+                Kokkos::fence();
+
+
+                constexpr bool is_serial =
+                  std::is_same<Kokkos::DefaultExecutionSpace,
+                               Kokkos::DefaultHostExecutionSpace>::value;
+
+                unsigned int numBlocks       = numbers::invalid_unsigned_int;
+                unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+                if (is_serial)
+                  {
+                    numBlocks       = 1u;
+                    threadsPerBlock = 1u;
+                  }
+
+                // BK3::Parallel::
+                //   KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
+                //   number>(
+                //     precomputed_data.shape_values,
+                //     precomputed_data.co_shape_gradients,
+                //     G_tensors[color],
+                //     src_device,
+                //     dst_device,
+                //     interior_dof_indices_per_color[color],
+                //     n_cells,
+                //     numBlocks,
+                //     threadsPerBlock);
+
+                BK3::Parallel::
+                  KokkosKernel<dim, fe_degree + 1, fe_degree + 1, number>(
+                    precomputed_data.shape_values,
+                    precomputed_data.co_shape_gradients,
+                    G_tensors[color],
+                    src_device,
+                    dst_device,
+                    interior_dof_indices_per_color[color],
+                    n_cells,
+                    numBlocks,
+                    threadsPerBlock);
+
+                Kokkos::fence();
+              }
+          }
+
+
+        dst.compress(VectorOperation::add);
+        src.zero_out_ghost_values();
+        matrix_free.copy_constrained_values(src, dst);
+      }
   }
 
   template <int dim, int fe_degree, typename number>
@@ -346,79 +354,84 @@ namespace Portable
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
   {
-    // dst = 0.;
-    // LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
-    // this->cell_loop(cell_operator, src, dst);
-    // matrix_free.copy_constrained_values(src, dst);
-
-    dst = 0.;
-
-    DeviceVector<number> src_device(src.get_values(), src.size()),
-      dst_device(dst.get_values(), dst.size());
-
-    src.update_ghost_values();
-
-    const auto        &colored_graph = matrix_free.get_colored_graph();
-    const unsigned int n_colors      = colored_graph.size();
-
-    for (unsigned int color = 0; color < n_colors; ++color)
+    if constexpr (dim == 2)
       {
-        const unsigned int n_cells = colored_graph[color].size();
-
-        // std::cout << "color: " << color << ", n_cells: " << n_cells
-        //           << std::endl;
-
-        if (n_cells > 0)
-          {
-            const auto &precomputed_data = matrix_free.get_data(color);
-
-            Kokkos::fence();
-
-            constexpr bool is_serial =
-              std::is_same<Kokkos::DefaultExecutionSpace,
-                           Kokkos::DefaultHostExecutionSpace>::value;
-
-            unsigned int numBlocks       = numbers::invalid_unsigned_int;
-            unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
-
-            if (is_serial)
-              {
-                numBlocks       = 1u;
-                threadsPerBlock = 1u;
-              }
-
-            // BK3::Parallel::
-            //   KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
-            //   number>(
-            //     precomputed_data.shape_values,
-            //     precomputed_data.co_shape_gradients,
-            //     G_tensors[color],
-            //     src_device,
-            //     dst_device,
-            //     interior_dof_indices_per_color[color],
-            //     n_cells,
-            //     numBlocks,
-            //     threadsPerBlock);
-
-            BK3::Parallel::
-              KokkosKernel<dim, fe_degree + 1, fe_degree + 1, number>(
-                precomputed_data.shape_values,
-                precomputed_data.co_shape_gradients,
-                G_tensors[color],
-                src_device,
-                dst_device,
-                interior_dof_indices_per_color[color],
-                n_cells,
-                numBlocks,
-                threadsPerBlock);
-
-            Kokkos::fence();
-          }
+        dst = 0.;
+        LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
+        this->cell_loop(cell_operator, src, dst);
+        matrix_free.copy_constrained_values(src, dst);
       }
+    else
+      {
+        DeviceVector<number> src_device(src.get_values(), src.size()),
+          dst_device(dst.get_values(), dst.size());
 
-    dst.compress(VectorOperation::add);
-    src.zero_out_ghost_values();
-    matrix_free.copy_constrained_values(src, dst);
+        dst = 0.;
+
+        src.update_ghost_values();
+
+        const auto        &colored_graph = matrix_free.get_colored_graph();
+        const unsigned int n_colors      = colored_graph.size();
+
+        for (unsigned int color = 0; color < n_colors; ++color)
+          {
+            const unsigned int n_cells = colored_graph[color].size();
+
+            // std::cout << "color: " << color << ", n_cells: " << n_cells
+            //           << std::endl;
+
+            if (n_cells > 0)
+              {
+                const auto &precomputed_data = matrix_free.get_data(color);
+
+                Kokkos::fence();
+
+                constexpr bool is_serial =
+                  std::is_same<Kokkos::DefaultExecutionSpace,
+                               Kokkos::DefaultHostExecutionSpace>::value;
+
+                unsigned int numBlocks       = numbers::invalid_unsigned_int;
+                unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+
+                if (is_serial)
+                  {
+                    numBlocks       = 1u;
+                    threadsPerBlock = 1u;
+                  }
+
+                // BK3::Parallel::
+                //   KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
+                //   number>(
+                //     precomputed_data.shape_values,
+                //     precomputed_data.co_shape_gradients,
+                //     G_tensors[color],
+                //     src_device,
+                //     dst_device,
+                //     interior_dof_indices_per_color[color],
+                //     n_cells,
+                //     numBlocks,
+                //     threadsPerBlock);
+
+                BK3::Parallel::
+                  KokkosKernel<dim, fe_degree + 1, fe_degree + 1, number>(
+                    precomputed_data.shape_values,
+                    precomputed_data.co_shape_gradients,
+                    G_tensors[color],
+                    src_device,
+                    dst_device,
+                    interior_dof_indices_per_color[color],
+                    n_cells,
+                    numBlocks,
+                    threadsPerBlock);
+
+                Kokkos::fence();
+              }
+          }
+
+        dst.compress(VectorOperation::add);
+        src.zero_out_ghost_values();
+        matrix_free.copy_constrained_values(src, dst);
+      }
   }
 
   template <int dim, int fe_degree, typename number>
@@ -428,68 +441,73 @@ namespace Portable
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
   {
-    // dst = 0.;
-    // LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
-    // this->cell_loop_neumann(cell_operator, src, dst);
-
-
     DeviceVector<number> src_device(src.get_values(), src.size()),
       dst_device(dst.get_values(), dst.size());
 
-    dst = 0.;
 
-    const auto        &colored_graph = matrix_free.get_colored_graph();
-    const unsigned int n_colors      = colored_graph.size();
-
-    for (unsigned int color = 0; color < n_colors; ++color)
+    if constexpr (dim == 2)
       {
-        const unsigned int n_cells = colored_graph[color].size();
+        dst = 0.;
+        LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
+        this->cell_loop_neumann(cell_operator, src, dst);
+      }
+    else
+      {
+        dst = 0.;
 
-        if (n_cells > 0)
+        const auto        &colored_graph = matrix_free.get_colored_graph();
+        const unsigned int n_colors      = colored_graph.size();
+
+        for (unsigned int color = 0; color < n_colors; ++color)
           {
-            const auto &precomputed_data = matrix_free.get_data(color);
+            const unsigned int n_cells = colored_graph[color].size();
 
-            Kokkos::fence();
-
-            constexpr bool is_serial =
-              std::is_same<Kokkos::DefaultExecutionSpace,
-                           Kokkos::DefaultHostExecutionSpace>::value;
-
-            unsigned int numBlocks       = numbers::invalid_unsigned_int;
-            unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
-
-            if (is_serial)
+            if (n_cells > 0)
               {
-                numBlocks       = 1u;
-                threadsPerBlock = 1u;
+                const auto &precomputed_data = matrix_free.get_data(color);
+
+                Kokkos::fence();
+
+                constexpr bool is_serial =
+                  std::is_same<Kokkos::DefaultExecutionSpace,
+                               Kokkos::DefaultHostExecutionSpace>::value;
+
+                unsigned int numBlocks       = numbers::invalid_unsigned_int;
+                unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+
+                if (is_serial)
+                  {
+                    numBlocks       = 1u;
+                    threadsPerBlock = 1u;
+                  }
+
+                // BK3::Parallel::
+                //   KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
+                //   number>(
+                //     precomputed_data.shape_values,
+                //     precomputed_data.co_shape_gradients,
+                //     G_tensors[color],
+                //     src_device,
+                //     dst_device,
+                //     plain_dof_indices_per_color[color],
+                //     n_cells,
+                //     numBlocks,
+                //     threadsPerBlock);
+
+                BK3::Parallel::
+                  KokkosKernel<dim, fe_degree + 1, fe_degree + 1, number>(
+                    precomputed_data.shape_values,
+                    precomputed_data.co_shape_gradients,
+                    G_tensors[color],
+                    src_device,
+                    dst_device,
+                    plain_dof_indices_per_color[color],
+                    n_cells,
+                    numBlocks,
+                    threadsPerBlock);
+
+                Kokkos::fence();
               }
-
-            // BK3::Parallel::
-            //   KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
-            //   number>(
-            //     precomputed_data.shape_values,
-            //     precomputed_data.co_shape_gradients,
-            //     G_tensors[color],
-            //     src_device,
-            //     dst_device,
-            //     plain_dof_indices_per_color[color],
-            //     n_cells,
-            //     numBlocks,
-            //     threadsPerBlock);
-
-            BK3::Parallel::
-              KokkosKernel<dim, fe_degree + 1, fe_degree + 1, number>(
-                precomputed_data.shape_values,
-                precomputed_data.co_shape_gradients,
-                G_tensors[color],
-                src_device,
-                dst_device,
-                plain_dof_indices_per_color[color],
-                n_cells,
-                numBlocks,
-                threadsPerBlock);
-
-            Kokkos::fence();
           }
       }
 
@@ -511,74 +529,76 @@ namespace Portable
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
     const
   {
-    // dst = 0.;
-    // LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
-    // this->cell_range_loop(cell_operator, src, dst);
-
     DeviceVector<number> src_device(src.get_values(), src.size()),
       dst_device(dst.get_values(), dst.size());
 
-    dst                              = 0.;
-    const auto        &colored_graph = matrix_free.get_colored_graph();
-    const unsigned int n_colors      = colored_graph.size();
-
-    for (unsigned int color = 0; color < n_colors; ++color)
+    if constexpr (dim == 2)
       {
-        const unsigned int n_interface_cells =
-          interface_cell_ids_per_color[color].size();
+        dst = 0.;
+        LocalLaplaceOperator<dim, fe_degree, number> cell_operator;
+        this->cell_range_loop(cell_operator, src, dst);
+      }
+    else
+      {
+        dst                              = 0.;
+        const auto        &colored_graph = matrix_free.get_colored_graph();
+        const unsigned int n_colors      = colored_graph.size();
 
-        if (n_interface_cells > 0)
+        for (unsigned int color = 0; color < n_colors; ++color)
           {
-            const auto &precomputed_data = matrix_free.get_data(color);
+            const unsigned int n_interface_cells =
+              interface_cell_ids_per_color[color].size();
 
-            Kokkos::fence();
-
-            constexpr bool is_serial =
-              std::is_same<Kokkos::DefaultExecutionSpace,
-                           Kokkos::DefaultHostExecutionSpace>::value;
-
-            unsigned int numBlocks       = numbers::invalid_unsigned_int;
-            unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
-
-            if (is_serial)
+            if (n_interface_cells > 0)
               {
-                numBlocks       = 1u;
-                threadsPerBlock = 1u;
+                const auto &precomputed_data = matrix_free.get_data(color);
+
+                Kokkos::fence();
+
+                constexpr bool is_serial =
+                  std::is_same<Kokkos::DefaultExecutionSpace,
+                               Kokkos::DefaultHostExecutionSpace>::value;
+
+                unsigned int numBlocks       = numbers::invalid_unsigned_int;
+                unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+
+                if (is_serial)
+                  {
+                    numBlocks       = 1u;
+                    threadsPerBlock = 1u;
+                  }
+
+                // BK3::Parallel::
+                //   KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
+                //   number>(
+                //     precomputed_data.shape_values,
+                //     precomputed_data.co_shape_gradients,
+                //     G_tensors[color],
+                //     src_device,
+                //     dst_device,
+                //     plain_dof_indices_per_color[color],
+                //     n_interface_cells,
+                //     numBlocks,
+                //     threadsPerBlock,
+                //     interface_cell_ids_per_color[color]);
+
+                BK3::Parallel::
+                  KokkosKernel<dim, fe_degree + 1, fe_degree + 1, number>(
+                    precomputed_data.shape_values,
+                    precomputed_data.co_shape_gradients,
+                    G_tensors[color],
+                    src_device,
+                    dst_device,
+                    plain_dof_indices_per_color[color],
+                    n_interface_cells,
+                    numBlocks,
+                    threadsPerBlock,
+                    interface_cell_ids_per_color[color]);
+
+                Kokkos::fence();
               }
-
-            // BK3::Parallel::
-            //   KokkosKernel_1D_Block<dim, fe_degree + 1, fe_degree + 1,
-            //   number>(
-            //     precomputed_data.shape_values,
-            //     precomputed_data.co_shape_gradients,
-            //     G_tensors[color],
-            //     src_device,
-            //     dst_device,
-            //     plain_dof_indices_per_color[color],
-            //     n_interface_cells,
-            //     numBlocks,
-            //     threadsPerBlock,
-            //     interface_cell_ids_per_color[color]);
-
-            BK3::Parallel::
-              KokkosKernel<dim, fe_degree + 1, fe_degree + 1, number>(
-                precomputed_data.shape_values,
-                precomputed_data.co_shape_gradients,
-                G_tensors[color],
-                src_device,
-                dst_device,
-                plain_dof_indices_per_color[color],
-                n_interface_cells,
-                numBlocks,
-                threadsPerBlock,
-                interface_cell_ids_per_color[color]);
-
-            Kokkos::fence();
           }
       }
-
-    DeviceVector<number> t_dst(dst.get_values(), dst.size());
-    DeviceVector<number> t_src(src.get_values(), src.size());
 
     // copy constrained values only for physical boundary dofs
     const auto boundary_dofs = this->physical_boundary_dof_indices;

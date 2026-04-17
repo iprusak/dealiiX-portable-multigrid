@@ -121,15 +121,15 @@ namespace Portable
     mutable LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
       temp_interface, z0, S_z0;
 
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-      S_per_coarse_basis_function;
-
-    // LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
-    //   temp_interface, z0;
+    std::vector<
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>
+      S_per_coarse_basis_functions;
 
     mutable std::vector<number> temp_coarse_gather;
-    mutable Vector<number>      temp_coarse_rhs;
-    mutable Vector<number>      temp_coarse_solution;
+    mutable std::vector<number> temp_coarse_broadcast;
+
+    mutable Vector<number> temp_coarse_rhs;
+    mutable Vector<number> temp_coarse_solution;
 
     /**
      * timings[0] = Dirichler solve
@@ -157,7 +157,10 @@ namespace Portable
     temp_interface.reinit(
       this->subdomain_dof_handler->get_interface_vector_partitioner());
 
-    S_per_coarse_basis_function.reinit(temp_interface);
+    S_per_coarse_basis_functions.resize(n_subdomains);
+
+    for (unsigned int i = 0; i < n_subdomains; ++i)
+      S_per_coarse_basis_functions[i].reinit(temp_interface);
 
     z0.reinit(temp_interface);
     S_z0.reinit(temp_interface);
@@ -213,12 +216,16 @@ namespace Portable
     temp_interface = r;
     temp_interface -= s_tilde;
 
+    Kokkos::fence();
+    Timer time;
+
     this->balance_and_vmult(z0, S_z0, temp_interface);
+
+    Kokkos::fence();
+    timings[2] += time.wall_time();
 
     s_tilde += S_z0;
     z += z0;
-
-    // sz0=
   }
 
   template <int dim, typename number>
@@ -571,9 +578,9 @@ namespace Portable
     DeviceVector<number> interface_vector_view(interface_vector.get_values(),
                                                interface_vector.size());
 
+
     DeviceVector<number> weights_view(interface_weights.get_values(),
                                       interface_weights.size());
-
 
     // copy coarse Vector to std::vector for MPi::scatter
     if (this->this_subdomain == this->coarse_problem_rank)
@@ -583,10 +590,17 @@ namespace Portable
       }
 
     // retrieve subdomain coarse value (i.e., mean value)
-    const number subdomain_coarse_value = Utilities::MPI::scatter(
+    // const number subdomain_coarse_value = Utilities::MPI::scatter(
+    //   this->subdomain_dof_handler->get_mpi_communicator(),
+    //   this->temp_coarse_gather,
+    //   this->coarse_problem_rank);
+
+    temp_coarse_broadcast = Utilities::MPI::broadcast(
       this->subdomain_dof_handler->get_mpi_communicator(),
       this->temp_coarse_gather,
       this->coarse_problem_rank);
+
+    const number subdomain_coarse_value = temp_coarse_broadcast[this_subdomain];
 
     // propagate coarse value to the interface by applying weights
     interface_vector = 0.;
@@ -597,16 +611,15 @@ namespace Portable
         interface_vector_view(i) = subdomain_coarse_value * weights_view(i);
       });
 
-    S_per_interface_vector = 0;
-    S_per_interface_vector.add(subdomain_coarse_value,
-                               S_per_coarse_basis_function);
-
-    S_per_interface_vector.compress(VectorOperation::add);
-    S_per_interface_vector.update_ghost_values();
-
     // condense
     interface_vector.compress(VectorOperation::add);
-    interface_vector.update_ghost_values();
+
+    S_per_interface_vector = 0;
+    for (unsigned int i = 0; i < n_subdomains; ++i)
+      S_per_interface_vector.add(temp_coarse_broadcast[i],
+                                 S_per_coarse_basis_functions[i]);
+
+    S_per_interface_vector.compress(VectorOperation::add);
   }
 
   template <int dim, typename number>
@@ -631,12 +644,10 @@ namespace Portable
 
         this->coarse_to_global_interface(phi_j, e_j);
 
-        this->interface_operator->vmult(S_phi_j, phi_j);
+        this->interface_operator->vmult(S_per_coarse_basis_functions[j], phi_j);
 
-        if (this->this_subdomain == this->coarse_problem_rank)
-          S_per_coarse_basis_function = S_phi_j;
-
-        this->global_interface_to_coarse(coarse_column, S_phi_j);
+        this->global_interface_to_coarse(coarse_column,
+                                         S_per_coarse_basis_functions[j]);
 
         if (this->this_subdomain == this->coarse_problem_rank)
           for (unsigned int i = 0; i < this->n_subdomains; ++i)
@@ -653,6 +664,7 @@ namespace Portable
         // std::cout << std::endl;
       }
   }
+
 } // namespace Portable
 
 

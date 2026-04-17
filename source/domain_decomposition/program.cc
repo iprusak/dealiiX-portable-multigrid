@@ -891,20 +891,27 @@ LaplaceProblem<dim, fe_degree>::solve_interface()
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>
     cg(solver_control);
 
-  // SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>> cg(
-  //   solver_control);
-
-  solution_interface_device = 0.;
+  // solution_interface_device = 0.;
   // cg.solve(*interface_operator,
   //          solution_interface_device,
   //          rhs_schur_device,
   //          *bnn_preconditioner);
+
+
+  // pcout << "           Interface solver converged in "
+  //       << solver_control.last_step() << " iterations.    (CPU/wall) "
+  //       << time.cpu_time() << "s/" << time.wall_time() << 's' << std::endl;
+
+  solution_interface_device = 0.;
 
   cg.solve_enhanced(*interface_operator,
                     solution_interface_device,
                     rhs_schur_device,
                     *bnn_preconditioner);
 
+
+  // SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>> cg(
+  //   solver_control);
 
   // cg.solve(*interface_operator,
   //          solution_interface_device,

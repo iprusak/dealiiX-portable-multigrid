@@ -198,7 +198,6 @@ namespace Portable
                 SolverControl::NoConvergence(it, residual_norm));
   }
 
-
   template <typename VectorType>
   template <typename MatrixType, typename PreconditionerType>
   void
@@ -216,18 +215,13 @@ namespace Portable
     typename VectorMemory<VectorType>::Pointer p_pointer(this->memory);
     typename VectorMemory<VectorType>::Pointer v_pointer(this->memory);
     typename VectorMemory<VectorType>::Pointer z_pointer(this->memory);
-    typename VectorMemory<VectorType>::Pointer s_pointer(this->memory);
-
     typename VectorMemory<VectorType>::Pointer s_tilde_pointer(this->memory);
 
 
-    VectorType &r = *r_pointer;
-    VectorType &p = *p_pointer;
-    VectorType &v = *v_pointer;
-    VectorType &z = *z_pointer;
-    VectorType &s = *z_pointer;
-
-
+    VectorType &r       = *r_pointer;
+    VectorType &p       = *p_pointer;
+    VectorType &v       = *v_pointer;
+    VectorType &z       = *z_pointer;
     VectorType &s_tilde = *s_tilde_pointer;
 
 
@@ -237,8 +231,6 @@ namespace Portable
     p.reinit(x, true);
     v.reinit(x, true);
     z.reinit(x, true);
-    s.reinit(x, true);
-
     s_tilde.reinit(x, true);
 
     int it = 0;
@@ -247,6 +239,9 @@ namespace Portable
     number beta                       = number();
     number alpha                      = number();
 
+
+    if (std::is_same<PreconditionerType, PreconditionIdentity>::value == false)
+      preconditioner.balance(x, b);
 
     // compute residual. if vector is zero, then short-circuit the full
     // computation
@@ -261,13 +256,9 @@ namespace Portable
     double residual_norm = r.l2_norm();
     solver_state         = this->iteration_status(0, residual_norm, x);
 
-    preconditioner.reset_timings();
 
-    preconditioner.vmult_enhanced(z, s_tilde, r);
-
-    p = z;
-
-    r_dot_preconditioner_dot_r = r * z;
+    if (std::is_same<PreconditionerType, PreconditionIdentity>::value == false)
+      preconditioner.reset_timings();
 
     if (solver_state != SolverControl::iterate)
       return;
@@ -276,31 +267,59 @@ namespace Portable
       {
         it++;
 
-        s.sadd(beta, s_tilde);
-
         const number old_r_dot_preconditioner_dot_r =
           r_dot_preconditioner_dot_r;
 
-        const number p_dot_A_dot_p = p * s;
+        if (std::is_same<PreconditionerType, PreconditionIdentity>::value ==
+            false)
+          {
+            // preconditioner.vmult(z, r);
+
+            // preconditioner.project(v, z);
+
+            // preconditioner.balance(w, r);
+
+            // preconditioner.vmult(z, r);
+
+            // preconditioner.project(v, z);
+
+            // v += w;
+
+            preconditioner.vmult_enhanced(z, s_tilde, r);
+
+            r_dot_preconditioner_dot_r = r * z;
+          }
+        else
+          r_dot_preconditioner_dot_r = residual_norm * residual_norm;
+
+        const VectorType &direction =
+          std::is_same<PreconditionerType, PreconditionIdentity>::value ? r : z;
+
+        if (it > 1)
+          {
+            Assert(std::abs(old_r_dot_preconditioner_dot_r) != 0.,
+                   ExcDivideByZero());
+
+            beta = r_dot_preconditioner_dot_r / old_r_dot_preconditioner_dot_r;
+
+            p.sadd(beta, 1., direction);
+          }
+        else
+          p.equ(1., direction);
+
+        // A.vmult(v, p);
+        // preconditioner.vmult_interface(v, p);
+
+        v.sadd(beta, 1., s_tilde);
+
+
+        const number p_dot_A_dot_p = p * v;
         Assert(std::abs(p_dot_A_dot_p) != 0., ExcDivideByZero());
         alpha = r_dot_preconditioner_dot_r / p_dot_A_dot_p;
 
         x.add(alpha, p);
 
-        r.add(-alpha, s);
-
-
-        preconditioner.vmult_enhanced(z, s_tilde, r);
-
-        r_dot_preconditioner_dot_r = r * z;
-
-        beta = r_dot_preconditioner_dot_r / old_r_dot_preconditioner_dot_r;
-
-        p.sadd(beta, z);
-
-        // residual_norm = std::sqrt(std::abs(r.add_and_dot(-alpha, v, r)));
-
-        residual_norm = std::sqrt(std::abs(r * r));
+        residual_norm = std::sqrt(std::abs(r.add_and_dot(-alpha, v, r)));
 
         if (A.enable_printing())
           std::cout << "residual_norm = " << residual_norm << std::endl;

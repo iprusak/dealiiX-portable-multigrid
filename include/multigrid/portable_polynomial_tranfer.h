@@ -917,41 +917,41 @@ namespace Portable
 
             if (n_cells > 0)
               {
-                // using TeamPolicy = Kokkos::TeamPolicy<
-                //   MemorySpace::Default::kokkos_space::execution_space>;
+                using TeamPolicy = Kokkos::TeamPolicy<
+                  MemorySpace::Default::kokkos_space::execution_space>;
 
-                // Functor cell_prolongator;
+                Functor cell_prolongator;
 
-                // auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
+                auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
 
-                // p_mg_transfer::
-                //   ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
-                //     apply_kernel(cell_prolongator,
-                //                  this->prolongation_matrix_1d,
-                //                  this->weights_view_kokkos[color],
-                //                  this->dof_indices_coarse[color],
-                //                  this->plain_dof_indices_fine[color],
-                //                  use_coloring,
-                //                  src,
-                //                  dst);
+                p_mg_transfer::
+                  ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
+                    apply_kernel(cell_prolongator,
+                                 this->prolongation_matrix_1d,
+                                 this->weights_view_kokkos[color],
+                                 this->dof_indices_coarse[color],
+                                 this->plain_dof_indices_fine[color],
+                                 use_coloring,
+                                 src,
+                                 dst);
 
-                // Kokkos::parallel_for(
-                //   "dealii::MatrixFree::prolongate_and_add_color " +
-                //     std::to_string(color),
-                //   team_policy,
-                //   apply_kernel);
+                Kokkos::parallel_for(
+                  "dealii::MatrixFree::prolongate_and_add_color " +
+                    std::to_string(color),
+                  team_policy,
+                  apply_kernel);
 
-                constexpr bool is_serial =
-                  std::is_same<Kokkos::DefaultExecutionSpace,
-                               Kokkos::DefaultHostExecutionSpace>::value;
+                // constexpr bool is_serial =
+                //   std::is_same<Kokkos::DefaultExecutionSpace,
+                //                Kokkos::DefaultHostExecutionSpace>::value;
 
-                unsigned int numBlocks       = numbers::invalid_unsigned_int;
-                unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
-                if (is_serial)
-                  {
-                    numBlocks       = 1u;
-                    threadsPerBlock = 1u;
-                  }
+                // unsigned int numBlocks       = numbers::invalid_unsigned_int;
+                // unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+                // if (is_serial)
+                //   {
+                //     numBlocks       = 1u;
+                //     threadsPerBlock = 1u;
+                //   }
 
 
                 // BK1::Parallel::KokkosProlongationKernel<dim,
@@ -968,19 +968,19 @@ namespace Portable
                 //   numBlocks,
                 //   threadsPerBlock);
 
-                BK1::Parallel::KokkosProlongationBatchedKernel<dim,
-                                                               p_coarse + 1,
-                                                               p_fine + 1,
-                                                               number>(
-                  this->prolongation_matrix_1d,
-                  src_device,
-                  dst_device,
-                  this->dof_indices_coarse[color],
-                  this->plain_dof_indices_fine[color],
-                  this->weights_view_kokkos[color],
-                  n_cells,
-                  numBlocks,
-                  threadsPerBlock);
+                // BK1::Parallel::KokkosProlongationBatchedKernel<dim,
+                //                                                p_coarse + 1,
+                //                                                p_fine + 1,
+                //                                                number>(
+                //   this->prolongation_matrix_1d,
+                //   src_device,
+                //   dst_device,
+                //   this->dof_indices_coarse[color],
+                //   this->plain_dof_indices_fine[color],
+                //   this->weights_view_kokkos[color],
+                //   n_cells,
+                //   numBlocks,
+                //   threadsPerBlock);
               }
           }
         dst.compress(VectorOperation::add);
@@ -1082,41 +1082,41 @@ namespace Portable
 
             if (n_cells > 0)
               {
-                // using TeamPolicy = Kokkos::TeamPolicy<
-                //   MemorySpace::Default::kokkos_space::execution_space>;
+                using TeamPolicy = Kokkos::TeamPolicy<
+                  MemorySpace::Default::kokkos_space::execution_space>;
 
-                // Functor cell_restrictor;
+                Functor cell_restrictor;
 
-                // auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
+                auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
 
-                // p_mg_transfer::
-                //   ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
-                //     apply_kernel(cell_restrictor,
-                //                  this->prolongation_matrix_1d,
-                //                  this->weights_view_kokkos[color],
-                //                  this->dof_indices_coarse[color],
-                //                  this->plain_dof_indices_fine[color],
-                //                  use_coloring,
-                //                  src,
-                //                  dst);
+                p_mg_transfer::
+                  ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
+                    apply_kernel(cell_restrictor,
+                                 this->prolongation_matrix_1d,
+                                 this->weights_view_kokkos[color],
+                                 this->dof_indices_coarse[color],
+                                 this->plain_dof_indices_fine[color],
+                                 use_coloring,
+                                 src,
+                                 dst);
 
-                // Kokkos::parallel_for(
-                //   "dealii::MatrixFree::restrict_and_add_color " +
-                //     std::to_string(color),
-                //   team_policy,
-                //   apply_kernel);
+                Kokkos::parallel_for(
+                  "dealii::MatrixFree::restrict_and_add_color " +
+                    std::to_string(color),
+                  team_policy,
+                  apply_kernel);
 
-                constexpr bool is_serial =
-                  std::is_same<Kokkos::DefaultExecutionSpace,
-                               Kokkos::DefaultHostExecutionSpace>::value;
+                // constexpr bool is_serial =
+                //   std::is_same<Kokkos::DefaultExecutionSpace,
+                //                Kokkos::DefaultHostExecutionSpace>::value;
 
-                unsigned int numBlocks       = numbers::invalid_unsigned_int;
-                unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
-                if (is_serial)
-                  {
-                    numBlocks       = 1u;
-                    threadsPerBlock = 1u;
-                  }
+                // unsigned int numBlocks       = numbers::invalid_unsigned_int;
+                // unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+                // if (is_serial)
+                //   {
+                //     numBlocks       = 1u;
+                //     threadsPerBlock = 1u;
+                //   }
 
 
                 // BK1::Parallel::KokkosRestrictionKernel<dim,
@@ -1133,19 +1133,19 @@ namespace Portable
                 //   numBlocks,
                 //   threadsPerBlock);
 
-                BK1::Parallel::KokkosRestrictionBatchedKernel<dim,
-                                                              p_coarse + 1,
-                                                              p_fine + 1,
-                                                              number>(
-                  this->prolongation_matrix_1d,
-                  src_device,
-                  dst_device,
-                  this->dof_indices_coarse[color],
-                  this->plain_dof_indices_fine[color],
-                  this->weights_view_kokkos[color],
-                  n_cells,
-                  numBlocks,
-                  threadsPerBlock);
+                // BK1::Parallel::KokkosRestrictionBatchedKernel<dim,
+                //                                               p_coarse + 1,
+                //                                               p_fine + 1,
+                //                                               number>(
+                //   this->prolongation_matrix_1d,
+                //   src_device,
+                //   dst_device,
+                //   this->dof_indices_coarse[color],
+                //   this->plain_dof_indices_fine[color],
+                //   this->weights_view_kokkos[color],
+                //   n_cells,
+                //   numBlocks,
+                //   threadsPerBlock);
               }
           }
         dst.compress(VectorOperation::add);
