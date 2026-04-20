@@ -66,7 +66,7 @@ namespace multigrid
   class LaplaceProblem
   {
   public:
-    LaplaceProblem();
+    LaplaceProblem(const bool overlap_communication_computation);
 
     void
     run(const std::size_t  min_size,
@@ -167,7 +167,7 @@ namespace multigrid
 
     const unsigned int refinement_cycles = 10;
 
-    const bool overlap_communication_computation = false;
+    const bool overlap_communication_computation;
 
     double setup_time;
 
@@ -227,12 +227,15 @@ namespace multigrid
   };
 
   template <int dim, int fe_degree>
-  LaplaceProblem<dim, fe_degree>::LaplaceProblem()
+  LaplaceProblem<dim, fe_degree>::LaplaceProblem(
+    const bool overlap_communication_computation)
     : mpi_communicator(MPI_COMM_WORLD)
     , triangulation(mpi_communicator)
     , fe(fe_degree)
     , dof_handler(triangulation)
+    , overlap_communication_computation(overlap_communication_computation)
     , setup_time(0.)
+
     , pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
     , time_details(std::cout,
                    true &&
@@ -1087,7 +1090,6 @@ namespace multigrid
         pcout << std::endl;
         pcout << std::endl;
 
-
         if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
           {
             convergence_table.set_scientific("mv_outer", true);
@@ -1114,8 +1116,6 @@ namespace multigrid
 
             std::cout << std::endl << std::endl;
           }
-
-        // test();
       }
   }
   template <int dim, int min_degree, int max_degree>
@@ -1127,13 +1127,15 @@ namespace multigrid
                    const std::size_t  max_size,
                    const unsigned int n_pre_smooth,
                    const unsigned int n_post_smooth,
-                   const bool         use_doubling_mesh)
+                   const bool         use_doubling_mesh,
+                   const bool         overlap_communication_computation)
     {
       if (min_degree > max_degree)
         return;
       if (min_degree == target_degree)
         {
-          LaplaceProblem<dim, min_degree> laplace_problem;
+          LaplaceProblem<dim, min_degree> laplace_problem(
+            overlap_communication_computation);
           laplace_problem.run(
             min_size, max_size, n_pre_smooth, n_post_smooth, use_doubling_mesh);
         }
@@ -1145,7 +1147,8 @@ namespace multigrid
           max_size,
           n_pre_smooth,
           n_post_smooth,
-          use_doubling_mesh);
+          use_doubling_mesh,
+          overlap_communication_computation);
     }
   };
 } // namespace multigrid
@@ -1165,13 +1168,15 @@ main(int argc, char *argv[])
       unsigned int n_pre_smooth      = 3;
       unsigned int n_post_smooth     = 3;
       bool         use_doubling_mesh = true;
+      bool         overlap_communication_computation = false;
+
       if (argc == 1)
         {
           if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
             std::cout
               << "Expected at least one argument." << std::endl
               << "Usage:" << std::endl
-              << "./program degree minsize maxsize n_pre_smooth n_post_smooth doubling"
+              << "./program degree minsize maxsize n_pre_smooth n_post_smooth doubling overlap_communication_computation"
               << std::endl
               << "The parameters degree to n_post_smooth are integers, "
               << "the last selects between a square mesh or a doubling mesh"
@@ -1191,21 +1196,29 @@ main(int argc, char *argv[])
         n_post_smooth = std::atoi(argv[5]);
       if (argc > 6)
         use_doubling_mesh = argv[6][0] == 'd';
+      if (argc > 7)
+        overlap_communication_computation = std::atoi(argv[7]) == 1;
+
 
       if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-        std::cout << "Settings of parameters: " << std::endl
-                  << "Number of MPI ranks:            "
+        std::cout << "Settings of parameters:                " << std::endl
+                  << "Number of MPI ranks:                   "
                   << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)
                   << std::endl
-                  << "Polynomial degree:              " << degree << std::endl
-                  << "Minimum size:                   " << minsize << std::endl
-                  << "Maximum size:                   " << maxsize << std::endl
-                  << "Number of pre-smoother iters:   " << n_pre_smooth
+                  << "Polynomial degree:                     " << degree
                   << std::endl
-                  << "Number of post-smoother iters:  " << n_post_smooth
+                  << "Minimum size:                          " << minsize
                   << std::endl
-                  << "Use doubling mesh:              " << use_doubling_mesh
+                  << "Maximum size:                          " << maxsize
                   << std::endl
+                  << "Number of pre-smoother iters:          " << n_pre_smooth
+                  << std::endl
+                  << "Number of post-smoother iters:         " << n_post_smooth
+                  << std::endl
+                  << "Use doubling mesh:                     "
+                  << use_doubling_mesh << std::endl
+                  << "Use overlap_communication_computation: "
+                  << overlap_communication_computation << std::endl
                   << std::endl;
 
       LaplaceRunTime<dimension, minimal_degree, maximal_degree> run(
@@ -1214,7 +1227,8 @@ main(int argc, char *argv[])
         maxsize,
         n_pre_smooth,
         n_post_smooth,
-        use_doubling_mesh);
+        use_doubling_mesh,
+        overlap_communication_computation);
     }
   catch (std::exception &exc)
     {
