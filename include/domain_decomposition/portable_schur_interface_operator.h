@@ -255,7 +255,9 @@ namespace Portable
     const
   {
     dst = 0.;
-    SolverControl solver_control(src.size(), 1e-12 * src.l2_norm());
+    // SolverControl solver_control(src.size(), 1e-12 * src.l2_norm());
+    ReductionControl solver_control(100, 1e-16, 1e-9);
+
 
     SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>
       cg(solver_control);
@@ -318,9 +320,10 @@ namespace Portable
         t_subdomain_src_view(interface_dofs(i)) = weights_view(i) * src_view(i);
       });
 
-    SolverControl solver_control(temp_subdomain_vector_src.size(),
-                                 1e-12 * src.l2_norm());
+    // SolverControl solver_control(temp_subdomain_vector_src.size(),
+    //                              1e-12 * src.l2_norm());
 
+    ReductionControl solver_control(100, 1e-16, 1e-9);
 
     if (physical_boundary_dof_indices_subdomain.size() == 0)
       {

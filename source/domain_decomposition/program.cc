@@ -886,7 +886,9 @@ LaplaceProblem<dim, fe_degree>::solve_interface()
   Timer time;
   Kokkos::fence();
   // SolverControl solver_control(1000, 1e-9 * rhs_schur_device.l2_norm());
-  ReductionControl solver_control(1000, 1e-14, 1e-7);
+  // ReductionControl solver_control(1000, 1e-14, 1e-7);
+  ReductionControl solver_control(100, 1e-16, 1e-9);
+
   Portable::SolverProjectedCG<
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>
     cg(solver_control);
@@ -910,7 +912,8 @@ LaplaceProblem<dim, fe_degree>::solve_interface()
                     *bnn_preconditioner);
 
 
-  // SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>> cg(
+  // SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>
+  // cg(
   //   solver_control);
 
   // cg.solve(*interface_operator,
