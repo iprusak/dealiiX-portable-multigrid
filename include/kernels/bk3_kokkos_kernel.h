@@ -122,38 +122,21 @@ namespace BK3
                     nelmtPerBatch;
 
                 {
-                  // step-1 : Copy from in to the scratch values
-                  for (unsigned int tid = threadIdx;
-                       tid < c_nelmtPerBatch * nm * nm;
-                       tid += blockSize)
-                    {
-                      const int e = tid / (nm * nm);
-                      const int j = (tid % (nm * nm)) / nm;
-                      const int k = tid % nm;
 
-                      const unsigned int global_cell_index =
-                        eb * nelmtPerBatch + e;
-
-
-                      for (int i = 0; i < nm; ++i)
-                        {
-                          // Calculate the flat local index within the 3D
-                          // element
-                          const int local_idx = k * nm * nm + j * nm + i;
-
-                          // Fetch the global DoF index
-                          const unsigned int dof_index =
-                            dof_indices(local_idx, global_cell_index);
-
-                          // The index in the batched shared memory array
-                          const int shared_idx = e * nm_total + local_idx;
-
-                          if (dof_index == numbers::invalid_unsigned_int)
-                            s_wsp0[shared_idx] = 0;
-                          else
-                            s_wsp0[shared_idx] = d_in[dof_index];
-                        }
-                    }
+                // step-1 : Copy from in to the scratch values
+                for(unsigned int tid = threadIdx; tid < c_nelmtPerBatch * nm_total; tid += blockSize)
+                {
+                    const int e = tid / nm_total;
+                    const int local_idx = tid % nm_total; 
+                
+                    const unsigned int global_cell_index = eb * nelmtPerBatch + e;
+                
+                    const unsigned int dof_index = dof_indices(local_idx, global_cell_index);
+                
+                    if (dof_index == numbers::invalid_unsigned_int)
+                        s_wsp0[tid] = 0;
+                    else
+                        s_wsp0[tid] = d_in[dof_index];
                 }
                 team_member.team_barrier();
 
@@ -455,38 +438,21 @@ namespace BK3
                 team_member.team_barrier();
 
                 // step-12 : Copy wsp0 (result) back to global out vector
-                for (unsigned int tid = threadIdx;
-                     tid < c_nelmtPerBatch * nm * nm;
-                     tid += blockSize)
-                  {
-                    const int e = tid / (nm * nm);
-                    const int j = (tid % (nm * nm)) / nm;
-                    const int k = tid % nm;
-
-                    const unsigned int global_cell_index =
-                      eb * nelmtPerBatch + e;
-
-                    for (int i = 0; i < nm; ++i)
-                      {
-                        const int local_idx = i * nm * nm + j * nm + k;
-
-                        // Find where this node lives in the global 'd_out'
-                        // vector
-                        const unsigned int dof_index =
-                          dof_indices(local_idx, global_cell_index);
-
-                        // The index in our batched shared memory result
-                        const int shared_idx = e * nm_total + local_idx;
-
-                        if (dof_index != numbers::invalid_unsigned_int)
-                          {
-                            // CRITICAL: Use atomic_add because elements share
-                            // nodes!
-                            Kokkos::atomic_add(&d_out[dof_index],
-                                               s_wsp0[shared_idx]);
-                          }
-                      }
-                  }
+                for (unsigned int tid = threadIdx; tid < c_nelmtPerBatch * nm_total; tid += blockSize)
+                {
+                    const int e = tid / nm_total;
+                    const int local_idx = tid % nm_total;
+                
+                    const unsigned int global_cell_index = eb * nelmtPerBatch + e;
+                
+                    const unsigned int dof_index = dof_indices(local_idx, global_cell_index);
+                
+                    if (dof_index != numbers::invalid_unsigned_int)
+                    {
+                        // CRITICAL: Use atomic_add because elements share nodes!
+                        Kokkos::atomic_add(&d_out[dof_index], s_wsp0[tid]);
+                    }
+                }
 
                 team_member.team_barrier();
 

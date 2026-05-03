@@ -461,39 +461,24 @@ namespace BK1
                     nelmtPerBatch;
 
                 // step-1 : Copy from in to the scratch values
-                for (unsigned int tid = threadIdx;
-                     tid < c_nelmtPerBatch * nm_coarse * nm_coarse;
-                     tid += blockSize)
-                  {
-                    const unsigned int batch_id = tid / (nm_coarse * nm_coarse);
-
-                    const int j = (tid % (nm_coarse * nm_coarse)) / nm_coarse;
-                    const int k = tid % nm_coarse;
-
-                    const unsigned int global_cell_index =
-                      cell_batch_index * nelmtPerBatch + batch_id;
-
-                    for (unsigned int i = 0; i < nm_coarse; ++i)
-                      {
-                        // Calculate the flat local index within the 3D
-                        // element
-                        const int local_idx =
-                          k * nm_coarse * nm_coarse + j * nm_coarse + i;
-
-                        // Fetch the global DoF index
-                        const unsigned int dof_index =
-                          dof_indices_coarse(local_idx, global_cell_index);
-
-                        // The index in the batched shared memory array
-                        const int shared_idx =
-                          batch_id * nm_coarse_total + local_idx;
-
-                        if (dof_index == numbers::invalid_unsigned_int)
-                          s_wsp0[shared_idx] = 0;
-                        else
-                          s_wsp0[shared_idx] = d_in[dof_index];
-                      }
-                  }
+                for (unsigned int tid = threadIdx; tid < c_nelmtPerBatch * nm_total; tid += blockSize)
+                {
+                    const int e = tid / nm_total;
+                    const int local_idx = tid % nm_total;
+                
+                    const unsigned int global_cell_index = eb * nelmtPerBatch + e;
+                
+                    const unsigned int dof_index = dof_indices_coarse(local_idx, global_cell_index);
+                
+                    if (dof_index == numbers::invalid_unsigned_int)
+                    {
+                        s_wsp0[tid] = 0.0;
+                    }
+                    else
+                    {
+                        s_wsp0[tid] = d_in[dof_index];
+                    }
+                }
                 team_member.team_barrier();
 
                 // step-2 : direction 0
@@ -593,44 +578,24 @@ namespace BK1
                   }
                 team_member.team_barrier();
 
-                // step-9 : Copy s_wsp1 to out
-                for (unsigned int tid = threadIdx;
-                     tid < c_nelmtPerBatch * nm_fine * nm_fine;
-                     tid += blockSize)
-                  {
-                    const unsigned int batch_id = tid / (nm_fine * nm_fine);
-
-                    const int j = (tid % (nm_fine * nm_fine)) / nm_fine;
-                    const int k = tid % nm_fine;
-
-                    const unsigned int global_cell_index =
-                      cell_batch_index * nelmtPerBatch + batch_id;
-
-                    for (unsigned int i = 0; i < nm_fine; ++i)
-                      {
-                        // Calculate the flat local index within the 3D
-                        // element
-                        const int local_idx =
-                          k * nm_fine * nm_fine + j * nm_fine + i;
-
-                        // Fetch the global DoF index
-                        const unsigned int dof_index =
-                          dof_indices_fine(local_idx, global_cell_index);
-
-                        // The index in the batched shared memory array
-                        const int shared_idx =
-                          batch_id * nm_fine_total + local_idx;
-
-                        Number value_out =
-                          weights(local_idx, global_cell_index) *
-                          s_wsp1[shared_idx];
-
-                        // CRITICAL: Use atomic_add because elements share
-                        // nodes!
+                // step-9 : Copy s_wsp1 to out (Scatter/Add)
+                for (unsigned int tid = threadIdx; tid < c_nelmtPerBatch * nm_fine_total; tid += blockSize)
+                {
+                    const int e = tid / nm_fine_total;
+                    const int local_idx = tid % nm_fine_total;
+                
+                    const unsigned int global_cell_index = eb * nelmtPerBatch + e;
+                
+                    const unsigned int dof_index = dof_indices_fine(local_idx, global_cell_index);
+                
+                    if (dof_index != numbers::invalid_unsigned_int)
+                    {
+                        Number value_out = weights(local_idx, global_cell_index) * s_wsp1[tid];
+                    
+                        // CRITICAL: Use atomic_add because elements share nodes!
                         Kokkos::atomic_add(&d_out[dof_index], value_out);
-                      }
-                  }
-
+                    }
+                }
                 team_member.team_barrier();
 
                 cell_batch_index += team_member.league_size();
