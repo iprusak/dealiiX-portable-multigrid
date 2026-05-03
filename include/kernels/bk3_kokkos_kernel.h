@@ -121,7 +121,6 @@ namespace BK3
                     (n_cells - eb * nelmtPerBatch) :
                     nelmtPerBatch;
 
-                {
 
                 // step-1 : Copy from in to the scratch values
                 for(unsigned int tid = threadIdx; tid < c_nelmtPerBatch * nm_total; tid += blockSize)

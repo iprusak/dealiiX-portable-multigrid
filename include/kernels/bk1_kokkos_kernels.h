@@ -461,12 +461,12 @@ namespace BK1
                     nelmtPerBatch;
 
                 // step-1 : Copy from in to the scratch values
-                for (unsigned int tid = threadIdx; tid < c_nelmtPerBatch * nm_total; tid += blockSize)
+                for (unsigned int tid = threadIdx; tid < c_nelmtPerBatch * nm_coarse_total; tid += blockSize)
                 {
-                    const int e = tid / nm_total;
-                    const int local_idx = tid % nm_total;
+                    const int e = tid / nm_coarse_total;
+                    const int local_idx = tid % nm_coarse_total;
                 
-                    const unsigned int global_cell_index = eb * nelmtPerBatch + e;
+                    const unsigned int global_cell_index = cell_batch_index * nelmtPerBatch + e;
                 
                     const unsigned int dof_index = dof_indices_coarse(local_idx, global_cell_index);
                 
@@ -584,7 +584,7 @@ namespace BK1
                     const int e = tid / nm_fine_total;
                     const int local_idx = tid % nm_fine_total;
                 
-                    const unsigned int global_cell_index = eb * nelmtPerBatch + e;
+                    const unsigned int global_cell_index = cell_batch_index * nelmtPerBatch + e;
                 
                     const unsigned int dof_index = dof_indices_fine(local_idx, global_cell_index);
                 
