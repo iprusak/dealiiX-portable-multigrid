@@ -114,19 +114,16 @@ namespace multigrid
           std::cout << "Coarse solver " << (int)timings[minlevel][1]
                     << " times: " << timings[minlevel][0] << " tot prec "
                     << timings[minlevel][2] << std::endl;
-          std::cout
-            << "level  smoother    mg_mv     mg_vec    restrict  prolongate  inhomBC"
-            << std::endl;
+          std::cout << "level  smoother    mg_mv     restrict  prolongate"
+                    << std::endl;
           for (unsigned int level = minlevel + 1; level <= maxlevel; ++level)
             {
               std::cout << "L" << std::setw(2) << std::left << level << "    ";
               std::cout << std::setprecision(4) << std::setw(12)
                         << timings[level][5] << std::setw(10)
                         << timings[level][0] << std::setw(10)
-                        << timings[level][4] << std::setw(10)
                         << timings[level][1] << std::setw(12)
-                        << timings[level][2] << std::setw(10)
-                        << timings[level][3] << std::endl;
+                        << timings[level][2] << std::endl;
             }
           std::cout << std::setprecision(5);
           for (unsigned int l = 0; l < timings.size(); ++l)
