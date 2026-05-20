@@ -50,7 +50,7 @@ namespace Portable
 
         this->shape_info.reinit(quadrature, fe);
 
-        const auto &lex_numbering = shape_info.lexicographic_numbering;
+        // const auto &lex_numbering = shape_info.lexicographic_numbering;
 
         // TODO!
         // this->dof_indices =
@@ -67,12 +67,17 @@ namespace Portable
           unsigned int n_cells = 0;
           for (const auto &cell : dof_handler.active_cell_iterators())
             if (cell->is_locally_owned())
-              ++n_cells_fine;
+              ++n_cells;
 
           IndexSet locally_owned_dofs = dof_handler.locally_owned_dofs();
 
+          unsigned int n_constrained_locally_owned_dofs = 0;
+          for (const auto &line : constraints.get_lines())
+            if (locally_owned_dofs.is_element(line.index))
+              ++n_constrained_locally_owned_dofs;
+
           const types::global_dof_index n_unconstrained_owned_dofs =
-            locally_owned_dofs.n_elements() - constraints.n_constraints();
+            locally_owned_dofs.n_elements() - n_constrained_locally_owned_dofs;
 
           // Assign DoF numbers for the unconstrained degrees of freedom only
           std::pair<types::global_dof_index, types::global_dof_index> positions =
@@ -94,9 +99,9 @@ namespace Portable
           // translate to local numbers
 
           std::vector<types::global_dof_index> local_dof_indices(fe.dofs_per_cell);
-          std::vector<types::global_dof_index> local_dof_indices_lex(fe.dofs_per_cell);
+          //   std::vector<types::global_dof_index> local_dof_indices_lex(fe.dofs_per_cell);
 
-          // We store the start of the indexes per each geometric entity (first
+          // We store the start of the indices per each geometric entity (first
           // 2*dim faces and then the cell dofs).
           std::vector<std::array<types::global_dof_index, 2 * dim + 1>> dof_indices_per_entity(
             n_cells);
@@ -111,41 +116,42 @@ namespace Portable
                 {
                   cell->get_dof_indices(local_dof_indices);
 
-                  for (unsigned int i = 0; i < fe.dofs_per_cell; ++i)
-                    local_dof_indices_lex[i] = local_dof_indices[lex_numbering[i]];
+                  //   for (unsigned int i = 0; i < fe.dofs_per_cell; ++i)
+                  //     local_dof_indices_lex[i] = local_dof_indices[lex_numbering[i]];
 
                   // Adjust dof indices due to periodicity
-                  for (types::global_dof_index &a : local_dof_indices_lex)
+                  for (types::global_dof_index &a : local_dof_indices)
                     {
                       const auto line = constraints.get_constraint_entries(a);
                       if (line != nullptr && line->size() == 1 && (*line)[0].second == Number(1.0))
                         a = (*line)[0].first;
                     }
 
-                  for (types::global_dof_index a : local_dof_indices_lex)
+                  for (types::global_dof_index a : local_dof_indices)
                     if (!locally_owned_dofs.is_element(a) && !constraints.is_constrained(a))
                       ghost_indices.push_back(a);
 
                   const unsigned int dofs_per_face = fe.dofs_per_face;
+
                   for (unsigned int f = 0; f < 2 * dim; ++f)
                     {
                       for (unsigned int i = 0; i < dofs_per_face; ++i)
-                        AssertThrow(local_dof_indices_lex[f * dofs_per_face + i] ==
-                                      local_dof_indices_lex[f * dofs_per_face] + i,
+                        AssertThrow(local_dof_indices[f * dofs_per_face + i] ==
+                                      local_dof_indices[f * dofs_per_face] + i,
                                     ExcInternalError());
 
                       dof_indices_per_entity[cell_counter][f] =
-                        local_dof_indices_lex[f * dofs_per_face];
+                        local_dof_indices[f * dofs_per_face];
                     }
 
                   const unsigned int start_cell_dofs = 2 * dim * dofs_per_face;
                   for (unsigned int i = 0; i < fe.dofs_per_cell - start_cell_dofs; ++i)
-                    AssertThrow(local_dof_indices_lex[start_cell_dofs + i] ==
-                                  local_dof_indices_lex[start_cell_dofs] + i,
+                    AssertThrow(local_dof_indices[start_cell_dofs + i] ==
+                                  local_dof_indices[start_cell_dofs] + i,
                                 ExcInternalError());
 
                   dof_indices_per_entity[cell_counter][2 * dim] =
-                    local_dof_indices_lex[start_cell_dofs];
+                    local_dof_indices[start_cell_dofs];
 
                   ++cell_counter;
                 }
@@ -258,54 +264,56 @@ namespace Portable
                   cells_at_dirichlet_boundary.push_back(entry);
                 }
             }
+
+
+          std::map<unsigned int, std::vector<std::array<types::global_dof_index, 5>>>
+            proc_neighbors;
+
+          cell_counter = 0;
+
+          for (const auto &cell : dof_handler.active_cell_iterators())
+            {
+              if (cell->is_locally_owned())
+                {
+                  for (unsigned int f = 0; f < 2 * dim; ++f)
+                    {
+                      const bool at_boundary = cell->at_boundary(f);
+                      const bool has_periodic_neighbor =
+                        at_boundary && cell->has_periodic_neighbor(f);
+
+                      if (at_boundary == false || has_periodic_neighbor)
+                        {
+                          const auto neighbor =
+                            has_periodic_neighbor ? cell->periodic_neighbor(f) : cell->neighbor(f);
+
+                          if (neighbor->is_locally_owned())
+                            {
+                              AssertIndexRange(neighbor->active_cell_index(), cell_indices.size());
+                              neighbor_cells[cell_counter][f] =
+                                cell_indices[neighbor->active_cell_index()];
+                            }
+                          else
+                            {
+                              std::array<types::global_dof_index, 5> neighbor_data;
+                              neighbor_data[0] = cell_counter;
+                              neighbor_data[1] = has_periodic_neighbor ?
+                                                   cell->periodic_neighbor_face_no(f) :
+                                                   cell->neighbor_face_no(f);
+                              neighbor_data[2] = cell->global_active_cell_index();
+                              neighbor_data[3] = neighbor->global_active_cell_index();
+                              neighbor_data[4] = f;
+                              proc_neighbors[neighbor->subdomain_id()].push_back(neighbor_data);
+                              // set dummy
+                              neighbor_cells[cell_counter][f] =
+                                cell_indices[cell->active_cell_index()];
+                            }
+                        }
+                    }
+
+                  ++cell_counter;
+                }
+            }
         }
-
-        std::map<unsigned int, std::vector<std::array<types::global_dof_index, 5>>> proc_neighbors;
-
-        cell_counter = 0;
-
-        for (const auto &cell : dof_handler.active_cell_iterators())
-          {
-            if (cell->is_locally_owned())
-              {
-                for (unsigned int f = 0; f < 2 * dim; ++f)
-                  {
-                    const bool at_boundary = cell->at_boundary(f);
-                    const bool has_periodic_neighbor =
-                      at_boundary && cell->has_periodic_neighbor(f);
-
-                    if (at_boundary == false || has_periodic_neighbor)
-                      {
-                        const auto neighbor =
-                          has_periodic_neighbor ? cell->periodic_neighbor(f) : cell->neighbor(f);
-
-                        if (neighbor->is_locally_owned())
-                          {
-                            AssertIndexRange(neighbor->active_cell_index(), cell_indices.size());
-                            neighbor_cells[cell_counter][f] =
-                              cell_indices[neighbor->active_cell_index()];
-                          }
-                        else
-                          {
-                            std::array<types::global_dof_index, 5> neighbor_data;
-                            neighbor_data[0] = cell_counter;
-                            neighbor_data[1] = has_periodic_neighbor ?
-                                                 cell->periodic_neighbor_face_no(f) :
-                                                 cell->neighbor_face_no(f);
-                            neighbor_data[2] = cell->global_active_cell_index();
-                            neighbor_data[3] = neighbor->global_active_cell_index();
-                            neighbor_data[4] = f;
-                            proc_neighbors[neighbor->subdomain_id()].push_back(neighbor_data);
-                            // set dummy
-                            neighbor_cells[cell_counter][f] =
-                              cell_indices[cell->active_cell_index()];
-                          }
-                      }
-                  }
-
-                ++cell_counter;
-              }
-          }
 
         {
           std::vector<Polynomials::Polynomial<double>> basis =
@@ -349,16 +357,15 @@ namespace Portable
       //     neighbor_cells; --- will be Kokkos:: View of Kokkos::Array
 
       std::vector<std::pair<unsigned int, unsigned int>> cells_at_dirichlet_boundary;
-
-
-      Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space> cells_at_dirichlet_boundary;
+      //   Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space>
+      //   cells_at_dirichlet_boundary;
 
       std::shared_ptr<const Utilities::MPI::Partitioner> partitioner;
 
       mutable std::array<double, 15> timings;
 
-      internal::MatrixFreeFunctions::ShapeInfo<Number>  shape_info;
-      std::array<std::vector<std::array<Number, 2>>, 2> interpolate_quad_to_boundary;
+      dealii::internal::MatrixFreeFunctions::ShapeInfo<Number> shape_info;
+      std::array<std::vector<std::array<Number, 2>>, 2>        interpolate_quad_to_boundary;
     };
 
   } // namespace RT
