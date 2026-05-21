@@ -340,7 +340,7 @@ LaplaceProblem<dim, fe_degree>::run()
 {
   pcout << "============== fe_degree = " << fe_degree << " ============== \n\n";
 
-  for (unsigned int cycle = 0; cycle < 5; ++cycle)
+  for (unsigned int cycle = 0; cycle < 1; ++cycle)
     {
       pcout << std::endl << std::endl;
       pcout << "Cycle " << cycle << std::endl;
@@ -390,10 +390,10 @@ main(int argc, char *argv[])
     {
       Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
 
-      const int dim           = 3;
-      const int max_fe_degree = 4;
+      const int dim           = 2;
+      const int max_fe_degree = 2;
 
-      for (int fe_degree = 1; fe_degree <= max_fe_degree; ++fe_degree)
+      for (int fe_degree = 2; fe_degree <= max_fe_degree; ++fe_degree)
         {
           solve_for_degree<dim, 1>(fe_degree);
         }

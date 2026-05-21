@@ -12,9 +12,16 @@
 #include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/la_parallel_vector.h>
 
+#include <deal.II/matrix_free/portable_matrix_free.h>
 #include <deal.II/matrix_free/shape_info.h>
 
+#include <Kokkos_Array.hpp>
+#include <Kokkos_Core.hpp>
+
 #include <memory>
+
+#include "matrix_free/portable_shape_info.h"
+
 
 
 DEAL_II_NAMESPACE_OPEN
@@ -23,14 +30,20 @@ namespace Portable
 {
   namespace RT
   {
-
     template <int dim, typename Number = double>
     class RaviartThomasOperatorBase : public EnableObserverPointer
     {
     public:
       using VectorType = LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
 
+      using KokkosScratchSpace =
+        MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space;
+
+      using ViewValues =
+        Kokkos::View<Number *, KokkosScratchSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+
       RaviartThomasOperatorBase() = default;
+
 
       template <typename OtherNumber>
       void
@@ -39,8 +52,10 @@ namespace Portable
              const AffineConstraints<OtherNumber> &constraints,
              const Quadrature<1>                  &quadrature)
       {
-        this->mapping                = &mapping;
-        this->dof_handler            = &dof_handler;
+        this->mapping     = &mapping;
+        this->dof_handler = &dof_handler;
+        this->quadrature  = &quadrature;
+
         const FiniteElement<dim> &fe = dof_handler.get_fe();
 
 
@@ -48,17 +63,12 @@ namespace Portable
                     ExcMessage("This class only works for Raviart-Thomas elements."));
 
 
-        this->shape_info.reinit(quadrature, fe);
+        this->shape_info_cpu.reinit(quadrature, fe);
 
-        // const auto &lex_numbering = shape_info.lexicographic_numbering;
+        AssertDimension(shape_info_cpu.data.size(), 2);
 
-        // TODO!
-        // this->dof_indices =
-        //   Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>(
-        //     Kokkos::view_alloc("dof_indices_" + std::to_string(color),
-        //                        Kokkos::WithoutInitializing),
-        //     n_local_dofs,
-        //     mf_data.n_cells);
+        this->shape_info[0].reinit(shape_info_cpu.data[0]);
+        this->shape_info[1].reinit(shape_info_cpu.data[1]);
 
         {
           const MPI_Comm comm = dof_handler.get_mpi_communicator();
@@ -98,8 +108,12 @@ namespace Portable
           // each entity (face, cell) in global index space, which we later
           // translate to local numbers
 
+
           std::vector<types::global_dof_index> local_dof_indices(fe.dofs_per_cell);
-          //   std::vector<types::global_dof_index> local_dof_indices_lex(fe.dofs_per_cell);
+          std::vector<types::global_dof_index> lexicographic_dof_indices(fe.dofs_per_cell);
+
+          const std::vector<unsigned int> &lexicographic_numbering =
+            shape_info_cpu.lexicographic_numbering;
 
           // We store the start of the indices per each geometric entity (first
           // 2*dim faces and then the cell dofs).
@@ -115,9 +129,6 @@ namespace Portable
               if (cell->is_locally_owned())
                 {
                   cell->get_dof_indices(local_dof_indices);
-
-                  //   for (unsigned int i = 0; i < fe.dofs_per_cell; ++i)
-                  //     local_dof_indices_lex[i] = local_dof_indices[lex_numbering[i]];
 
                   // Adjust dof indices due to periodicity
                   for (types::global_dof_index &a : local_dof_indices)
@@ -186,19 +197,38 @@ namespace Portable
 
           partitioner = std::make_shared<Utilities::MPI::Partitioner>(owned_dofs, ghost_dofs, comm);
 
-          {
-            std::array<unsigned int, 2 * dim> default_argument;
-            for (unsigned int i = 0; i < 2 * dim; ++i)
-              default_argument[i] = numbers::invalid_unsigned_int;
-            neighbor_cells.resize(n_cells, default_argument);
-            mpi_exchange_data_on_faces.resize(n_cells, default_argument);
-          }
+
+          dof_indices = Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>(
+            Kokkos::view_alloc("dof_indices", Kokkos::WithoutInitializing), 2 * dim + 1, n_cells);
+
+          neighbor_cells = Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>(
+            Kokkos::view_alloc("neighbor_cells", Kokkos::WithoutInitializing), 2 * dim, n_cells);
+
+          auto dof_indices_host = Kokkos::create_mirror_view(dof_indices);
+
+          auto neighbor_cells_host = Kokkos::create_mirror_view(neighbor_cells);
+
+          dof_indices_per_cell = Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>(
+            Kokkos::view_alloc("dof_indices_per_cell", Kokkos::WithoutInitializing),
+            fe.dofs_per_cell,
+            n_cells);
+
+          auto dof_indices_per_cell_host = Kokkos::create_mirror_view(dof_indices_per_cell);
 
           {
-            std::array<unsigned int, 2 * dim + 1> default_argument;
-            for (unsigned int i = 0; i < 2 * dim + 1; ++i)
-              default_argument[i] = numbers::invalid_unsigned_int;
-            dof_indices.resize(n_cells, default_argument);
+            for (unsigned int cell_id = 0; cell_id < n_cells; ++cell_id)
+              {
+                for (unsigned int i = 0; i < 2 * dim; ++i)
+                  {
+                    neighbor_cells_host(i, cell_id) = numbers::invalid_unsigned_int;
+                    dof_indices_host(i, cell_id)    = numbers::invalid_unsigned_int;
+                  }
+
+                for (unsigned int i = 0; i < fe.dofs_per_cell; ++i)
+                  dof_indices_per_cell_host(i, cell_id) = numbers::invalid_unsigned_int;
+
+                dof_indices_host(2 * dim, cell_id) = numbers::invalid_unsigned_int;
+              }
           }
 
           std::array<std::vector<unsigned int>, 2 * dim> cells_at_dirichlet_boundary_by_face;
@@ -210,8 +240,6 @@ namespace Portable
             {
               if (cell->is_locally_owned())
                 {
-                  cell_indices[cell->index()] = cell_counter;
-
                   for (unsigned int f = 0; f < 2 * dim + 1; ++f)
                     {
                       const types::global_dof_index index = dof_indices_per_entity[cell_counter][f];
@@ -228,17 +256,44 @@ namespace Portable
                              ExcInternalError());
 
                       if (number_compressed != numbers::invalid_dof_index)
-                        dof_indices[cell_counter][f] =
+                        dof_indices_host(f, cell_counter) =
                           partitioner->global_to_local(number_compressed);
                       else
-                        dof_indices[cell_counter][f] = numbers::invalid_unsigned_int;
+                        dof_indices_host(f, cell_counter) = numbers::invalid_unsigned_int;
                     }
 
                   cell_indices[cell->active_cell_index()] = cell_counter;
 
+
                   for (unsigned int f = 0; f < 2 * dim; ++f)
-                    if (dof_indices[cell_counter][f] == numbers::invalid_unsigned_int)
+                    if (dof_indices_host(f, cell_counter) == numbers::invalid_unsigned_int)
                       cells_at_dirichlet_boundary_by_face[f].push_back(cell_counter);
+
+
+                  cell->get_dof_indices(local_dof_indices);
+
+                  // Adjust dof indices due to periodicity
+                  for (types::global_dof_index &a : local_dof_indices)
+                    {
+                      const auto line = constraints.get_constraint_entries(a);
+                      if (line != nullptr && line->size() == 1 && (*line)[0].second == Number(1.0))
+                        a = (*line)[0].first;
+                    }
+
+                  if (partitioner)
+                    for (auto &index : local_dof_indices)
+                      index = partitioner->global_to_local(index);
+
+                  for (unsigned int i = 0; i < fe.dofs_per_cell; ++i)
+                    {
+                      const types::global_dof_index dof_index =
+                        local_dof_indices[lexicographic_numbering[i]];
+
+                      if (constraints.is_constrained(dof_index))
+                        dof_indices_per_cell_host(i, cell_counter) = numbers::invalid_unsigned_int;
+                      else
+                        dof_indices_per_cell_host(i, cell_counter) = dof_index;
+                    }
 
                   ++cell_counter;
                 }
@@ -248,23 +303,6 @@ namespace Portable
           unsigned int n_cells_at_dirichlet_boundary = 0;
           for (unsigned int f = 0; f < 2 * dim; ++f)
             n_cells_at_dirichlet_boundary += cells_at_dirichlet_boundary_by_face[f].size();
-
-          cells_at_dirichlet_boundary.clear();
-          cells_at_dirichlet_boundary.reserve(n_cells_at_dirichlet_boundary);
-
-          for (unsigned int f = 0; f < 2 * dim; ++f)
-            {
-              std::pair<unsigned int, unsigned int> entry;
-              entry.first                          = f;
-              const unsigned int n_dirichlet_cells = cells_at_dirichlet_boundary_by_face[f].size();
-
-              for (unsigned int i = 0; i < n_dirichlet_cells; ++i)
-                {
-                  entry.second = cells_at_dirichlet_boundary_by_face[f][i];
-                  cells_at_dirichlet_boundary.push_back(entry);
-                }
-            }
-
 
           std::map<unsigned int, std::vector<std::array<types::global_dof_index, 5>>>
             proc_neighbors;
@@ -289,7 +327,7 @@ namespace Portable
                           if (neighbor->is_locally_owned())
                             {
                               AssertIndexRange(neighbor->active_cell_index(), cell_indices.size());
-                              neighbor_cells[cell_counter][f] =
+                              neighbor_cells_host(f, cell_counter) =
                                 cell_indices[neighbor->active_cell_index()];
                             }
                           else
@@ -304,7 +342,7 @@ namespace Portable
                               neighbor_data[4] = f;
                               proc_neighbors[neighbor->subdomain_id()].push_back(neighbor_data);
                               // set dummy
-                              neighbor_cells[cell_counter][f] =
+                              neighbor_cells_host(f, cell_counter) =
                                 cell_indices[cell->active_cell_index()];
                             }
                         }
@@ -313,25 +351,98 @@ namespace Portable
                   ++cell_counter;
                 }
             }
-        }
+          Kokkos::deep_copy(dof_indices, dof_indices_host);
+          Kokkos::fence();
 
-        {
-          std::vector<Polynomials::Polynomial<double>> basis =
-            Polynomials::generate_complete_Lagrange_basis(quadrature.get_points());
-          interpolate_quad_to_boundary[0].resize(basis.size());
-          interpolate_quad_to_boundary[1].resize(basis.size());
-          std::vector<double> val_and_der(2);
-          for (unsigned int i = 0; i < basis.size(); ++i)
-            {
-              basis[i].value(0., val_and_der);
-              interpolate_quad_to_boundary[0][i][0] = val_and_der[0];
-              interpolate_quad_to_boundary[0][i][1] = val_and_der[1];
-              basis[i].value(1., val_and_der);
-              interpolate_quad_to_boundary[1][i][0] = val_and_der[0];
-              interpolate_quad_to_boundary[1][i][1] = val_and_der[1];
-            }
+          Kokkos::deep_copy(neighbor_cells, neighbor_cells_host);
+          Kokkos::fence();
+
+          Kokkos::deep_copy(dof_indices_per_cell, dof_indices_per_cell_host);
+          Kokkos::fence();
         }
       }
+
+      void
+      compute_geometric_tensor(const Mapping<dim>    &mapping,
+                               const Quadrature<1>   &quadrature_1d,
+                               const DoFHandler<dim> &dof_handler,
+                               const unsigned int     n_cells)
+      {
+        const unsigned int n_q_points_1d = quadrature_1d.size();
+        const unsigned int n_q_points    = Utilities::pow(n_q_points_1d, dim);
+
+        constexpr int symmetric_tensor_dim = (dim * (dim + 1)) / 2;
+
+        geometric_tensor_mass =
+          DeviceVector<Number>(Kokkos::view_alloc("geometric_tensor_mass",
+                                                  Kokkos::WithoutInitializing),
+                               n_cells * symmetric_tensor_dim * n_q_points);
+
+        auto geometric_tensor_mass_host = Kokkos::create_mirror_view(geometric_tensor_mass);
+
+        // build tensor product quadrature
+        Quadrature<dim> quadrature(quadrature_1d);
+
+        std::vector<Number> quad_weights = quadrature.get_weights();
+
+        const FiniteElement<dim> &fe = dof_handler.get_fe();
+
+        FEValues<dim> fe_values(mapping,
+                                fe,
+                                quadrature,
+                                update_jacobians | update_jacobian_grads |
+                                  update_quadrature_points);
+
+        unsigned cell_counter = 0;
+        for (const auto &cell : dof_handler.active_cell_iterators())
+          {
+            if (cell->is_locally_owned())
+              {
+                fe_values.reinit(cell);
+
+                for (unsigned int q = 0; q < n_q_points; ++q)
+                  {
+                    const DerivativeForm<1, dim, dim> jacobian = fe_values.jacobian(q);
+
+                    Number components[symmetric_tensor_dim];
+
+                    // we only need the symmetric part of the tensor, so we store it
+                    // in a compressed format
+                    int index = 0;
+                    for (int d1 = 0; d1 < dim; ++d1)
+                      for (int d2 = d1; d2 < dim; ++d2)
+                        {
+                          Number sum = 0;
+                          for (int k = 0; k < dim; ++k)
+                            sum += jacobian[k][d1] * jacobian[k][d2];
+                          components[index] = sum * quad_weights[q];
+                          ++index;
+                        }
+
+                    for (unsigned int c = 0; c < symmetric_tensor_dim; ++c)
+                      geometric_tensor_mass_host(cell_counter * symmetric_tensor_dim * n_q_points +
+                                                 c * n_q_points + q) =
+                        components[c] / jacobian.determinant() * quad_weights[q];
+                  }
+                ++cell_counter;
+              }
+          }
+
+        Kokkos::deep_copy(geometric_tensor_mass, geometric_tensor_mass_host);
+        Kokkos::fence();
+      }
+
+      //   template <int nq, int nm_t>
+      //   void
+      //   compute_cell_mass_operator(const DeviceVector<Number> shape_values_n,
+      //   const  DeviceVector<Number> shape_values_t,
+      //   const
+      // const Number * __restrict__ )
+      //   {
+      //     constexpr int nm_n = nm_t + 1;
+
+
+      //   }
 
     private:
       enum class CellOperation
@@ -344,28 +455,23 @@ namespace Portable
       ObserverPointer<const Mapping<dim>>    mapping;
       ObserverPointer<const DoFHandler<dim>> dof_handler;
 
-      std::vector<std::array<unsigned int, 2 * dim + 1>> dof_indices;
-      //   Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
-      //     dof_indices; --- will be Kokkos:: View of Kokkos::Array
+      Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices;
 
-      std::vector<std::array<unsigned int, 2 * dim>> neighbor_cells;
-      //   Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
-      //     neighbor_cells; --- will be Kokkos:: View of Kokkos::Array
+      Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_per_cell;
 
-      std::vector<std::array<unsigned int, 2 * dim>> mpi_exchange_data_on_faces;
-      //   Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
-      //     neighbor_cells; --- will be Kokkos:: View of Kokkos::Array
-
-      std::vector<std::pair<unsigned int, unsigned int>> cells_at_dirichlet_boundary;
-      //   Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space>
-      //   cells_at_dirichlet_boundary;
+      Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> neighbor_cells;
 
       std::shared_ptr<const Utilities::MPI::Partitioner> partitioner;
 
       mutable std::array<double, 15> timings;
 
-      dealii::internal::MatrixFreeFunctions::ShapeInfo<Number> shape_info;
-      std::array<std::vector<std::array<Number, 2>>, 2>        interpolate_quad_to_boundary;
+      dealii::internal::MatrixFreeFunctions::ShapeInfo<Number> shape_info_cpu;
+
+      Kokkos::Array<internal::UnivariateShapeData<Number>, 2> shape_info;
+
+      ObserverPointer<const Quadrature<1>> quadrature;
+
+      DeviceVector<Number> geometric_tensor_mass;
     };
 
   } // namespace RT
