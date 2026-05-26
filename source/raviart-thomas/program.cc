@@ -99,50 +99,18 @@ private:
       {
         eval.reinit(cell);
         // eval.gather_evaluate(src, EvaluationFlags::values | EvaluationFlags::gradients);
-        eval.read_dof_values(src);
-
-        // for (unsigned int i = 0; i < eval.dofs_per_component; ++i)
-        //   {
-        //     const auto val = eval.get_dof_value(i)[0];
-        //     std::cout << val << "  ";
-        //   }
-        // std::cout << std::endl;
-
-        // for (unsigned int i = 0; i < eval.dofs_per_component; ++i)
-        //   {
-        //     const auto val = eval.get_dof_value(i)[1];
-        //     std::cout << val << "  ";
-        //   }
-
-        eval.evaluate(EvaluationFlags::values);
+        eval.gather_evaluate(src, EvaluationFlags::values);
 
         for (const unsigned int q : eval.quadrature_point_indices())
           {
-            const auto val = eval.get_value(q)[0];
-            std::cout << val << "  ";
+            const auto val = eval.get_value(q);
+
+            // const auto grad = eval.get_gradient(q);
+            // eval.submit_gradient(make_vectorized_array<Number>(factor_lapl) * grad, q);
+            eval.submit_value(make_vectorized_array<Number>(factor_mass) * val, q);
           }
-        std::cout << std::endl;
-
-        // for (unsigned int i = 0; i < eval.dofs_per_component; ++i)
-        //   {
-        //     const auto val = eval.get_dof_value(i)[1];
-        //     std::cout << val << "  ";
-        //   }
-
-
-        // eval.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
-        //   for (const unsigned int q : eval.quadrature_point_indices())
-        //     {
-        //       const auto val = eval.get_value(q);
-
-        //       std::cout << val << "  ";
-        //       // const auto grad = eval.get_gradient(q);
-        //       // eval.submit_gradient(make_vectorized_array<Number>(factor_lapl) * grad, q);
-        //       eval.submit_value(make_vectorized_array<Number>(factor_mass) * val, q);
-        //     }
-        //   std::cout << std::endl << std::endl;
         //   // eval.integrate_scatter(EvaluationFlags::values | EvaluationFlags::gradients, dst);
-        //   eval.integrate_scatter(EvaluationFlags::values, dst);
+        eval.integrate_scatter(EvaluationFlags::values, dst);
       }
   }
 
@@ -304,6 +272,7 @@ LaplaceProblem<dim, fe_degree>::setup_dofs()
   // std::map<types::boundary_id, const Function<dim> *> dirichlet_boundary_functions = {
   //   {types::boundary_id(0), &homogeneous_dirichlet_bc}};
 
+  constraints.clear();
   constraints.reinit(locally_owned_dofs, locally_relevant_dofs);
   // DoFTools::make_hanging_node_constraints(dof_handler, constraints);
   // VectorTools::interpolate_boundary_values(dof_handler, dirichlet_boundary_functions,
@@ -471,7 +440,6 @@ LaplaceProblem<dim, fe_degree>::test()
 
   rt_operator.reinit(mapping, dof_handler, constraints, quadrature_1d);
 
-  // rt_operator.test();
 
   MatrixFree<dim, double> matrix_free;
   {
@@ -496,13 +464,25 @@ LaplaceProblem<dim, fe_degree>::test()
   for (unsigned int i = 0; i < vec1.locally_owned_size(); ++i)
     vec1.local_element(i) = (double)(i);
 
-  // helm_operator.vmult(vec2, vec1);
+  helm_operator.vmult(vec2, vec1);
 
   // for (unsigned int i = 0; i < vec2.locally_owned_size(); ++i)
   //   std::cout << vec2.local_element(i) << "  ";
   // std::cout << std::endl << std::endl;
 
   rt_operator.test(vec3, vec1);
+
+  // std::cout << std::endl << std::endl;
+
+  // for (unsigned int i = 0; i < vec3.locally_owned_size(); ++i)
+  //   std::cout << vec3.local_element(i) << "  ";
+  // std::cout << std::endl << std::endl;
+  auto err = vec2;
+  err -= vec3;
+
+  pcout << "L2 norm FEEval:        " << vec2.l2_norm() << std::endl;
+  pcout << "L2 norm RTOperator:    " << vec3.l2_norm() << std::endl;
+  pcout << "L2 norm of difference: " << err.l2_norm() << std::endl;
 }
 
 template <int dim, int fe_degree>
@@ -561,13 +541,19 @@ main(int argc, char *argv[])
     {
       Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
 
-      const int dim           = 2;
+      // const int dim           = 2;
       const int min_fe_degree = 1;
-      const int max_fe_degree = 2;
+      const int max_fe_degree = 3;
 
       for (int fe_degree = min_fe_degree; fe_degree <= max_fe_degree; ++fe_degree)
         {
-          solve_for_degree<dim, 1>(fe_degree);
+          solve_for_degree<2, 1>(fe_degree);
+        }
+
+
+      for (int fe_degree = min_fe_degree; fe_degree <= max_fe_degree; ++fe_degree)
+        {
+          solve_for_degree<3, 1>(fe_degree);
         }
     }
   catch (std::exception &exc)

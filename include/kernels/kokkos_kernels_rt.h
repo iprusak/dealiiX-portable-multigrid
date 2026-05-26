@@ -175,30 +175,9 @@ namespace Portable
                 team_member.team_barrier();
               }
 
-              //   for (int i = 0; i < n_n * Utilities::pow(n_t, dim - 1); ++i)
-              //     {
-              //       std::cout << s_uq_0[i] << " ";
-              //     }
-              //   std::cout << std::endl;
-              //   for (int i = 0; i < n_n * Utilities::pow(n_t, dim - 1); ++i)
-              //     {
-              //       std::cout << s_uq_1[i] << " ";
-              //     }
-              //   std::cout << std::endl;
-
-
-              for (unsigned int i = 0; i < n_n * Utilities::pow(n_t, dim - 1); ++i)
-                {
-                  std::cout << s_uq_0[i] << " ";
-                }
-              std::cout << std::endl;
-
-
               // ====================================================
               // PHASE 2: Interpolate to quadrature nodes
               // ====================================================
-
-
               {
                 // ------------------------ Component 0 (x-direction) ------------------------
                 // x is normal (basis_n), y and z are tangent (basis_t)
@@ -249,12 +228,6 @@ namespace Portable
                       }
                     team_member.team_barrier();
                   }
-
-                  for (unsigned int i = 0; i < n_q * Utilities::pow(n_t, dim - 1); ++i)
-                    {
-                      std::cout << s_wsp1[i] << " ";
-                    }
-                  std::cout << std::endl;
 
                   // component 0 in y direction
                   {
@@ -547,27 +520,6 @@ namespace Portable
                 }
               }
 
-
-              //   for (int i = 0; i < n_q_total; ++i)
-              //     {
-              //       std::cout << s_uq_0[i] << " ";
-              //     }
-
-              //   std::cout << std::endl;
-              //   for (int i = 0; i < n_q_total; ++i)
-              //     {
-              //       std::cout << s_uq_1[i] << " ";
-              //     }
-              //   std::cout << std::endl;
-
-
-              //   if constexpr (dim > 2)
-              //     for (int i = 0; i < n_q_total; ++i)
-              //       {
-              //         std::cout << s_uq_2[i] << " ";
-              //       }
-              //   std::cout << std::endl;
-
               // ====================================================
               // PHASE 3: Apply Piola Geometry Metric
               // ====================================================
@@ -578,7 +530,7 @@ namespace Portable
                 for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
                      tid += blockSize)
                   {
-                    const int e = tid / (co_dimension_size);
+                    const int e = tid / co_dimension_size;
 
                     //  Base offset for the current element's geometric factors
                     const int e_offset =
@@ -735,7 +687,7 @@ namespace Portable
                                 for (int p = 0; p < n_q; ++p)
                                   tmp += shape_values_normal[i * n_q + p] * r_p[p];
 
-                                s_uq_0[e * n_n * n_t + j * n_t + i] = tmp;
+                                s_uq_0[e * n_n * n_t + j * n_n + i] = tmp;
                               }
                           }
                         else if constexpr (dim == 3)
@@ -839,7 +791,7 @@ namespace Portable
 
                   // component 1 in x direction
                   {
-                    constexpr int co_dimension_size = (dim == 2) ? n_t : n_t * n_t;
+                    constexpr int co_dimension_size = (dim == 2) ? n_n : n_n * n_t;
 
                     for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
                          tid += blockSize)
@@ -972,7 +924,6 @@ namespace Portable
                     }
                   }
               }
-
 
               // ====================================================
               // PHASE 5: Write the results to the global L vector.

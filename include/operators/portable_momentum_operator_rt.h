@@ -14,6 +14,7 @@
 
 #include <deal.II/matrix_free/portable_matrix_free.h>
 #include <deal.II/matrix_free/shape_info.h>
+#include <deal.II/matrix_free/tensor_product_kernels.h>
 
 #include <Kokkos_Array.hpp>
 #include <Kokkos_Core.hpp>
@@ -418,7 +419,7 @@ namespace Portable
                         {
                           Number sum = 0;
                           for (int k = 0; k < dim; ++k)
-                            sum += jacobian[k][d1] * jacobian[k][d2];
+                            sum += jacobian[d1][k] * jacobian[d2][k];
                           components[index] = sum * quad_weights[q];
                           ++index;
                         }
@@ -429,8 +430,7 @@ namespace Portable
 
                     for (unsigned int c = 0; c < symmetric_tensor_dim; ++c)
                       geometric_tensor_mass_host(cell_counter * symmetric_tensor_dim * n_q_points +
-                                                 c * n_q_points + q) =
-                        components[c] / determinant * quad_weights[q];
+                                                 c * n_q_points + q) = components[c] / determinant;
                   }
                 ++cell_counter;
               }
@@ -439,6 +439,543 @@ namespace Portable
         Kokkos::deep_copy(geometric_tensor_mass, geometric_tensor_mass_host);
         Kokkos::fence();
       }
+
+      template <int n_t, int n_q, int component = 0>
+      void
+      test_cpu(const Number               *in,
+               Number                     *out,
+               DeviceVector<Number>       &src_device,
+               const DeviceVector<Number> &dst_device)
+      {
+        constexpr unsigned int n_n = n_t + 1;
+
+        Kokkos::Array<DeviceVector<Number>, 2> shape_values;
+        shape_values[0] = shape_info[0].shape_values;
+        shape_values[1] = shape_info[1].shape_values;
+
+        Portable::RT::mass_operator<dim, n_t, n_q, Number>(shape_values,
+                                                           geometric_tensor_mass,
+                                                           src_device,
+                                                           dst_device,
+                                                           dof_indices_per_cell,
+                                                           n_cells,
+                                                           1u,
+                                                           1u,
+                                                           1u);
+
+        std::vector<Number> temp1(n_q * Utilities::pow(n_q, dim - 1));
+        std::vector<Number> temp2(n_q * Utilities::pow(n_q, dim - 1));
+
+
+        if (component == 0)
+          {
+            for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+              for (unsigned int i0 = 0; i0 < n_t; ++i0)
+                dealii::internal::apply_matrix_vector_product<
+                  dealii::internal::EvaluatorVariant::evaluate_general,
+                  dealii::internal::EvaluatorQuantity::value,
+                  n_n,
+                  n_q,
+                  1,
+                  1,
+                  true,
+                  false,
+                  Number,
+                  Number>(shape_info_cpu.data[0].shape_values.data(),
+                          in + i1 * n_n * Utilities::pow(n_t, dim - 2) + i0 * n_n,
+                          temp1.data() + i1 * n_q * Utilities::pow(n_t, dim - 2) + i0 * n_q);
+
+
+            if (dim == 2)
+              {
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+                  for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                    dealii::internal::apply_matrix_vector_product<
+                      dealii::internal::EvaluatorVariant::evaluate_general,
+                      dealii::internal::EvaluatorQuantity::value,
+                      n_t,
+                      n_q,
+                      n_q,
+                      n_q,
+                      true,
+                      false,
+                      Number,
+                      Number>(shape_info_cpu.data[1].shape_values.data(),
+                              temp1.data() + i1 * n_q * n_t + i0,
+                              out + i1 * n_q * n_q + i0);
+              }
+            if (dim == 3)
+              {
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+                  for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                    dealii::internal::apply_matrix_vector_product<
+                      dealii::internal::EvaluatorVariant::evaluate_general,
+                      dealii::internal::EvaluatorQuantity::value,
+                      n_t,
+                      n_q,
+                      n_q,
+                      n_q,
+                      true,
+                      false,
+                      Number,
+                      Number>(shape_info_cpu.data[1].shape_values.data(),
+                              temp1.data() + i1 * n_q * n_t + i0,
+                              temp2.data() + i1 * n_q * n_q + i0);
+
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_q : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_t,
+                          n_q,
+                          Utilities::pow(n_q, dim - 1),
+                          Utilities::pow(n_q, dim - 1),
+                          true,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[1].shape_values.data(),
+                                  temp2.data() + i0 * n_q + i1,
+                                  out + i0 * n_q + i1);
+                      }
+                    std::cout << std::endl;
+                  }
+
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_q : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_t,
+                          n_q,
+                          n_q * Utilities::pow(n_q, dim - 2),
+                          n_q * Utilities::pow(n_q, dim - 2),
+                          false,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[1].shape_values.data(),
+                                  out + i0 * n_q + i1,
+                                  temp1.data() + i0 * n_q + i1);
+                      }
+                  }
+
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_t,
+                          n_q,
+                          n_q,
+                          n_q,
+                          false,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[1].shape_values.data(),
+                                  temp1.data() + i1 * n_q * n_q + i0,
+                                  temp2.data() + i1 * n_q * n_t + i0);
+                      }
+                  }
+              }
+            std::cout << std::endl << std::endl;
+
+            if (dim == 2)
+              {
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_t,
+                          n_q,
+                          n_q,
+                          n_q,
+                          false,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[1].shape_values.data(),
+                                  out + i1 * n_q + i0,
+                                  temp2.data() + i1 * n_q + i0);
+                      }
+                  }
+              }
+            std::cout << std::endl << std::endl;
+
+            for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+              for (unsigned int i0 = 0; i0 < n_t; ++i0)
+                {
+                  dealii::internal::apply_matrix_vector_product<
+                    dealii::internal::EvaluatorVariant::evaluate_general,
+                    dealii::internal::EvaluatorQuantity::value,
+                    n_t + 1,
+                    n_q,
+                    1,
+                    1,
+                    false,
+                    false,
+                    Number,
+                    Number>(shape_info_cpu.data[0].shape_values.data(),
+                            temp2.data() + i1 * n_q * n_t + i0 * n_q,
+                            out + i1 * n_n * n_t + i0 * n_n);
+
+                  // for (int j = 0; j < n_q; ++j)
+                  //   std::cout << temp2[i1 * n_q * n_t + i0 * n_q + j] << " ";
+                  // std::cout << std::endl;
+                }
+
+
+            // std::cout << std::endl << std::endl;
+            // for (unsigned int i = 0; i < n_q * n_t * Utilities::pow(n_q, dim - 2); ++i)
+            //   {
+            //     std::cout << temp1[i] << " ";
+            //   }
+
+            // std::cout << std::endl << std::endl;
+            // if (dim == 2)
+            // for (unsigned int i = 0; i < n_q * Utilities::pow(n_t, dim - 1); ++i)
+            //   {
+            //     std::cout << temp2[i] << " ";
+            //   }
+
+            // for (unsigned int i = 0; i < n_n * Utilities::pow(n_t, dim - 1); ++i)
+            //   {
+            //     std::cout << out[i] << " ";
+            //   }
+          }
+
+        if (component == 1)
+          {
+            for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+              for (unsigned int i0 = 0; i0 < n_n; ++i0)
+                dealii::internal::apply_matrix_vector_product<
+                  dealii::internal::EvaluatorVariant::evaluate_general,
+                  dealii::internal::EvaluatorQuantity::value,
+                  n_t,
+                  n_q,
+                  1,
+                  1,
+                  true,
+                  false,
+                  Number,
+                  Number>(shape_info_cpu.data[1].shape_values.data(),
+                          in + i1 * n_t * n_n + i0 * n_t,
+                          temp1.data() + i1 * n_q * n_n + i0 * n_q);
+
+
+            if (dim == 2)
+              {
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+                  for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                    dealii::internal::apply_matrix_vector_product<
+                      dealii::internal::EvaluatorVariant::evaluate_general,
+                      dealii::internal::EvaluatorQuantity::value,
+                      n_n,
+                      n_q,
+                      n_q,
+                      n_q,
+                      true,
+                      false,
+                      Number,
+                      Number>(shape_info_cpu.data[0].shape_values.data(),
+                              temp1.data() + i1 * n_q * n_n + i0,
+                              out + i1 * n_q * n_n + i0);
+              }
+
+
+
+            if (dim == 3)
+              {
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+                  for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                    dealii::internal::apply_matrix_vector_product<
+                      dealii::internal::EvaluatorVariant::evaluate_general,
+                      dealii::internal::EvaluatorQuantity::value,
+                      n_n,
+                      n_q,
+                      n_q,
+                      n_q,
+                      true,
+                      false,
+                      Number,
+                      Number>(shape_info_cpu.data[0].shape_values.data(),
+                              temp1.data() + i1 * n_q * n_n + i0,
+                              temp2.data() + i1 * n_q * n_n + i0);
+
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_q : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_t,
+                          n_q,
+                          Utilities::pow(n_q, dim - 1),
+                          Utilities::pow(n_q, dim - 1),
+                          true,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[1].shape_values.data(),
+                                  temp2.data() + i0 * n_q + i1,
+                                  out + i0 * n_q + i1);
+                      }
+                  }
+
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_q : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_t,
+                          n_q,
+                          Utilities::pow(n_q, dim - 1),
+                          Utilities::pow(n_q, dim - 1),
+                          false,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[1].shape_values.data(),
+                                  out + i0 * n_q + i1,
+                                  temp1.data() + i0 * n_q + i1);
+                      }
+                  }
+
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_n,
+                          n_q,
+                          n_q,
+                          n_q,
+                          false,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[0].shape_values.data(),
+                                  temp1.data() + i1 * n_q * n_q + i0,
+                                  temp2.data() + i1 * n_q * n_n + i0);
+                      }
+                  }
+              }
+            if (dim == 2)
+              {
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_n,
+                          n_q,
+                          n_q,
+                          n_q,
+                          false,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[0].shape_values.data(),
+                                  out + i1 * n_q + i0,
+                                  temp2.data() + i1 * n_q + i0);
+                      }
+                  }
+              }
+
+            for (unsigned int i1 = 0; i1 < (dim == 3 ? n_t : 1); ++i1)
+              {
+                for (unsigned int i0 = 0; i0 < n_n; ++i0)
+                  {
+                    dealii::internal::apply_matrix_vector_product<
+                      dealii::internal::EvaluatorVariant::evaluate_general,
+                      dealii::internal::EvaluatorQuantity::value,
+                      n_t,
+                      n_q,
+                      1,
+                      1,
+                      false,
+                      false,
+                      Number,
+                      Number>(shape_info_cpu.data[1].shape_values.data(),
+                              temp2.data() + i1 * n_q * n_n + i0 * n_q,
+                              out + i1 * n_t * n_n + i0 * n_t);
+                  }
+              }
+
+
+            std::cout << std::endl << std::endl;
+            for (unsigned int i = 0; i < n_n * Utilities::pow(n_t, dim - 1); ++i)
+              {
+                std::cout << out[i] << " ";
+              }
+
+
+            // std::cout << std::endl << std::endl;
+            // for (unsigned int i = 0; i < n_q * n_q * Utilities::pow(n_q, dim - 2); ++i)
+            //   {
+            //     std::cout << out[i] << " ";
+            //   }
+
+            // std::cout << std::endl << std::endl;
+            // for (unsigned int i = 0; i < n_q * n_t * Utilities::pow(n_q, dim - 2); ++i)
+            //   {
+            //     std::cout << temp1[i] << " ";
+            //   }
+
+            // std::cout << std::endl << std::endl;
+            // for (unsigned int i = 0; i < n_q * n_n * Utilities::pow(n_t, dim - 2); ++i)
+            //   {
+            //     std::cout << temp2[i] << " ";
+            //   }
+          }
+
+        if (component == 2)
+          {
+            for (unsigned int i1 = 0; i1 < (dim == 3 ? n_n : 1); ++i1)
+              for (unsigned int i0 = 0; i0 < n_t; ++i0)
+                dealii::internal::apply_matrix_vector_product<
+                  dealii::internal::EvaluatorVariant::evaluate_general,
+                  dealii::internal::EvaluatorQuantity::value,
+                  n_t,
+                  n_q,
+                  1,
+                  1,
+                  true,
+                  false,
+                  Number,
+                  Number>(shape_info_cpu.data[1].shape_values.data(),
+                          in + i1 * n_t * n_t + i0 * n_t,
+                          temp1.data() + i1 * n_q * n_t + i0 * n_q);
+
+
+            for (unsigned int i1 = 0; i1 < (dim == 3 ? n_n : 1); ++i1)
+              for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                dealii::internal::apply_matrix_vector_product<
+                  dealii::internal::EvaluatorVariant::evaluate_general,
+                  dealii::internal::EvaluatorQuantity::value,
+                  n_t,
+                  n_q,
+                  n_q,
+                  n_q,
+                  true,
+                  false,
+                  Number,
+                  Number>(shape_info_cpu.data[1].shape_values.data(),
+                          temp1.data() + i1 * n_q * n_t + i0,
+                          temp2.data() + i1 * n_q * n_q + i0);
+
+
+
+            if (dim == 3)
+              {
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_q : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_n,
+                          n_q,
+                          Utilities::pow(n_q, dim - 1),
+                          Utilities::pow(n_q, dim - 1),
+                          true,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[0].shape_values.data(),
+                                  temp2.data() + i0 * n_q + i1,
+                                  out + i0 * n_q + i1);
+                      }
+                  }
+
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_q : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_n,
+                          n_q,
+                          Utilities::pow(n_q, dim - 1),
+                          Utilities::pow(n_q, dim - 1),
+                          false,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[0].shape_values.data(),
+                                  out + i1 * n_q + i0,
+                                  temp1.data() + i1 * n_q + i0);
+                      }
+                  }
+
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_n : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_q; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_t,
+                          n_q,
+                          n_q,
+                          n_q,
+                          false,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[1].shape_values.data(),
+                                  temp1.data() + i1 * n_q * n_q + i0,
+                                  temp2.data() + i1 * n_q * n_t + i0);
+                      }
+                  }
+                for (unsigned int i1 = 0; i1 < (dim == 3 ? n_n : 1); ++i1)
+                  {
+                    for (unsigned int i0 = 0; i0 < n_t; ++i0)
+                      {
+                        dealii::internal::apply_matrix_vector_product<
+                          dealii::internal::EvaluatorVariant::evaluate_general,
+                          dealii::internal::EvaluatorQuantity::value,
+                          n_t,
+                          n_q,
+                          1,
+                          1,
+                          false,
+                          false,
+                          Number,
+                          Number>(shape_info_cpu.data[1].shape_values.data(),
+                                  temp2.data() + i1 * n_q * n_t + i0 * n_q,
+                                  out + i1 * n_t * n_t + i0 * n_t);
+                      }
+                  }
+              }
+          }
+        std::cout << std::endl << std::endl;
+        // for (unsigned int i = 0; i < n_q * n_t * n_n; ++i)
+        //   {
+        //     std::cout << temp2[i] << " ";
+        //   }
+        // std::cout << std::endl << std::endl;
+        // for (unsigned int i = 0; i < n_q * n_q * Utilities::pow(n_n, dim - 2); ++i)
+        //   {
+        //     std::cout << temp2[i] << " ";
+        //   }
+
+        // std::cout << std::endl << std::endl;
+        for (unsigned int i = 0; i < n_t * n_t * n_n; ++i)
+          {
+            std::cout << out[i] << " ";
+          }
+      }
+
 
 
       void
@@ -454,53 +991,44 @@ namespace Portable
         src.reinit(partitioner);
         src.import_elements(rw, VectorOperation::insert);
 
-        // src = (Number)1.;
 
         DeviceVector<Number> src_device(src.get_values(), src.locally_owned_size());
         DeviceVector<Number> dst_device(dst.get_values(), dst.locally_owned_size());
-
-        // for (unsigned int i = 0; i < src_host.locally_owned_size(); ++i)
-        //   {
-        //     std::cout << src_host(i) << " ";
-        //   }
-        // std::cout << std::endl << std::endl;
-
-
-        // Kokkos::parallel_for(
-        //   "write_dst_subdomain_neumann", src.locally_owned_size(), KOKKOS_LAMBDA(const int i) {
-        //     src_device(i) = Number(i + 1);
-        //   });
 
 
         Kokkos::Array<DeviceVector<Number>, 2> shape_values;
         shape_values[0] = shape_info[0].shape_values;
         shape_values[1] = shape_info[1].shape_values;
 
-        // std::cout << shape_info[0].fe_degree << std::endl;
-        // std::cout << shape_info[0].shape_values.size() << std::endl;
-        // std::cout << shape_info[1].shape_values.size() << std::endl;
-        // std::cout << shape_info[0].shape_gradients_collocation_eo.size() << std::endl;
-        // std::cout << shape_info[1].shape_gradients_collocation.size() << std::endl;
+        // const unsigned int n_dofs_per_component =
+        //   (shape_info[0].fe_degree + 1) * Utilities::pow(shape_info[0].fe_degree, dim - 1);
+        // const unsigned int n_q_points = Utilities::pow(shape_info[0].n_q_points_1d, dim);
+
+        // std::vector<Number> in0(n_dofs_per_component);
+        // std::vector<Number> in1(n_dofs_per_component);
+        // std::vector<Number> in2(n_dofs_per_component);
+        // std::vector<Number> out0(n_q_points);
+        // std::vector<Number> out1(n_q_points);
+        // std::vector<Number> out2(n_q_points);
+        // std::vector<Number> temp1(n_q_points);
+        // std::vector<Number> temp2(n_q_points);
 
 
-        // for (unsigned int i = 0; i < shape_info[0].shape_gradients_collocation_eo.size(); ++i)
+
+        // for (unsigned int i = 0; i < n_dofs_per_component; ++i)
         //   {
-        //     std::cout << shape_info[0].shape_gradients_collocation_eo[i] << "  ";
+        //     in0[i] = src_host[dof_indices_per_cell(0 * n_dofs_per_component + i, 0)];
+        //     in1[i] = src_host[dof_indices_per_cell(1 * n_dofs_per_component + i, 0)];
+        //     if (dim > 2)
+        //       in2[i] = src_host[dof_indices_per_cell(2 * n_dofs_per_component + i, 0)];
         //   }
 
-        // std::cout << std::endl << std::endl;
 
-
-        // for (unsigned int i = 0; i < shape_info[1].shape_gradients_collocation.size(); ++i)
-        //   {
-        //     std::cout << shape_info[1].shape_gradients_collocation[i] << "  ";
-        //   }
+        // const unsigned int nn_n = shape_info[0].fe_degree + 1;
+        // const unsigned int nn_t = shape_info[0].fe_degree;
+        // const unsigned int nn_q = shape_info[0].n_q_points_1d;
 
         // std::cout << std::endl << std::endl;
-
-        AlignedVector<Number> src_values(), dst_values;
-
-
         if (shape_info[0].fe_degree == 2)
           {
             constexpr int n_t = 2, n_q = 3;
@@ -514,25 +1042,20 @@ namespace Portable
                                                                1u,
                                                                1u,
                                                                1u);
-
-
-            dealii::internal::EvaluatorTensorProductAnisotropic<
-              dim,
-              n_t,
-              n_q,
-              false,
-              dealii::internal::MatrixFreeFunctions::ElementType::tensor_raviart_thomas,
-              false>
-              eval_rt;
-
-            eval_rt.template normal<0>(shape_info_cpu.data[0],
-                                       src_host.get_values(),
-                                       dst_host.get_values());
+            // test_cpu<n_t, n_q>(in0.data(), temp1.data(), src_device, dst_device);
+            // test_cpu<n_t, n_q, 1>(in1.data(), out1.data(), src_device, dst_device);
+            // if (dim == 3)
+            //   test_cpu<n_t, n_q, 2>(in2.data(), out2.data(), src_device, dst_device);
           }
         else if (shape_info[0].fe_degree == 3)
           {
             constexpr int n_t = 3, n_q = 4;
 
+            // test_cpu<n_t, n_q>(in0.data(), temp1.data(), src_device, dst_device);
+            // test_cpu<n_t, n_q, 1>(in1.data(), out1.data(), src_device, dst_device);
+
+            // if (dim == 3)
+            //   test_cpu<n_t, n_q, 2>(in2.data(), out2.data(), src_device, dst_device);
 
             Portable::RT::mass_operator<dim, n_t, n_q, Number>(shape_values,
                                                                geometric_tensor_mass,
@@ -543,25 +1066,15 @@ namespace Portable
                                                                1u,
                                                                1u,
                                                                1u);
-
-
-            dealii::internal::EvaluatorTensorProductAnisotropic<
-              dim,
-              n_t,
-              n_q,
-              false,
-              dealii::internal::MatrixFreeFunctions::ElementType::tensor_raviart_thomas,
-              false>
-              eval_rt;
-
-            eval_rt.template normal<0>(shape_info_cpu.data[0],
-                                       src_host.get_values(),
-                                       dst_host.get_values());
           }
         else if (shape_info[0].fe_degree == 4)
           {
             constexpr int n_t = 4, n_q = 5;
 
+            // test_cpu<n_t, n_q>(in0.data(), temp1.data(), src_device, dst_device);
+            // test_cpu<n_t, n_q, 1>(in1.data(), out1.data(), src_device, dst_device);
+            // if (dim == 3)
+            //   test_cpu<n_t, n_q, 2>(in2.data(), out2.data(), src_device, dst_device);
 
             Portable::RT::mass_operator<dim, n_t, n_q, Number>(shape_values,
                                                                geometric_tensor_mass,
@@ -572,120 +1085,9 @@ namespace Portable
                                                                1u,
                                                                1u,
                                                                1u);
-
-
-
-            dealii::internal::EvaluatorTensorProductAnisotropic<
-              dim,
-              n_t,
-              n_q,
-              false,
-              dealii::internal::MatrixFreeFunctions::ElementType::tensor_raviart_thomas,
-              false>
-              eval_rt;
-
-            eval_rt.template normal<0>(shape_info_cpu.data[0],
-                                       src_host.get_values(),
-                                       dst_host.get_values());
           }
 
-
-
-        for (unsigned int i = 0; i < dst_host.locally_owned_size(); ++i)
-          {
-            std::cout << dst_host(i) << " ";
-          }
-        std::cout << std::endl << std::endl;
-
-
-
-        // using TeamHandle =
-        //   Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
-
-        // using SharedViewValues =
-        //   Kokkos::View<Number *,
-        //                MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
-        //                Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
-
-        // MemorySpace::Default::kokkos_space::execution_space exec;
-
-        // using TeamPolicy =
-        // Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>;
-
-
-        // auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
-        // team_policy.set_scratch_size(0, Kokkos::PerTeam(5 * n_q * n_q * n_q));
-
-        // std::cout << shape_values[1].size() << std::endl;
-        // std::cout << src.locally_owned_size() << std::endl;
-
-
-
-        // Kokkos::parallel_for(
-        //   "bla", team_policy, KOKKOS_LAMBDA(const TeamHandle &team_member) {
-        //     ::dealii::Portable::internal::EvaluatorTensorProduct<
-        //       ::dealii::Portable::internal::EvaluatorVariant::evaluate_general,
-        //       dim,
-        //       n_n,
-        //       n_q,
-        //       Number,
-        //       MemorySpace::Default::kokkos_space>
-        //       eval_n(team_member,
-        //              shape_values[0],
-        //              Kokkos::View<Number *, MemorySpace::Default::kokkos_space>(),
-        //              Kokkos::View<Number *, MemorySpace::Default::kokkos_space>(),
-        //              SharedViewValues());
-
-        //     ::dealii::Portable::internal::EvaluatorTensorProduct<
-        //       ::dealii::Portable::internal::EvaluatorVariant::evaluate_general,
-        //       dim,
-        //       n_t,
-        //       n_q,
-        //       Number,
-        //       MemorySpace::Default::kokkos_space>
-        //       eval_t(team_member,
-        //              shape_values[1],
-        //              Kokkos::View<Number *, MemorySpace::Default::kokkos_space>(),
-        //              Kokkos::View<Number *, MemorySpace::Default::kokkos_space>(),
-        //              SharedViewValues());
-
-        //     SharedViewValues in(team_member.team_shmem(), n_n * Utilities::pow(n_t, dim - 1));
-        //     SharedViewValues out(team_member.team_shmem(), n_q * Utilities::pow(n_q, dim - 1));
-
-        //     SharedViewValues temp1(team_member.team_shmem(),
-        //                            n_q * n_n * Utilities::pow(n_t, dim - 2));
-        //     SharedViewValues temp2(team_member.team_shmem(), n_q * Utilities::pow(n_q, dim - 1));
-
-
-        //     std::cout << "in.size() == " << in.size() << std::endl;
-        //     for (int i = 0; i < n_n * Utilities::pow(n_t, dim - 1); ++i)
-        //       {
-        //         // std::cout << dof_indices_per_cell(1 * n_n * Utilities::pow(n_t, dim - 1)+ i,
-        //         0)
-        //         // << std::endl;
-        //         in(i) =
-        //           src_device(dof_indices_per_cell(1 * n_n * Utilities::pow(n_t, dim - 1) + i,
-        //           0));
-        //         std::cout << in(i) << " ";
-        //       }
-        //     std::cout << std::endl << std::endl;
-
-
-        //     eval_t.template values<0, true, false, false>(in, temp1);
-        //     eval_n.template values<2, true, false, false>(temp1, temp2);
-        //     // eval_t.template values<2, true, false, false>(temp2, out);
-
-        //     for (int i = 0; i < n_q * n_n * Utilities::pow(n_t, dim - 2); ++i)
-        //       {
-        //         std::cout << temp2[i] << " ";
-        //       }
-
-        //     // for (int i = 0; i < n_q * n_q *Utilities::pow(n_t, dim - 2); ++i)
-        //     //   {
-        //     //     std::cout << out[i] << " ";
-        //     //   }
-        //   });
-        // std::cout << std::endl << std::endl;
+        dst.compress(VectorOperation::add);
 
         rw.import_elements(dst, VectorOperation::insert);
         dst_host.import_elements(rw, VectorOperation::insert);
