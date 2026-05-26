@@ -542,9 +542,9 @@ namespace Portable
 
                     if constexpr (dim == 2)
                       {
-                        const int q = tid % n_q;
+                        const int p = tid % n_q;
 
-                        for (int p = 0; p < n_q; ++p)
+                        for (int q = 0; q < n_q; ++q)
                           {
                             for (int d = 0; d < symmetric_tensor_dimension; ++d)
                               d_G[d] = geometric_tensor[e_offset + d * n_q_total + q * n_q + p];
@@ -560,10 +560,10 @@ namespace Portable
                       }
                     else if constexpr (dim == 3)
                       {
-                        const int q = tid % (n_q * n_q) / n_q;
-                        const int r = tid % n_q;
+                        const int p = tid % (n_q * n_q) / n_q;
+                        const int q = tid % n_q;
 
-                        for (int p = 0; p < n_q; ++p)
+                        for (int r = 0; r < n_q; ++r)
                           {
                             for (int d = 0; d < symmetric_tensor_dimension; ++d)
                               d_G[d] = geometric_tensor[e_offset + d * n_q_total + r * n_q * n_q +
