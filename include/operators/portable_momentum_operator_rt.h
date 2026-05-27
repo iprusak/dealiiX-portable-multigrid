@@ -381,7 +381,28 @@ namespace Portable
                                                   Kokkos::WithoutInitializing),
                                n_cells * symmetric_tensor_dim * n_q_points);
 
+        geometric_tensor_stiffness =
+          DeviceVector<Number>(Kokkos::view_alloc("geometric_tensor_stiffness",
+                                                  Kokkos::WithoutInitializing),
+                               n_cells * symmetric_tensor_dim * n_q_points);
+
+        cell_inverse_jacobians_transpose =
+          DeviceVector<Number>(Kokkos::view_alloc("inverse_jacobian_transpose",
+                                                  Kokkos::WithoutInitializing),
+                               n_cells * dim * dim * n_q_points);
+
+        cell_inverse_jacobians =
+          DeviceVector<Number>(Kokkos::view_alloc("inverse_jacobian", Kokkos::WithoutInitializing),
+                               n_cells * dim * dim * n_q_points);
+
         auto geometric_tensor_mass_host = Kokkos::create_mirror_view(geometric_tensor_mass);
+
+        auto geometric_tensor_stiffness_host =
+          Kokkos::create_mirror_view(geometric_tensor_stiffness);
+
+        auto inverse_jacobian_transpose_host =
+          Kokkos::create_mirror_view(cell_inverse_jacobians_transpose);
+        auto inverse_jacobian_host = Kokkos::create_mirror_view(cell_inverse_jacobians);
 
         // build tensor product quadrature
         Quadrature<dim> quadrature(quadrature_1d);
@@ -394,7 +415,7 @@ namespace Portable
                                 fe,
                                 quadrature,
                                 update_jacobians | update_jacobian_grads |
-                                  update_quadrature_points);
+                                  update_quadrature_points | update_inverse_jacobians);
 
         unsigned cell_counter = 0;
         for (const auto &cell : dof_handler.active_cell_iterators())
@@ -405,38 +426,82 @@ namespace Portable
 
                 for (unsigned int q = 0; q < n_q_points; ++q)
                   {
-                    const DerivativeForm<1, dim, dim> jacobian = fe_values.jacobian(q);
+                    const DerivativeForm<1, dim, dim> jacobian     = fe_values.jacobian(q);
+                    const DerivativeForm<1, dim, dim> inv_jacobian = fe_values.inverse_jacobian(q);
+
+                    const DerivativeForm<1, dim, dim> inv_jacobian_transpose =
+                      transpose(inv_jacobian);
 
                     const auto determinant = jacobian.determinant();
-
-                    Number components[symmetric_tensor_dim];
-
-                    // we only need the symmetric part of the tensor, so we store it
-                    // in a compressed format
-                    int index = 0;
-                    for (int d1 = 0; d1 < dim; ++d1)
-                      for (int d2 = d1; d2 < dim; ++d2)
-                        {
-                          Number sum = 0;
-                          for (int k = 0; k < dim; ++k)
-                            sum += jacobian[d1][k] * jacobian[d2][k];
-                          components[index] = sum * quad_weights[q];
-                          ++index;
-                        }
 
                     AssertThrow(determinant > 0,
                                 ExcMessage("Jacobian determinant must be positive , but it is " +
                                            std::to_string(determinant) + "."));
 
-                    for (unsigned int c = 0; c < symmetric_tensor_dim; ++c)
-                      geometric_tensor_mass_host(cell_counter * symmetric_tensor_dim * n_q_points +
-                                                 c * n_q_points + q) = components[c] / determinant;
+                    // Number components[symmetric_tensor_dim];
+                    // Number components_stiffness[symmetric_tensor_dim];
+
+
+                    // we only need the symmetric part of the tensor, so we store it
+                    // in a compressed format
+                    int index = 0;
+
+                    for (int d1 = 0; d1 < dim; ++d1)
+                      {
+                        for (int d2 = d1; d2 < dim; ++d2)
+                          {
+                            Number sum = 0, sum_stiffness = 0;
+                            for (int k = 0; k < dim; ++k)
+                              {
+                                sum += jacobian[d1][k] * jacobian[d2][k];
+                                sum_stiffness += jacobian[d1][k] * jacobian[d2][k];
+                              }
+                            geometric_tensor_mass_host(
+                              cell_counter * symmetric_tensor_dim * n_q_points + index * n_q_points +
+                              q) = sum * quad_weights[q] / determinant;
+                            geometric_tensor_stiffness_host(cell_counter * symmetric_tensor_dim *
+                                                              n_q_points +
+                                                            index * n_q_points + q) = sum_stiffness;
+
+                            ++index;
+                          }
+                        for (int d2 = 0; d2 < dim; ++d2)
+                          {
+                            for (int k = 0; k < dim; ++k)
+                              {
+                                inverse_jacobian_host(cell_counter * dim * dim * n_q_points +
+                                                      (d1 * dim + d2) * n_q_points + q) =
+                                  inv_jacobian[d1][d2];
+
+                                inverse_jacobian_transpose_host(cell_counter * dim * dim *
+                                                                  n_q_points +
+                                                                (d1 * dim + d2) * n_q_points + q) =
+                                  inv_jacobian_transpose[d1][d2];
+                              }
+                          }
+                      }
+
+
+                    // for (unsigned int c = 0; c < symmetric_tensor_dim; ++c)
+                    //   {
+                    //     geometric_tensor_mass_host(
+                    //       cell_counter * symmetric_tensor_dim * n_q_points + c * n_q_points + q) =
+                    //       components[c];
+                    //     geometric_tensor_stiffness_host(
+                    //       cell_counter * symmetric_tensor_dim * n_q_points + c * n_q_points + q) =
+                    //       components_stiffness[c];
+                      // }
                   }
                 ++cell_counter;
               }
           }
 
         Kokkos::deep_copy(geometric_tensor_mass, geometric_tensor_mass_host);
+        Kokkos::fence();
+
+        Kokkos::deep_copy(cell_inverse_jacobians_transpose, inverse_jacobian_transpose_host);
+        Kokkos::fence();
+        Kokkos::deep_copy(cell_inverse_jacobians, inverse_jacobian_host);
         Kokkos::fence();
       }
 
@@ -1101,6 +1166,25 @@ namespace Portable
                                                                1u,
                                                                1u);
           }
+          else if (shape_info[0].fe_degree == 5)
+          {
+            constexpr int n_t = 5, n_q = 6;
+
+            // test_cpu<n_t, n_q>(in0.data(), temp1.data(), src_device, dst_device);
+            // test_cpu<n_t, n_q, 1>(in1.data(), out1.data(), src_device, dst_device);
+            // if (dim == 3)
+            //   test_cpu<n_t, n_q, 2>(in2.data(), out2.data(), src_device, dst_device);
+
+            Portable::RT::mass_operator<dim, n_t, n_q, Number>(shape_values,
+                                                               geometric_tensor_mass,
+                                                               src_device,
+                                                               dst_device,
+                                                               dof_indices_per_cell,
+                                                               n_cells,
+                                                               1u,
+                                                               1u,
+                                                               1u);
+          }
 
         dst.compress(VectorOperation::add);
 
@@ -1136,6 +1220,12 @@ namespace Portable
       ObserverPointer<const Quadrature<1>> quadrature;
 
       DeviceVector<Number> geometric_tensor_mass;
+      DeviceVector<Number> geometric_tensor_stiffness;
+
+      DeviceVector<Number> cell_inverse_jacobians_transpose;
+      DeviceVector<Number> cell_inverse_jacobians;
+
+
 
       unsigned int n_cells;
     };

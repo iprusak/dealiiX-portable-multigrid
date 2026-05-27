@@ -978,7 +978,9 @@ namespace Portable
     void
     stiffness_operator(const Kokkos::Array<DeviceView<Number>, 2> shape_values_info,
                        const DeviceView<Number>                   shape_gradients_collocation,
-                       const DeviceView<Number>                   geometric_tensor,
+                       const DeviceView<Number>                   geometric_tensor_mass,
+                       const DeviceView<Number>                   inverse_jacobians,
+                       const DeviceView<Number>                   inverse_jacobians_transposed,
                        const DeviceView<Number>                   vector_in,
                        DeviceView<Number>                         vector_out,
                        const DoFIndicesView                       dof_indices,
@@ -1020,7 +1022,8 @@ namespace Portable
                                     threads_per_block;
 
 
-      const unsigned int ssize = n_n * n_q + n_t * n_q + n_q * n_q + 8 * nelmtPerBatch * n_q_total;
+      const unsigned int ssize = n_n * n_q + n_t * n_q + n_q * n_q + 5 * nelmtPerBatch * n_q_total +
+                                 3 * nelmtPerBatch * n_q_total * dim;
 
 
       const unsigned int shmem_size = ssize * sizeof(Number);
@@ -1051,13 +1054,13 @@ namespace Portable
 
           Number *s_uq_0  = s_wsp1 + nelmtPerBatch * n_q_total;
           Number *s_duq_0 = s_uq_0 + nelmtPerBatch * n_q_total;
-          Number *s_uq_1  = s_duq_0 + nelmtPerBatch * n_q_total;
+          Number *s_uq_1  = s_duq_0 + nelmtPerBatch * n_q_total * dim;
           Number *s_duq_1 = s_uq_1 + nelmtPerBatch * n_q_total;
 
           Number *s_uq_2, *s_duq_2;
           if constexpr (dim > 2)
             {
-              s_uq_2  = s_duq_1 + nelmtPerBatch * n_q_total;
+              s_uq_2  = s_duq_1 + nelmtPerBatch * n_q_total * dim;
               s_duq_2 = s_uq_2 + nelmtPerBatch * n_q_total;
             }
 
@@ -1139,7 +1142,6 @@ namespace Portable
               // ====================================================
               // PHASE 2: Interpolate to quadrature nodes
               // ====================================================
-
               {
                 // ------------------------ Component 0 (x-direction) ------------------------
                 // x is normal (basis_n), y and z are tangent (basis_t)
@@ -1483,35 +1485,132 @@ namespace Portable
               }
 
               // ====================================================
-              // PHASE 3: Integrate gradients at quadrature nodes
+              // PHASE 3: Evaluate gradients at quadrature nodes
               // ====================================================
 
-              {
-                constexpr int co_dimension_size          = Utilities::pow(n_q, dim - 1);
-                constexpr int symmetric_tensor_dimension = (dim * (dim + 1)) / 2;
+              // // 1. multiply shape values by inverse jacobian
+              // {
+              //   for (unsigned int tid = threadIdx; tid < c_nelmtPerBatch * n_q_total;
+              //        tid += blockSize)
+              //     {
+              //       const int e = tid / n_q_total;
+              //       Number    Jinv[dim][dim];
 
-                // component 0
+              //       if constexpr (dim == 2)
+              //         {
+              //           const q_index = tid % n_q_total;
+
+              //           // Load inverse Jacobian
+              //           for (int d1 = 0; d1 < dim; ++d1)
+              //             for (int d2 = 0; d2 < dim; ++d2)
+              //               Jinv[d1][d2] = inverse_jacobians[e * dim * dim * n_q_total +
+              //                                                (d1 * dim + d2) * n_q_total +
+              //                                                q_index];
+
+              //           for (int d1 = 0; d1 < dim; ++d1)
+              //             {
+              //               Number tmp0 = 0, tmp1 = 0;
+              //               for (int d2 = 0; d2 < dim; ++d2)
+              //                 {
+              //                   tmp0 += Jinv[d1][d2] * s_uq0[e * n_q_total + q_index];
+              //                   tmp1 += Jinv[d1][d2] * s_uq1[e * n_q_total + q_index];
+              //                 }
+              //               s_uqd_0[e * dim * n_q_total + d1 * n_q_total + q_index] = tmp0;
+              //               s_uqd_1[e * dim * n_q_total + d1 * n_q_total + q_index] = tmp1;
+              //             }
+              //         }
+              //       else if constexpr (dim == 3)
+              //         {
+              //           const int q_index = tid % n_q_total;
+
+              //           // Load inverse Jacobian
+              //           for (int d1 = 0; d1 < dim; ++d1)
+              //             for (int d2 = 0; d2 < dim; ++d2)
+              //               Jinv[d1][d2] = inverse_jacobians[e * dim * dim * n_q_total +
+              //                                                (d1 * dim + d2) * n_q_total +
+              //                                                q_index];
+
+              //           for (int d1 = 0; d1 < dim; ++d1)
+              //             {
+              //               Number tmp0 = 0, tmp1 = 0, tmp2 = 0;
+              //               for (int d2 = 0; d2 < dim; ++d2)
+              //                 {
+              //                   tmp0 += Jinv[d1][d2] * s_uq0[e * n_q_total + q_index];
+              //                   tmp1 += Jinv[d1][d2] * s_uq1[e * n_q_total + q_index];
+              //                   tmp2 += Jinv[d1][d2] * s_uq2[e * n_q_total + q_index];
+              //                 }
+              //               s_uqd_0[e * dim * n_q_total + d1 * n_q_total + q_index] = tmp0;
+              //               s_uqd_1[e * dim * n_q_total + d1 * n_q_total + q_index] = tmp1;
+              //               s_uqd_2[e * dim * n_q_total + d1 * n_q_total + q_index] = tmp2;
+              //             }
+              //         }
+              //     }
+              // }
+              {
+                // 1. evaluate gradients in reference space and multiply by inverse jacobian
                 {
+                  constexpr int co_dimension_size = Utilities::pow(n_q, dim - 1);
+
                   for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
                        tid += blockSize)
                     {
                       const int e = tid / co_dimension_size;
 
-                      const int e_offset =
-                        e * nelmtPerBatch * symmetric_tensor_dimension * n_q_total +
-                        e * symmetric_tensor_dimension * n_q_total;
-
-                      Number G[symmetric_tensor_dimension];
-
                       if constexpr (dim == 2)
                         {
+                          const int q = tid % co_dimension_size;
+
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              r_p0[n] = s_uq_0[e * n_q * n_q + q * n_q + n];
+                              r_p1[n] = s_uq_1[e * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                            }
+
+                          Number Jinv[dim][dim];
+                          Number qr[dim];
+                          Number qs[dim];
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              // Load inverse Jacobian
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  qr[d1] = 0;
+                                  qs[d1] = 0;
+                                  for (int d2 = 0; d2 < dim; ++d2)
+                                    Jinv[d1][d2] =
+                                      inverse_jacobians[e * dim * dim * n_q_total +
+                                                        (d1 * dim + d2) * n_q_total + q * n_q + p];
+                                }
+
+                              // Multiply by D
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+
+                                  qs[0] += r_q[n] * s_uq_0[e * n_q * n_q + n * n_q + p];
+                                  qs[1] += r_q[n] * s_uq_1[e * n_q * n_q + n * n_q + p];
+                                }
+
+                              // Multiply by inverse Jacobian
+                              for (int d = 0; d < dim; ++d)
+                                {
+                                  s_duq_0[e * dim * n_q_total + d * n_q_total + q * n_q + p] =
+                                    qr[0] * Jinv[0][d] + qs[0] * Jinv[1][d];
+                                  s_duq_1[e * dim * n_q_total + d * n_q_total + q * n_q + p] =
+                                    qr[1] * Jinv[0][d] + qs[1] * Jinv[1][d];
+                                }
+                            }
                         }
                       else if constexpr (dim == 3)
                         {
                           const int q = (tid % co_dimension_size) / n_q;
                           const int r = tid % n_q;
 
-                          // copy to register
+
                           for (int n = 0; n < n_q; ++n)
                             {
                               r_p0[n] = s_uq_0[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + n];
@@ -1519,52 +1618,65 @@ namespace Portable
                               r_p2[n] = s_uq_2[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + n];
 
                               r_q[n] = co_shape_gradients[n * n_q + q];
-
                               r_r[n] = co_shape_gradients[n * n_q + r];
                             }
 
+                          Number Jinv[dim][dim];
+                          Number qr[dim];
+                          Number qs[dim];
+                          Number qt[dim];
+
                           for (int p = 0; p < n_q; ++p)
                             {
-                              for (int d = 0; d < symmetric_tensor_dimension; ++d)
-                                G[d] = geometric_tensor[e_offset + d * n_q_total + r * n_q * n_q +
-                                                        q * n_q + p];
-
-                              Number qr0 = 0, qr1 = 0, qr2 = 0;
-                              Number qs0 = 0, qs1 = 0, qs2 = 0;
-                              Number qt0 = 0, qt1 = 0, qt2 = 0;
-
-                              // mulitply by the co-shape gradients
+                              // Load inverse Jacobian
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  qr[d1] = 0;
+                                  qs[d1] = 0;
+                                  qt[d1] = 0;
+                                  for (int d2 = 0; d2 < dim; ++d2)
+                                    Jinv[d1][d2] = inverse_jacobians[e * dim * dim * n_q_total +
+                                                                     (d1 * dim + d2) * n_q_total +
+                                                                     r * n_q * n_q + q * n_q + p];
+                                }
+                              // Multiply by D
                               for (int n = 0; n < n_q; ++n)
                                 {
-                                  qr0 += co_shape_gradients[n * n_q + p] * r_p0[n];
-                                  qr1 += co_shape_gradients[n * n_q + p] * r_p1[n];
-                                  qr2 += co_shape_gradients[n * n_q + p] * r_p2[n];
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+                                  qr[2] += co_shape_gradients[n * n_q + p] * r_p2[n];
 
-                                  qs0 += r_q[n] *
-                                         s_uq_1[e * n_q * n_q * n_q + r * n_q * n_q + n * n_q + p];
-                                  qs1 += r_q[n] *
-                                         s_uq_1[e * n_q * n_q * n_q + r * n_q * n_q + n * n_q + p];
-                                  qs2 += r_q[n] *
-                                         s_uq_1[e * n_q * n_q * n_q + r * n_q * n_q + n * n_q + p];
+                                  qs[0] +=
+                                    r_q[n] * s_duq_0[e * n_q_total + r * n_q * n_q + n * n_q + p];
+                                  qs[1] +=
+                                    r_q[n] * s_duq_1[e * n_q_total + r * n_q * n_q + n * n_q + p];
+                                  qs[2] +=
+                                    r_q[n] * s_duq_2[e * n_q_total + r * n_q * n_q + n * n_q + p];
 
-                                  qt0 += r_r[n] *
-                                         s_uq_2[e * n_q * n_q * n_q + n * n_q * n_q + q * n_q + p];
-                                  qt1 += r_r[n] *
-                                         s_uq_2[e * n_q * n_q * n_q + n * n_q * n_q + q * n_q + p];
-                                  qt1 += r_r[n] *
-                                         s_uq_2[e * n_q * n_q * n_q + n * n_q * n_q + q * n_q + p];
-                                  qt2 += r_r[n] *
-                                         s_uq_2[e * n_q * n_q * n_q + n * n_q * n_q + q * n_q + p];
+                                  qt[0] +=
+                                    r_r[n] * s_duq_0[e * n_q_total + n * n_q * n_q + q * n_q + p];
+                                  qt[1] +=
+                                    r_r[n] * s_duq_1[e * n_q_total + n * n_q * n_q + q * n_q + p];
+                                  qt[2] +=
+                                    r_r[n] * s_duq_2[e * n_q_total + n * n_q * n_q + q * n_q + p];
+                                }
+
+                              // Multiply by inverse Jacobian
+                              for (int d = 0; d < dim; ++d)
+                                {
+                                  s_duq_0[e * dim * n_q_total + d * n_q_total + q * n_q + p] =
+                                    qr[0] * Jinv[0][d] + qs[0] * Jinv[1][d] + qt[0] * Jinv[2][d];
+                                  s_duq_1[e * dim * n_q_total + d * n_q_total + q * n_q + p] =
+                                    qr[1] * Jinv[0][d] + qs[1] * Jinv[1][d] + qt[1] * Jinv[2][d];
+                                  s_duq_2[e * dim * n_q_total + d * n_q_total + q * n_q + p] =
+                                    qr[2] * Jinv[0][d] + qs[2] * Jinv[1][d] + qt[2] * Jinv[2][d];
                                 }
                             }
                         }
                     }
                 }
               }
-
-              // ====================================================
-              // PHASE 3: Apply Piola Geometry Metric
-              // ====================================================
+              // 2. multiply by mass geometric factor 1/det(J)*J^T*J
               {
                 constexpr int symmetric_tensor_dimension = (dim * (dim + 1)) / 2;
                 constexpr int co_dimension_size          = Utilities::pow(n_q, dim - 1);
@@ -1572,57 +1684,176 @@ namespace Portable
                 for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
                      tid += blockSize)
                   {
-                    const int e = tid / (co_dimension_size);
+                    const int e = tid / co_dimension_size;
 
-                    //  Base offset for the current element's geometric factors
+                    // Base offset for the current element's geometric factors
                     const int e_offset =
                       eb * nelmtPerBatch * symmetric_tensor_dimension * n_q_total +
                       e * symmetric_tensor_dimension * n_q_total;
 
-                    Number d_G[symmetric_tensor_dimension];
-                    Number u[dim];
-
+                    Number d_G[dim][dim];
+                    Number d_u[dim][dim];
                     if constexpr (dim == 2)
                       {
-                        const int q = tid % n_q;
+                        const int p = tid % n_q;
 
-                        for (int p = 0; p < n_q; ++p)
+                        for (unsigned int q = 0; q < n_q; ++q)
                           {
-                            for (int d = 0; d < symmetric_tensor_dimension; ++d)
-                              d_G[d] = geometric_tensor[e_offset + d * n_q_total + q * n_q + p];
+                            // Load geometric factors
+                            int index = 0;
+                            for (int d1 = 0; d1 < dim; ++d1)
+                              for (int d2 = d1; d2 < dim; ++d2)
+                                {
+                                  d_G[d1][d2] = geometric_tensor_mass[e_offset + index * n_q_total +
+                                                                      p * n_q + q];
+                                  d_G[d2][d1] = d_G[d1][d2];
 
-                            const int shm_idx = e * n_q_total + q * n_q + p;
+                                  index++;
+                                }
 
-                            u[0] = s_uq_0[shm_idx];
-                            u[1] = s_uq_1[shm_idx];
+                            // Load gradients
+                            for (int d = 0; d < dim; ++d)
+                              {
+                                d_u[0][d] =
+                                  s_duq_0[e * dim * n_q_total + d * n_q_total + p * n_q + p];
+                                d_u[1][d] =
+                                  s_duq_1[e * dim * n_q_total + d * n_q_total + p * n_q + p];
+                              }
 
-                            s_uq_0[shm_idx] = d_G[0] * u[0] + d_G[1] * u[1];
-                            s_uq_1[shm_idx] = d_G[1] * u[0] + d_G[2] * u[1];
+                            // Apply Piola transformation
+                            for (int d1 = 0; d1 < dim; ++d1)
+                              {
+                                Number tmp0 = 0, tmp1 = 0;
+                                for (int d2 = 0; d2 < dim; ++d2)
+                                  {
+                                    tmp0 += d_G[0][d2] * d_u[d2][0];
+                                    tmp1 += d_G[1][d2] * d_u[d2][1];
+                                  }
+
+                                s_duq_0[e * dim * n_q_total + d1 * n_q_total + p * n_q + p] = tmp0;
+
+                                s_duq_1[e * dim * n_q_total + d1 * n_q_total + p * n_q + p] = tmp1;
+                              }
                           }
                       }
                     else if constexpr (dim == 3)
                       {
-                        const int q = tid % (n_q * n_q) / n_q;
-                        const int r = tid % n_q;
+                        const int p = (tid % co_dimension_size) / n_q;
+                        const int q = tid % n_q;
 
-                        for (int p = 0; p < n_q; ++p)
+                        for (unsigned int r = 0; r < n_q; ++r)
                           {
-                            for (int d = 0; d < symmetric_tensor_dimension; ++d)
-                              d_G[d] = geometric_tensor[e_offset + d * n_q_total + r * n_q * n_q +
-                                                        q * n_q + p];
+                            // Load geometric factors
+                            int index = 0;
+                            for (int d1 = 0; d1 < dim; ++d1)
+                              for (int d2 = d1; d2 < dim; ++d2)
+                                {
+                                  d_G[d1][d2] = geometric_tensor_mass[e_offset + index * n_q_total +
+                                                                      r * n_q * n_q + q * n_q + p];
+                                  d_G[d2][d1] = d_G[d1][d2];
 
-                            const int shm_idx = e * n_q_total + r * n_q * n_q + q * n_q + p;
+                                  index++;
+                                }
 
-                            u[0] = s_uq_0[shm_idx];
-                            u[1] = s_uq_1[shm_idx];
-                            u[2] = s_uq_2[shm_idx];
+                            // Load gradients
+                            for (int d = 0; d < dim; ++d)
+                              {
+                                d_u[0][d] = s_duq_0[e * dim * n_q_total + d * n_q_total +
+                                                    r * n_q * n_q + q * n_q + p];
+                                d_u[1][d] = s_duq_1[e * dim * n_q_total + d * n_q_total +
+                                                    r * n_q * n_q + q * n_q + p];
+                                d_u[2][d] = s_duq_2[e * dim * n_q_total + d * n_q_total +
+                                                    r * n_q * n_q + q * n_q + p];
+                              }
 
-                            s_uq_0[shm_idx] = d_G[0] * u[0] + d_G[1] * u[1] + d_G[2] * u[2];
-                            s_uq_1[shm_idx] = d_G[1] * u[0] + d_G[3] * u[1] + d_G[4] * u[2];
-                            s_uq_2[shm_idx] = d_G[2] * u[0] + d_G[4] * u[1] + d_G[5] * u[2];
+                            // Apply Piola transformation
+                            for (int d1 = 0; d1 < dim; ++d1)
+                              {
+                                Number tmp0 = 0, tmp1 = 0, tmp2 = 0;
+                                for (int d2 = 0; d2 < dim; ++d2)
+                                  {
+                                    tmp0 += d_G[0][d2] * d_u[d2][0];
+                                    tmp1 += d_G[1][d2] * d_u[d2][1];
+                                    tmp2 += d_G[2][d2] * d_u[d2][2];
+                                  }
+
+                                s_duq_0[e * dim * n_q_total + d1 * n_q_total + r * n_q * n_q +
+                                        q * n_q + p] = tmp0;
+
+                                s_duq_1[e * dim * n_q_total + d1 * n_q_total + r * n_q * n_q +
+                                        q * n_q + p] = tmp1;
+
+                                s_duq_2[e * dim * n_q_total + d1 * n_q_total + r * n_q * n_q +
+                                        q * n_q + p] = tmp2;
+                              }
                           }
                       }
                   }
+
+                // 3. tranform the gradient back to reference and maltiply by J^{-T}
+                {
+                  constexpr int co_dimension_size = Utilities::pow(n_q, dim - 1);
+
+                  for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                       tid += blockSize)
+                    {
+                      const int e = tid / co_dimension_size;
+
+                      if constexpr (dim == 2)
+                        {
+                          const int q = tid % co_dimension_size;
+
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              r_p0[n] = s_duq_0[e * dim * n_q_total + 0 * n_q_total + q * n_q + n];
+                              r_p1[n] = s_duq_1[e * dim * n_q_total + 0 * n_q_total + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[q * n_q + n];
+                            }
+
+                          Number Jinv_tr[dim][dim];
+                          Number qr[dim];
+                          Number qs[dim];
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              // Load inverse Jacobian transpose
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  qr[d1] = 0;
+                                  qs[d1] = 0;
+                                  for (int d2 = 0; d2 < dim; ++d2)
+                                    Jinv_tr[d1][d2] =
+                                      inverse_jacobians_transposed[e * dim * dim * n_q_total +
+                                                                   (d1 * dim + d2) * n_q_total +
+                                                                   q * n_q + p];
+                                }
+
+                              // Multiply by D^T
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[q * n_q + n] * r_p0[n];
+                                  qr[1] += co_shape_gradients[q * n_q + n] * r_p1[n];
+
+                                  qs[0] +=
+                                    r_q[n] *
+                                    s_duq_0[e * dim * n_q_total + 1 * n_q_total + n * n_q + p];
+                                  qs[1] +=
+                                    r_q[n] *
+                                    s_duq_1[e * dim * n_q_total + 1 * n_q_total + n * n_q + p];
+                                }
+
+                              // Multiply inverse Jacobian transpose by the result
+                              // for (int d = 0; d < dim; ++d)
+                              //   {
+                              //   }
+                            }
+                        }
+                      // else if constexpr (dim == 3)
+                      //   {
+                      //   }
+                    }
+                }
               }
 
 
@@ -1729,7 +1960,7 @@ namespace Portable
                                 for (int p = 0; p < n_q; ++p)
                                   tmp += shape_values_normal[i * n_q + p] * r_p[p];
 
-                                s_uq_0[e * n_n * n_t + j * n_t + i] = tmp;
+                                s_uq_0[e * n_n * n_t + j * n_n + i] = tmp;
                               }
                           }
                         else if constexpr (dim == 3)
@@ -1833,7 +2064,7 @@ namespace Portable
 
                   // component 1 in x direction
                   {
-                    constexpr int co_dimension_size = (dim == 2) ? n_t : n_t * n_t;
+                    constexpr int co_dimension_size = (dim == 2) ? n_n : n_n * n_t;
 
                     for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
                          tid += blockSize)
@@ -1966,6 +2197,7 @@ namespace Portable
                     }
                   }
               }
+
 
 
               // ====================================================
