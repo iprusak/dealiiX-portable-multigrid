@@ -3599,6 +3599,2705 @@ namespace Portable
       Kokkos::fence();
     }
 
+
+    template <int dim, int n_t, int n_q, typename Number>
+    void
+    compute_cell(const Kokkos::Array<DeviceView<Number>, 2> shape_values_info,
+                 const DeviceView<Number>                   shape_gradients_collocation,
+                 const DeviceView<Number>                   geometric_tensor_mass,
+                 const DeviceView<Number>                   geometric_tensor_stiffness,
+                 const DeviceView<Number>                   vector_in,
+                 DeviceView<Number>                         vector_out,
+                 Kokkos::View<Number ***, MemorySpace::Default::kokkos_space> quad_values,
+                 const DoFIndicesView                                         dof_indices,
+                 const unsigned int                                           n_cells,
+                 const Number       factor_mass       = Number(1),
+                 const Number       factor_laplace    = Number(1),
+                 const unsigned int n_cells_per_batch = numbers::invalid_unsigned_int,
+                 const unsigned int n_blocks          = numbers::invalid_unsigned_int,
+                 const unsigned int threads_per_block = numbers::invalid_unsigned_int)
+
+    {
+      constexpr int n_components = dim;
+
+      if (n_cells == 0)
+        return;
+
+      AssertThrow(dim > 1, ExcNotImplemented());
+
+      static_assert(n_t > 1, "Degree 0 not supported");
+
+      AssertThrow(n_q > n_t, ExcNotImplemented());
+
+      constexpr int n_n = n_t + 1;
+
+      constexpr int n_q_total = Utilities::pow(n_q, dim);
+
+      constexpr int n_dofs_per_component = n_n * Utilities::pow(n_t, dim - 1);
+      const int     nelmt                = n_cells;
+
+      const size_t shmemPerBlock =
+        Kokkos::TeamPolicy<>::scratch_size_max(0); // maximum shared memory size per thread block
+
+      const int nelmtPerBatch =
+        (n_cells_per_batch == numbers::invalid_unsigned_int) ?
+          (shmemPerBlock / (n_components * (dim + 1) * n_q_total) / sizeof(Number)) :
+          n_cells_per_batch;
+
+      const int numBlocks = (n_blocks == numbers::invalid_unsigned_int) ?
+                              std::max(1, (nelmt + nelmtPerBatch - 1) / nelmtPerBatch) :
+                              n_blocks;
+
+      const int threadsPerBlock =
+        (threads_per_block == numbers::invalid_unsigned_int) ?
+          std::min(std::max(1, nelmtPerBatch) * Utilities::pow(n_q, dim - 1), 512) :
+          threads_per_block;
+
+
+      const unsigned int ssize = n_n * n_q   // normal shape values
+                                 + n_t * n_q // tangent shape values
+                                 + n_q * n_q // shape gradients at collocation points
+                                 + n_components * nelmtPerBatch * n_q_total        // values
+                                 + n_components * dim * nelmtPerBatch * n_q_total; // gradients
+
+
+      unsigned int shmem_size = ssize * sizeof(Number);
+
+      typedef Kokkos::TeamPolicy<>::member_type MemberType;
+      Kokkos::TeamPolicy<>                      policy(numBlocks, threadsPerBlock);
+      policy.set_scratch_size(0, Kokkos::PerTeam(shmem_size));
+
+      Kokkos::parallel_for(
+        policy, KOKKOS_LAMBDA(MemberType team_member) {
+          Number r_p[n_q];
+
+          Number r_p0[n_q];
+          Number r_p1[n_q];
+          Number r_p2[n_q];
+          Number r_q[n_q];
+          Number r_r[n_q];
+
+          Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
+
+          Number *shape_values_normal  = scratch;
+          Number *shape_values_tangent = shape_values_normal + n_n * n_q;
+          Number *co_shape_gradients   = shape_values_tangent + n_t * n_q;
+
+          Number *s_uq_0  = co_shape_gradients + n_q * n_q;
+          Number *s_duq_0 = s_uq_0 + nelmtPerBatch * n_q_total;
+          Number *s_uq_1  = s_duq_0 + nelmtPerBatch * n_q_total * dim;
+          Number *s_duq_1 = s_uq_1 + nelmtPerBatch * n_q_total;
+
+          Number *s_uq_2, *s_duq_2;
+          if constexpr (dim > 2)
+            {
+              s_uq_2  = s_duq_1 + nelmtPerBatch * n_q_total * dim;
+              s_duq_2 = s_uq_2 + nelmtPerBatch * n_q_total;
+            }
+
+          const int threadIdx = team_member.team_rank();
+          const int blockSize = team_member.team_size();
+
+
+          // copy to shared memory
+          {
+            for (int tid = threadIdx; tid < n_n * n_q; tid += blockSize)
+              {
+                shape_values_normal[tid] = shape_values_info[0][tid];
+              }
+            for (int tid = threadIdx; tid < n_t * n_q; tid += blockSize)
+              {
+                shape_values_tangent[tid] = shape_values_info[1][tid];
+              }
+            for (int tid = threadIdx; tid < n_q * n_q; tid += blockSize)
+              {
+                co_shape_gradients[tid] = shape_gradients_collocation[tid];
+              }
+            team_member.team_barrier();
+          }
+
+          // element batch iteration
+          int eb = team_member.league_rank();
+
+          while (eb < (nelmt + nelmtPerBatch - 1) / nelmtPerBatch)
+            {
+              // current nelmtPerBatch (edge case, last batch size can be less)
+              const int c_nelmtPerBatch = std::min(nelmtPerBatch, nelmt - eb * nelmtPerBatch);
+
+              // ====================================================
+              // PHASE 1: Read from global L vector per component
+              // ====================================================
+              {
+                for (int tid = threadIdx; tid < c_nelmtPerBatch * n_dofs_per_component;
+                     tid += blockSize)
+                  {
+                    const int e                  = tid / n_dofs_per_component;
+                    const int local_dof_index_1d = tid % n_dofs_per_component;
+
+                    const int global_cell_id = eb * nelmtPerBatch + e;
+
+                    {
+                      const unsigned int dof_x =
+                        dof_indices(0 * n_dofs_per_component + local_dof_index_1d, global_cell_id);
+                      if (dof_x != numbers::invalid_unsigned_int)
+                        s_uq_0[tid] = vector_in[dof_x];
+                      else
+                        s_uq_0[tid] = 0;
+                    }
+                    {
+                      const unsigned int dof_y =
+                        dof_indices(1 * n_dofs_per_component + local_dof_index_1d, global_cell_id);
+
+                      if (dof_y != numbers::invalid_unsigned_int)
+                        s_uq_1[tid] = vector_in[dof_y];
+                      else
+                        s_uq_1[tid] = 0;
+                    }
+
+                    if constexpr (dim > 2)
+                      {
+                        const unsigned int dof_z =
+                          dof_indices(2 * n_dofs_per_component + local_dof_index_1d,
+                                      global_cell_id);
+
+                        if (dof_z != numbers::invalid_unsigned_int)
+                          s_uq_2[tid] = vector_in[dof_z];
+                        else
+                          s_uq_2[tid] = 0;
+                      }
+                  }
+                team_member.team_barrier();
+              }
+
+              // ====================================================
+              // PHASE 2: Interpolate to quadrature nodes
+              // ====================================================
+              {
+                // ------------------------ Component 0 (x-direction) ------------------------
+                // x is normal (basis_n), y and z are tangent (basis_t)
+                {
+                  // component 0 in x direction
+                  {
+                    constexpr int co_dimension_size = Utilities::pow(n_t, dim - 1);
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int j = tid % co_dimension_size;
+
+                            for (int i = 0; i < n_n; ++i)
+                              r_p[i] = s_uq_0[e * n_n * n_t + j * n_n + i];
+
+                            for (int p = 0; p < n_q; ++p)
+                              {
+                                Number tmp = 0;
+                                for (int i = 0; i < n_n; ++i)
+                                  tmp += shape_values_normal[i * n_q + p] * r_p[i];
+
+                                s_duq_1[e * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int j = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int i = 0; i < n_n; ++i)
+                              r_p[i] = s_uq_0[e * n_n * n_t * n_t + k * n_n * n_t + j * n_n + i];
+
+                            for (int p = 0; p < n_q; ++p)
+                              {
+                                Number tmp = 0;
+                                for (int i = 0; i < n_n; ++i)
+                                  tmp += shape_values_normal[i * n_q + p] * r_p[i];
+
+
+                                s_duq_1[e * n_q * n_t * n_t + k * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 0 in y direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_q : n_q * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int p = tid % co_dimension_size;
+
+                            for (int j = 0; j < n_t; ++j)
+                              r_p[j] = s_duq_1[e * n_q * n_t + j * n_q + p];
+
+                            for (int q = 0; q < n_q; ++q)
+                              {
+                                Number tmp = 0;
+                                for (int j = 0; j < n_t; ++j)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[j];
+
+                                s_uq_0[e * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int p = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int j = 0; j < n_t; ++j)
+                              r_p[j] = s_duq_1[e * n_q * n_t * n_t + k * n_q * n_t + j * n_q + p];
+
+                            for (int q = 0; q < n_q; ++q)
+                              {
+                                Number tmp = 0;
+                                for (int j = 0; j < n_t; ++j)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[j];
+
+                                s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 0 in z direction
+                  {
+                    if constexpr (dim == 3)
+                      {
+                        constexpr int co_dimension_size = n_q * n_q;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int p = (tid % co_dimension_size) / n_q;
+                            const int q = tid % n_q;
+
+                            for (int k = 0; k < n_t; ++k)
+                              r_p[k] = s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p];
+
+                            for (int r = 0; r < n_q; ++r)
+                              {
+                                Number tmp = 0;
+                                for (int k = 0; k < n_t; ++k)
+                                  tmp += shape_values_tangent[k * n_q + r] * r_p[k];
+
+                                s_uq_0[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+                  }
+                }
+
+                // ------------------------ Component 1 (y-direction) ------------------------
+                // y is normal (basis_n), x and z are tangent (basis_t)
+                {
+                  // component 1 in x direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_n : n_n * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int j = tid % co_dimension_size;
+
+                            for (int i = 0; i < n_t; ++i)
+                              r_p[i] = s_uq_1[e * n_t * n_n + j * n_t + i];
+
+                            for (int p = 0; p < n_q; ++p)
+                              {
+                                Number tmp = 0;
+                                for (int i = 0; i < n_t; ++i)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[i];
+                                s_duq_1[e * n_q * n_n + j * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int j = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int i = 0; i < n_t; ++i)
+                              r_p[i] = s_uq_1[e * n_t * n_n * n_t + k * n_t * n_n + j * n_t + i];
+
+                            for (int p = 0; p < n_q; ++p)
+                              {
+                                Number tmp = 0;
+                                for (int i = 0; i < n_t; ++i)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[i];
+
+                                s_duq_1[e * n_q * n_n * n_t + k * n_q * n_n + j * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 1 in y direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_q : n_q * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int p = tid % co_dimension_size;
+
+                            for (int j = 0; j < n_n; ++j)
+                              r_p[j] = s_duq_1[e * n_q * n_n + j * n_q + p];
+
+                            for (int q = 0; q < n_q; ++q)
+                              {
+                                Number tmp = 0;
+                                for (int j = 0; j < n_n; ++j)
+                                  tmp += shape_values_normal[j * n_q + q] * r_p[j];
+
+                                s_uq_1[e * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int p = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int j = 0; j < n_n; ++j)
+                              r_p[j] = s_duq_1[e * n_q * n_n * n_t + k * n_q * n_n + j * n_q + p];
+
+                            for (int q = 0; q < n_q; ++q)
+                              {
+                                Number tmp = 0;
+                                for (int j = 0; j < n_n; ++j)
+                                  tmp += shape_values_normal[j * n_q + q] * r_p[j];
+
+                                s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 1 in z direction
+                  {
+                    if constexpr (dim == 3)
+                      {
+                        constexpr int co_dimension_size = n_q * n_q;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int p = (tid % co_dimension_size) / n_q;
+                            const int q = tid % n_q;
+
+                            for (int k = 0; k < n_t; ++k)
+                              r_p[k] =
+                                s_duq_0[e * n_dofs_per_component + k * n_q * n_q + q * n_q + p];
+
+                            for (int r = 0; r < n_q; ++r)
+                              {
+                                Number tmp = 0;
+                                for (int k = 0; k < n_t; ++k)
+                                  tmp += shape_values_tangent[k * n_q + r] * r_p[k];
+
+                                s_uq_1[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+                  }
+                }
+                {
+                  // ------------------------ Component 2 (x-direction) ------------------------
+                  // z is normal (basis_n), x and y are tangent (basis_t)
+                  if constexpr (dim == 3)
+                    {
+                      // component 2 in x direction
+                      {
+                        constexpr int co_dimension_size = n_t * n_n;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int j = (tid % co_dimension_size) / n_n;
+                            const int k = tid % n_n;
+
+                            for (int i = 0; i < n_t; ++i)
+                              r_p[i] = s_uq_2[e * n_t * n_t * n_n + k * n_t * n_t + j * n_t + i];
+
+                            for (int p = 0; p < n_q; ++p)
+                              {
+                                Number tmp = 0;
+                                for (int i = 0; i < n_t; ++i)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[i];
+
+                                s_duq_1[e * n_q * n_t * n_n + k * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+
+                      // component 2 in y direction
+                      {
+                        constexpr int co_dimension_size = n_q * n_n;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int p = (tid % co_dimension_size) / n_n;
+                            const int k = tid % n_n;
+
+                            for (int j = 0; j < n_t; ++j)
+                              r_p[j] = s_duq_1[e * n_q * n_t * n_n + k * n_q * n_t + j * n_q + p];
+
+                            for (int q = 0; q < n_q; ++q)
+                              {
+                                Number tmp = 0;
+                                for (int j = 0; j < n_t; ++j)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[j];
+
+                                s_duq_0[e * n_q * n_q * n_n + k * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+
+                      // component 2 in z direction
+                      {
+                        constexpr int co_dimension_size = n_q * n_q;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int p = (tid % co_dimension_size) / n_q;
+                            const int q = tid % n_q;
+
+                            for (int k = 0; k < n_n; ++k)
+                              r_p[k] = s_duq_0[e * n_q * n_q * n_n + k * n_q * n_q + q * n_q + p];
+
+                            for (int r = 0; r < n_q; ++r)
+                              {
+                                Number tmp = 0;
+                                for (int k = 0; k < n_n; ++k)
+                                  tmp += shape_values_normal[k * n_q + r] * r_p[k];
+
+                                s_uq_2[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+                    }
+                }
+              }
+
+              // ====================================================
+              // Intermediate Stepu: Store quad values globally
+              // ====================================================
+              {
+                for (int tid = threadIdx; tid < c_nelmtPerBatch * n_q_total; tid += blockSize)
+                  {
+                    const int e       = tid / n_q_total;
+                    const int q_index = tid % n_q_total;
+
+                    const int global_cell_id = eb * nelmtPerBatch + e;
+
+                    quad_values(q_index, 0, global_cell_id) = s_uq_0[e * n_q_total + q_index];
+                    quad_values(q_index, 1, global_cell_id) = s_uq_1[e * n_q_total + q_index];
+                    if constexpr (dim > 2)
+                      quad_values(q_index, 2, global_cell_id) = s_uq_2[e * n_q_total + q_index];
+                  }
+              }
+
+              // ====================================================
+              // PHASE 3: Evaluate gradients at quadrature nodes
+              // ====================================================
+
+              {
+                // 1. evaluate gradients in reference space and multiply by stiffness geometric
+                // tensor
+                {
+                  constexpr int co_dimension_size          = Utilities::pow(n_q, dim - 1);
+                  constexpr int symmetric_tensor_dimension = (dim * (dim + 1)) / 2;
+                  for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                       tid += blockSize)
+                    {
+                      const int e = tid / co_dimension_size;
+
+                      //  Base offset for the current element's geometric factors
+                      const int e_offset =
+                        eb * nelmtPerBatch * symmetric_tensor_dimension * n_q_total +
+                        e * symmetric_tensor_dimension * n_q_total;
+
+                      if constexpr (dim == 2)
+                        {
+                          const int q = tid % co_dimension_size;
+
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              r_p0[n] = s_uq_0[e * n_q * n_q + q * n_q + n];
+                              r_p1[n] = s_uq_1[e * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                            }
+
+                          Number d_G[dim][dim];
+                          Number qr[dim];
+                          Number qs[dim];
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              // Load stiffness geometric tensor
+                              int index = 0;
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  qr[d1] = 0;
+                                  qs[d1] = 0;
+                                  for (int d2 = d1; d2 < dim; ++d2)
+                                    {
+                                      d_G[d1][d2] =
+                                        geometric_tensor_stiffness[e_offset + index * n_q_total +
+                                                                   q * n_q + p];
+                                      if (d2 != d1)
+                                        d_G[d2][d1] = d_G[d1][d2]; // symmetric
+                                      ++index;
+                                    }
+                                }
+
+                              // Multiply by D
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+
+                                  qs[0] += r_q[n] * s_uq_0[e * n_q * n_q + n * n_q + p];
+                                  qs[1] += r_q[n] * s_uq_1[e * n_q * n_q + n * n_q + p];
+                                }
+
+                              const int idx0 = e * dim * n_q_total + 0 * n_q_total + q * n_q + p;
+                              const int idx1 = e * dim * n_q_total + 1 * n_q_total + q * n_q + p;
+
+                              s_duq_0[idx0] = qr[0] * d_G[0][0] + qs[0] * d_G[1][0];
+                              s_duq_0[idx1] = qr[0] * d_G[0][1] + qs[0] * d_G[1][1];
+
+                              s_duq_1[idx0] = qr[1] * d_G[0][0] + qs[1] * d_G[1][0];
+                              s_duq_1[idx1] = qr[1] * d_G[0][1] + qs[1] * d_G[1][1];
+                            }
+                        }
+                      else if constexpr (dim == 3)
+                        {
+                          const int q = (tid % co_dimension_size) / n_q;
+                          const int r = tid % n_q;
+
+                          for (int n = 0; n < n_q; ++n)
+
+                            {
+                              r_p0[n] = s_uq_0[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + n];
+                              r_p1[n] = s_uq_1[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + n];
+                              r_p2[n] = s_uq_2[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                              r_r[n] = co_shape_gradients[n * n_q + r];
+                            }
+
+                          Number d_G[dim][dim];
+                          Number qr[dim];
+                          Number qs[dim];
+                          Number qt[dim];
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              // Load stiffness geometric tensor
+                              int index = 0;
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  qr[d1] = 0;
+                                  qs[d1] = 0;
+                                  qt[d1] = 0;
+                                  for (int d2 = d1; d2 < dim; ++d2)
+                                    {
+                                      d_G[d1][d2] =
+                                        geometric_tensor_stiffness[e_offset + index * n_q_total +
+                                                                   r * n_q * n_q + q * n_q + p];
+                                      if (d2 != d1)
+                                        d_G[d2][d1] = d_G[d1][d2]; // symmetric
+                                      ++index;
+                                    }
+                                }
+                              // Multiply by D
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+                                  qr[2] += co_shape_gradients[n * n_q + p] * r_p2[n];
+
+                                  qs[0] +=
+                                    r_q[n] * s_uq_0[e * n_q_total + r * n_q * n_q + n * n_q + p];
+                                  qs[1] +=
+                                    r_q[n] * s_uq_1[e * n_q_total + r * n_q * n_q + n * n_q + p];
+                                  qs[2] +=
+                                    r_q[n] * s_uq_2[e * n_q_total + r * n_q * n_q + n * n_q + p];
+
+                                  qt[0] +=
+                                    r_r[n] * s_uq_0[e * n_q_total + n * n_q * n_q + q * n_q + p];
+                                  qt[1] +=
+                                    r_r[n] * s_uq_1[e * n_q_total + n * n_q * n_q + q * n_q + p];
+                                  qt[2] +=
+                                    r_r[n] * s_uq_2[e * n_q_total + n * n_q * n_q + q * n_q + p];
+                                }
+
+                              const int idx0 =
+                                e * dim * n_q_total + 0 * n_q_total + r * n_q * n_q + q * n_q + p;
+                              const int idx1 =
+                                e * dim * n_q_total + 1 * n_q_total + r * n_q * n_q + q * n_q + p;
+                              const int idx2 =
+                                e * dim * n_q_total + 2 * n_q_total + r * n_q * n_q + q * n_q + p;
+
+                              s_duq_0[idx0] =
+                                qr[0] * d_G[0][0] + qs[0] * d_G[1][0] + qt[0] * d_G[2][0];
+                              s_duq_0[idx1] =
+                                qr[0] * d_G[0][1] + qs[0] * d_G[1][1] + qt[0] * d_G[2][1];
+                              s_duq_0[idx2] =
+                                qr[0] * d_G[0][2] + qs[0] * d_G[1][2] + qt[0] * d_G[2][2];
+
+                              s_duq_1[idx0] =
+                                qr[1] * d_G[0][0] + qs[1] * d_G[1][0] + qt[1] * d_G[2][0];
+                              s_duq_1[idx1] =
+                                qr[1] * d_G[0][1] + qs[1] * d_G[1][1] + qt[1] * d_G[2][1];
+                              s_duq_1[idx2] =
+                                qr[1] * d_G[0][2] + qs[1] * d_G[1][2] + qt[1] * d_G[2][2];
+
+                              s_duq_2[idx0] =
+                                qr[2] * d_G[0][0] + qs[2] * d_G[1][0] + qt[2] * d_G[2][0];
+                              s_duq_2[idx1] =
+                                qr[2] * d_G[0][1] + qs[2] * d_G[1][1] + qt[2] * d_G[2][1];
+                              s_duq_2[idx2] =
+                                qr[2] * d_G[0][2] + qs[2] * d_G[1][2] + qt[2] * d_G[2][2];
+                            }
+                        }
+                    }
+                  team_member.team_barrier();
+                }
+
+                // 2. multiply by the mass geometric tensor
+                {
+                  constexpr int co_dimension_size          = Utilities::pow(n_q, dim - 1);
+                  constexpr int symmetric_tensor_dimension = (dim * (dim + 1)) / 2;
+
+                  for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                       tid += blockSize)
+                    {
+                      const int e = tid / co_dimension_size;
+
+                      //  Base offset for the current element's geometric factors
+                      const int e_offset =
+                        eb * nelmtPerBatch * symmetric_tensor_dimension * n_q_total +
+                        e * symmetric_tensor_dimension * n_q_total;
+
+                      Number d_G[dim][dim];
+                      Number qr[dim];
+                      Number qs[dim];
+
+                      Number u[dim];
+
+                      if constexpr (dim == 2)
+                        {
+                          const int q = tid % co_dimension_size;
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              int index = 0;
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  for (int d2 = d1; d2 < dim; ++d2)
+                                    {
+                                      d_G[d1][d2] =
+                                        geometric_tensor_mass[e_offset + index * n_q_total +
+                                                              q * n_q + p];
+                                      if (d2 != d1)
+                                        d_G[d2][d1] = d_G[d1][d2]; // symmetric
+                                      ++index;
+                                    }
+
+                                  qr[d1] =
+                                    factor_laplace *
+                                    s_duq_0[e * dim * n_q_total + d1 * n_q_total + q * n_q + p];
+                                  qs[d1] =
+                                    factor_laplace *
+                                    s_duq_1[e * dim * n_q_total + d1 * n_q_total + q * n_q + p];
+                                }
+
+                              u[0] = factor_mass * s_uq_0[e * n_q_total + q * n_q + p];
+                              u[1] = factor_mass * s_uq_1[e * n_q_total + q * n_q + p];
+
+                              const int idx0 = e * dim * n_q_total + 0 * n_q_total + q * n_q + p;
+                              const int idx1 = e * dim * n_q_total + 1 * n_q_total + q * n_q + p;
+
+                              s_duq_0[idx0] = d_G[0][0] * qr[0] + d_G[0][1] * qs[0];
+                              s_duq_0[idx1] = d_G[0][0] * qr[1] + d_G[0][1] * qs[1];
+
+                              s_duq_1[idx0] = d_G[1][0] * qr[0] + d_G[1][1] * qs[0];
+                              s_duq_1[idx1] = d_G[1][0] * qr[1] + d_G[1][1] * qs[1];
+
+                              // also apply mass tensor to the value itself
+                              s_uq_0[e * n_q_total + q * n_q + p] =
+                                d_G[0][0] * u[0] + d_G[0][1] * u[1];
+                              s_uq_1[e * n_q_total + q * n_q + p] =
+                                d_G[1][0] * u[0] + d_G[1][1] * u[1];
+                            }
+                        }
+
+                      else if constexpr (dim == 3)
+                        {
+                          Number qt[dim];
+
+                          const int q = (tid % co_dimension_size) / n_q;
+                          const int r = tid % n_q;
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              int index = 0;
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  for (int d2 = d1; d2 < dim; ++d2)
+                                    {
+                                      d_G[d1][d2] =
+                                        geometric_tensor_mass[e_offset + index * n_q_total +
+                                                              r * n_q * n_q + q * n_q + p];
+                                      if (d2 != d1)
+                                        d_G[d2][d1] = d_G[d1][d2]; // symmetric
+                                      ++index;
+                                    }
+                                  qr[d1] =
+                                    factor_laplace * s_duq_0[e * dim * n_q_total + d1 * n_q_total +
+                                                             r * n_q * n_q + q * n_q + p];
+                                  qs[d1] =
+                                    factor_laplace * s_duq_1[e * dim * n_q_total + d1 * n_q_total +
+                                                             r * n_q * n_q + q * n_q + p];
+                                  qt[d1] =
+                                    factor_laplace * s_duq_2[e * dim * n_q_total + d1 * n_q_total +
+                                                             r * n_q * n_q + q * n_q + p];
+                                }
+
+                              u[0] =
+                                factor_mass * s_uq_0[e * n_q_total + r * n_q * n_q + q * n_q + p];
+                              u[1] =
+                                factor_mass * s_uq_1[e * n_q_total + r * n_q * n_q + q * n_q + p];
+                              u[2] =
+                                factor_mass * s_uq_2[e * n_q_total + r * n_q * n_q + q * n_q + p];
+
+                              const int idx0 =
+                                e * dim * n_q_total + 0 * n_q_total + r * n_q * n_q + q * n_q + p;
+                              const int idx1 =
+                                e * dim * n_q_total + 1 * n_q_total + r * n_q * n_q + q * n_q + p;
+                              const int idx2 =
+                                e * dim * n_q_total + 2 * n_q_total + r * n_q * n_q + q * n_q + p;
+
+                              s_duq_0[idx0] =
+                                d_G[0][0] * qr[0] + d_G[0][1] * qs[0] + d_G[0][2] * qt[0];
+                              s_duq_0[idx1] =
+                                d_G[0][0] * qr[1] + d_G[0][1] * qs[1] + d_G[0][2] * qt[1];
+                              s_duq_0[idx2] =
+                                d_G[0][0] * qr[2] + d_G[0][1] * qs[2] + d_G[0][2] * qt[2];
+
+                              s_duq_1[idx0] =
+                                d_G[1][0] * qr[0] + d_G[1][1] * qs[0] + d_G[1][2] * qt[0];
+                              s_duq_1[idx1] =
+                                d_G[1][0] * qr[1] + d_G[1][1] * qs[1] + d_G[1][2] * qt[1];
+                              s_duq_1[idx2] =
+                                d_G[1][0] * qr[2] + d_G[1][1] * qs[2] + d_G[1][2] * qt[2];
+
+                              s_duq_2[idx0] =
+                                d_G[2][0] * qr[0] + d_G[2][1] * qs[0] + d_G[2][2] * qt[0];
+                              s_duq_2[idx1] =
+                                d_G[2][0] * qr[1] + d_G[2][1] * qs[1] + d_G[2][2] * qt[1];
+                              s_duq_2[idx2] =
+                                d_G[2][0] * qr[2] + d_G[2][1] * qs[2] + d_G[2][2] * qt[2];
+
+                              // also apply mass tensor to the value itself
+                              s_uq_0[e * n_q_total + r * n_q * n_q + q * n_q + p] =
+                                d_G[0][0] * u[0] + d_G[0][1] * u[1] + d_G[0][2] * u[2];
+                              s_uq_1[e * n_q_total + r * n_q * n_q + q * n_q + p] =
+                                d_G[1][0] * u[0] + d_G[1][1] * u[1] + d_G[1][2] * u[2];
+                              s_uq_2[e * n_q_total + r * n_q * n_q + q * n_q + p] =
+                                d_G[2][0] * u[0] + d_G[2][1] * u[1] + d_G[2][2] * u[2];
+                            }
+                        }
+                    }
+                  team_member.team_barrier();
+                }
+
+                // 3. integrate, i.e apply D^T
+                {
+                  constexpr int co_dimension_size = Utilities::pow(n_q, dim - 1);
+
+                  for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                       tid += blockSize)
+                    {
+                      const int e = tid / co_dimension_size;
+
+                      if constexpr (dim == 2)
+                        {
+                          const int q = tid % co_dimension_size;
+
+                          // copy to register
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              const int idx_0 = e * dim * n_q_total + 0 * n_q_total + q * n_q + n;
+
+                              r_p0[n] = s_duq_0[idx_0];
+                              r_p1[n] = s_duq_1[idx_0];
+
+                              r_q[n] = co_shape_gradients[q * n_q + n];
+                            }
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              Number tmp0 = 0, tmp1 = 0;
+
+                              for (unsigned int n = 0; n < n_q; ++n)
+                                {
+                                  tmp0 += r_p0[n] * co_shape_gradients[p * n_q + n];
+                                  tmp1 += r_p1[n] * co_shape_gradients[p * n_q + n];
+                                }
+
+                              for (unsigned int n = 0; n < n_q; ++n)
+                                {
+                                  const int idx_1 =
+                                    e * dim * n_q_total + 1 * n_q_total + n * n_q + p;
+                                  tmp0 += s_duq_0[idx_1] * r_q[n];
+                                  tmp1 += s_duq_1[idx_1] * r_q[n];
+                                }
+
+                              s_uq_0[e * n_q_total + q * n_q + p] += tmp0;
+                              s_uq_1[e * n_q_total + q * n_q + p] += tmp1;
+                            }
+                        }
+                      else if constexpr (dim == 3)
+                        {
+                          const int q = (tid % co_dimension_size) / n_q;
+                          const int r = tid % n_q;
+
+                          // copy to register
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              const int idx_0 =
+                                e * dim * n_q_total + 0 * n_q_total + r * n_q * n_q + q * n_q + n;
+
+                              r_p0[n] = s_duq_0[idx_0];
+                              r_p1[n] = s_duq_1[idx_0];
+                              r_p2[n] = s_duq_2[idx_0];
+
+                              r_q[n] = co_shape_gradients[q * n_q + n];
+                              r_r[n] = co_shape_gradients[r * n_q + n];
+                            }
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              Number tmp0 = 0, tmp1 = 0, tmp2 = 0;
+
+                              for (unsigned int n = 0; n < n_q; ++n)
+                                {
+                                  tmp0 += r_p0[n] * co_shape_gradients[p * n_q + n];
+                                  tmp1 += r_p1[n] * co_shape_gradients[p * n_q + n];
+                                  tmp2 += r_p2[n] * co_shape_gradients[p * n_q + n];
+                                }
+
+                              for (unsigned int n = 0; n < n_q; ++n)
+                                {
+                                  const int idx_1 = e * dim * n_q_total + 1 * n_q_total +
+                                                    r * n_q * n_q + n * n_q + p;
+
+                                  tmp0 += s_duq_0[idx_1] * r_q[n];
+                                  tmp1 += s_duq_1[idx_1] * r_q[n];
+                                  tmp2 += s_duq_2[idx_1] * r_q[n];
+                                }
+
+                              for (unsigned int n = 0; n < n_q; ++n)
+                                {
+                                  const int idx_2 = e * dim * n_q_total + 2 * n_q_total +
+                                                    n * n_q * n_q + q * n_q + p;
+
+                                  tmp0 += s_duq_0[idx_2] * r_r[n];
+                                  tmp1 += s_duq_1[idx_2] * r_r[n];
+                                  tmp2 += s_duq_2[idx_2] * r_r[n];
+                                }
+
+                              s_uq_0[e * n_q_total + r * n_q * n_q + q * n_q + p] += tmp0;
+                              s_uq_1[e * n_q_total + r * n_q * n_q + q * n_q + p] += tmp1;
+                              s_uq_2[e * n_q_total + r * n_q * n_q + q * n_q + p] += tmp2;
+                            }
+                        }
+                    }
+                }
+                team_member.team_barrier();
+              }
+
+
+              // ====================================================
+              // PHASE 4: Project back to Nodes
+              // ====================================================
+              {
+                // ------------------------ Component 0 (x-direction) ------------------------
+                // x is normal (basis_n), y and z are tangent (basis_t)
+                {
+                  // component 0 in z direction
+                  if constexpr (dim == 3)
+                    {
+                      constexpr int co_dimension_size = n_q * n_q;
+
+                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                           tid += blockSize)
+                        {
+                          const int e = tid / co_dimension_size;
+
+                          const int p = (tid % co_dimension_size) / n_q;
+                          const int q = tid % n_q;
+
+                          for (int r = 0; r < n_q; ++r)
+                            r_p[r] = s_uq_0[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p];
+
+                          for (int k = 0; k < n_t; ++k)
+                            {
+                              Number tmp = 0;
+                              for (int r = 0; r < n_q; ++r)
+                                tmp += shape_values_tangent[k * n_q + r] * r_p[r];
+
+                              s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p] = tmp;
+                            }
+                        }
+                      team_member.team_barrier();
+                    }
+
+                  // component 0 in y direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_q : n_q * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int p = tid % co_dimension_size;
+
+                            for (int q = 0; q < n_q; ++q)
+                              r_p[q] = s_uq_0[e * n_q * n_q + q * n_q + p];
+
+                            for (int j = 0; j < n_t; ++j)
+                              {
+                                Number tmp = 0;
+                                for (int q = 0; q < n_q; ++q)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[q];
+
+                                s_duq_1[e * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int p = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int q = 0; q < n_q; ++q)
+                              r_p[q] = s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p];
+
+                            for (int j = 0; j < n_t; ++j)
+                              {
+                                Number tmp = 0;
+                                for (int q = 0; q < n_q; ++q)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[q];
+
+                                s_duq_1[e * n_q * n_t * n_t + k * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 0 in x direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_t : n_t * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int j = tid % co_dimension_size;
+
+                            for (int p = 0; p < n_q; ++p)
+                              r_p[p] = s_duq_1[e * n_q * n_t + j * n_q + p];
+
+                            for (int i = 0; i < n_n; ++i)
+                              {
+                                Number tmp = 0;
+                                for (int p = 0; p < n_q; ++p)
+                                  tmp += shape_values_normal[i * n_q + p] * r_p[p];
+
+                                s_uq_0[e * n_n * n_t + j * n_n + i] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int j = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int p = 0; p < n_q; ++p)
+                              r_p[p] = s_duq_1[e * n_q * n_t * n_t + k * n_q * n_t + j * n_q + p];
+
+                            for (int i = 0; i < n_n; ++i)
+                              {
+                                Number tmp = 0;
+                                for (int p = 0; p < n_q; ++p)
+                                  tmp += shape_values_normal[i * n_q + p] * r_p[p];
+
+                                s_uq_0[e * n_n * n_t * n_t + k * n_n * n_t + j * n_n + i] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+                }
+
+                // ------------------------ Component 1 (y-direction) ------------------------
+                // y is normal (basis_n), x and z are tangent (basis_t)
+                {
+                  // component 1 in z direction
+                  if constexpr (dim == 3)
+                    {
+                      constexpr int co_dimension_size = n_q * n_q;
+
+                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                           tid += blockSize)
+                        {
+                          const int e = tid / co_dimension_size;
+
+                          const int p = (tid % co_dimension_size) / n_q;
+                          const int q = tid % n_q;
+
+                          for (int r = 0; r < n_q; ++r)
+                            r_p[r] = s_uq_1[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p];
+
+                          for (int k = 0; k < n_t; ++k)
+                            {
+                              Number tmp = 0;
+                              for (int r = 0; r < n_q; ++r)
+                                tmp += shape_values_tangent[k * n_q + r] * r_p[r];
+
+                              s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p] = tmp;
+                            }
+                        }
+                      team_member.team_barrier();
+                    }
+
+                  // component 1 in y direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_q : n_q * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int p = tid % co_dimension_size;
+
+                            for (int q = 0; q < n_q; ++q)
+                              r_p[q] = s_uq_1[e * n_q * n_q + q * n_q + p];
+
+                            for (int j = 0; j < n_n; ++j)
+                              {
+                                Number tmp = 0;
+                                for (int q = 0; q < n_q; ++q)
+                                  tmp += shape_values_normal[j * n_q + q] * r_p[q];
+
+                                s_duq_1[e * n_q * n_n + j * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int p = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int q = 0; q < n_q; ++q)
+                              r_p[q] = s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p];
+
+                            for (int j = 0; j < n_n; ++j)
+                              {
+                                Number tmp = 0;
+                                for (int q = 0; q < n_q; ++q)
+                                  tmp += shape_values_normal[j * n_q + q] * r_p[q];
+
+                                s_duq_1[e * n_q * n_n * n_t + k * n_q * n_n + j * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 1 in x direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_n : n_n * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int j = tid % co_dimension_size;
+
+                            for (int p = 0; p < n_q; ++p)
+                              r_p[p] = s_duq_1[e * n_q * n_n + j * n_q + p];
+
+                            for (int i = 0; i < n_t; ++i)
+                              {
+                                Number tmp = 0;
+                                for (int p = 0; p < n_q; ++p)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[p];
+
+                                s_uq_1[e * n_t * n_n + j * n_t + i] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int j = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int p = 0; p < n_q; ++p)
+                              r_p[p] = s_duq_1[e * n_q * n_n * n_t + k * n_q * n_n + j * n_q + p];
+
+                            for (int i = 0; i < n_t; ++i)
+                              {
+                                Number tmp = 0;
+                                for (int p = 0; p < n_q; ++p)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[p];
+
+                                s_uq_1[e * n_t * n_n * n_t + k * n_t * n_n + j * n_t + i] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+                }
+
+                // ------------------------ Component 2 (z-direction) ------------------------
+                // z is normal (basis_n), x and y are tangent (basis_t)
+                if constexpr (dim == 3)
+                  {
+                    // component 2 in z direction
+                    {
+                      constexpr int co_dimension_size = n_q * n_q;
+
+                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                           tid += blockSize)
+                        {
+                          const int e = tid / co_dimension_size;
+
+                          const int p = (tid % co_dimension_size) / n_q;
+                          const int q = tid % n_q;
+
+                          for (int r = 0; r < n_q; ++r)
+                            r_p[r] = s_uq_2[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p];
+
+                          for (int k = 0; k < n_n; ++k)
+                            {
+                              Number tmp = 0;
+                              for (int r = 0; r < n_q; ++r)
+                                tmp += shape_values_normal[k * n_q + r] * r_p[r];
+
+                              s_duq_0[e * n_q * n_q * n_n + k * n_q * n_q + q * n_q + p] = tmp;
+                            }
+                        }
+                      team_member.team_barrier();
+                    }
+
+                    // component 2 in y direction
+                    {
+                      constexpr int co_dimension_size = n_q * n_n;
+
+                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                           tid += blockSize)
+                        {
+                          const int e = tid / co_dimension_size;
+
+                          {
+                            const int p = (tid % co_dimension_size) / n_n;
+                            const int k = tid % n_n;
+
+                            for (int q = 0; q < n_q; ++q)
+                              r_p[q] = s_duq_0[e * n_q * n_q * n_n + k * n_q * n_q + q * n_q + p];
+
+                            for (int j = 0; j < n_t; ++j)
+                              {
+                                Number tmp = 0;
+                                for (int q = 0; q < n_q; ++q)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[q];
+
+                                s_duq_1[e * n_q * n_t * n_n + k * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                          team_member.team_barrier();
+                        }
+
+                      // component 2 in x direction
+                      {
+                        constexpr int co_dimension_size = n_t * n_n;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int j = (tid % co_dimension_size) / n_n;
+                            const int k = tid % n_n;
+
+                            for (int p = 0; p < n_q; ++p)
+                              r_p[p] = s_duq_1[e * n_q * n_t * n_n + k * n_q * n_t + j * n_q + p];
+
+                            for (int i = 0; i < n_t; ++i)
+                              {
+                                Number tmp = 0;
+                                for (int p = 0; p < n_q; ++p)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[p];
+
+                                s_uq_2[e * n_t * n_t * n_n + k * n_t * n_t + j * n_t + i] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+                    }
+                  }
+              }
+
+              // ====================================================
+              // PHASE 5: Write the results to the global L vector.
+              // ====================================================
+
+              {
+                for (int tid = threadIdx; tid < c_nelmtPerBatch * n_dofs_per_component;
+                     tid += blockSize)
+                  {
+                    const int e                  = tid / n_dofs_per_component;
+                    const int local_dof_index_1d = tid % n_dofs_per_component;
+
+                    const int global_cell_id = eb * nelmtPerBatch + e;
+
+                    {
+                      const unsigned int dof_x =
+                        dof_indices(0 * n_dofs_per_component + local_dof_index_1d, global_cell_id);
+
+                      if (dof_x != numbers::invalid_unsigned_int)
+                        Kokkos::atomic_add(&vector_out[dof_x], s_uq_0[tid]);
+                    }
+                    {
+                      const unsigned int dof_y =
+                        dof_indices(1 * n_dofs_per_component + local_dof_index_1d, global_cell_id);
+
+                      if (dof_y != numbers::invalid_unsigned_int)
+                        Kokkos::atomic_add(&vector_out[dof_y], s_uq_1[tid]);
+                    }
+
+                    if constexpr (dim > 2)
+                      {
+                        const unsigned int dof_z =
+                          dof_indices(2 * n_dofs_per_component + local_dof_index_1d,
+                                      global_cell_id);
+
+                        if (dof_z != numbers::invalid_unsigned_int)
+                          Kokkos::atomic_add(&vector_out[dof_z], s_uq_2[tid]);
+                      }
+                  }
+                team_member.team_barrier();
+              }
+
+
+
+              team_member.team_barrier();
+              eb += team_member.league_size();
+            }
+        });
+
+      Kokkos::fence();
+    }
+
+    template <int dim, int n_t, int n_q, typename Number, bool compute_exterior>
+    void
+    compute_face(
+      // const Kokkos::Array<DeviceView<Number>, 2> shape_values_info,
+      //            const DeviceView<Number>                   shape_gradients_collocation,
+      const Kokkos::Array<Kokkos::Array<DeviceView<Number>, 2>, 2> shape_data_on_face,
+      const Kokkos::View<Number ***, MemorySpace::Default::kokkos_space>
+                               interpolate_quad_to_boundary,
+      const DeviceView<Number> geometric_tensor_mass,
+      const DeviceView<Number> geometric_tensor_stiffness,
+      const Kokkos::View<Number **, MemorySpace::Default::kokkos_space> quad_values,
+      const DeviceView<Number>                                          vector_in,
+      DeviceView<Number>                                                vector_out,
+      const DoFIndicesView                                              dof_indices,
+      const DoFIndicesView                                              neighbor_cells,
+      const unsigned int                                                n_cells,
+      const Number                                                      factor_mass    = Number(1),
+      const Number                                                      factor_laplace = Number(1),
+      const unsigned int n_cells_per_batch = numbers::invalid_unsigned_int,
+      const unsigned int n_blocks          = numbers::invalid_unsigned_int,
+      const unsigned int threads_per_block = numbers::invalid_unsigned_int)
+
+    {
+      constexpr int n_components = dim;
+
+      if (n_cells == 0)
+        return;
+
+      AssertThrow(dim > 1, ExcNotImplemented());
+
+      static_assert(n_t > 1, "Degree 0 not supported");
+
+      AssertThrow(n_q > n_t, ExcNotImplemented());
+
+      constexpr int n_n = n_t + 1;
+
+      constexpr int n_q_total = Utilities::pow(n_q, dim);
+
+      constexpr int n_dofs_per_face  = Utilities::pow(n_t, dim - 1);
+      constexpr int n_dofs_per_plane = n_t * (n_t - 1);
+
+      constexpr int n_cell_dofs_per_component = Utilities::pow(n_t, dim - 1) * (n_t - 1);
+
+      constexpr int n_dofs_per_component = n_n * Utilities::pow(n_t, dim - 1);
+      constexpr int n_faces              = 2 * dim;
+
+      const int nelmt = n_cells;
+
+
+      const size_t shmemPerBlock =
+        Kokkos::TeamPolicy<>::scratch_size_max(0); // maximum shared memory size per thread block
+
+
+      const int nelmtPerBatch =
+        (n_cells_per_batch == numbers::invalid_unsigned_int) ?
+          (shmemPerBlock / (n_components * (dim + 1) * n_q_total) / sizeof(Number)) :
+          n_cells_per_batch;
+
+      const int numBlocks = (n_blocks == numbers::invalid_unsigned_int) ?
+                              std::max(1, (nelmt + nelmtPerBatch - 1) / nelmtPerBatch) :
+                              n_blocks;
+
+      const int threadsPerBlock =
+        (threads_per_block == numbers::invalid_unsigned_int) ?
+          std::min(std::max(1, nelmtPerBatch) * Utilities::pow(n_q, dim - 1), 512) :
+          threads_per_block;
+
+
+      const unsigned int ssize = n_n * n_q   // normal shape values
+                                 + n_t * n_q // tangent shape values
+                                 + n_q * n_q // shape gradients at collocation points
+                                 + n_components * nelmtPerBatch * n_q_total        // values
+                                 + n_components * dim * nelmtPerBatch * n_q_total; // gradients
+
+
+      unsigned int shmem_size = ssize * sizeof(Number);
+
+      typedef Kokkos::TeamPolicy<>::member_type MemberType;
+      Kokkos::TeamPolicy<>                      policy(numBlocks, threadsPerBlock);
+      policy.set_scratch_size(0, Kokkos::PerTeam(shmem_size));
+
+      Kokkos::parallel_for(
+        policy, KOKKOS_LAMBDA(MemberType team_member) {
+          Number r_p[n_q];
+
+          Number r_p0[n_q];
+          Number r_p1[n_q];
+          Number r_p2[n_q];
+          Number r_q[n_q];
+          Number r_r[n_q];
+
+          Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
+
+          Number *shape_values_normal  = scratch;
+          Number *shape_values_tangent = shape_values_normal + n_n * n_q;
+          Number *co_shape_gradients   = shape_values_tangent + n_t * n_q;
+
+          Number *s_uq_0  = co_shape_gradients + n_q * n_q;
+          Number *s_duq_0 = s_uq_0 + nelmtPerBatch * n_q_total;
+          Number *s_uq_1  = s_duq_0 + nelmtPerBatch * n_q_total * dim;
+          Number *s_duq_1 = s_uq_1 + nelmtPerBatch * n_q_total;
+
+          Number *s_uq_2, *s_duq_2;
+          if constexpr (dim > 2)
+            {
+              s_uq_2  = s_duq_1 + nelmtPerBatch * n_q_total * dim;
+              s_duq_2 = s_uq_2 + nelmtPerBatch * n_q_total;
+            }
+
+          const int threadIdx = team_member.team_rank();
+          const int blockSize = team_member.team_size();
+
+
+          // copy to shared memory
+          // {
+          //   for (int tid = threadIdx; tid < n_n * n_q; tid += blockSize)
+          //     {
+          //       shape_values_normal[tid] = shape_values_info[0][tid];
+          //     }
+          //   for (int tid = threadIdx; tid < n_t * n_q; tid += blockSize)
+          //     {
+          //       shape_values_tangent[tid] = shape_values_info[1][tid];
+          //     }
+          //   for (int tid = threadIdx; tid < n_q * n_q; tid += blockSize)
+          //     {
+          //       co_shape_gradients[tid] = shape_gradients_collocation[tid];
+          //     }
+          //   team_member.team_barrier();
+          // }
+
+          // element batch iteration
+          int eb = team_member.league_rank();
+
+          while (eb < (nelmt + nelmtPerBatch - 1) / nelmtPerBatch)
+            {
+              // current nelmtPerBatch (edge case, last batch size can be less)
+              const int c_nelmtPerBatch = std::min(nelmtPerBatch, nelmt - eb * nelmtPerBatch);
+
+              int neighbor_cell_ids[c_nelmtPerBatch * n_faces];
+
+              for (int e = 0; e < c_nelmtPerBatch; ++e)
+                for (int f = 0; f < n_faces; ++f)
+                  neighbor_cell_ids[e * n_faces + f] = neighbor_cells(f, eb * nelmtPerBatch + e);
+
+              // ====================================================
+              // PHASE 1: Read from global L vector per component
+              // ====================================================
+              {
+                for (int tid = threadIdx; tid < c_nelmtPerBatch * n_dofs_per_component;
+                     tid += blockSize)
+                  {
+                    const int e                  = tid / n_dofs_per_component;
+                    const int local_dof_index_1d = tid % n_dofs_per_component;
+
+                    const int global_cell_id = eb * nelmtPerBatch + e;
+
+                    {
+                      const unsigned int dof_x =
+                        dof_indices(0 * n_dofs_per_component + local_dof_index_1d, global_cell_id);
+                      if (dof_x != numbers::invalid_unsigned_int)
+                        s_uq_0[tid] = vector_in[dof_x];
+                      else
+                        s_uq_0[tid] = 0;
+                    }
+                    {
+                      const unsigned int dof_y =
+                        dof_indices(1 * n_dofs_per_component + local_dof_index_1d, global_cell_id);
+
+                      if (dof_y != numbers::invalid_unsigned_int)
+                        s_uq_1[tid] = vector_in[dof_y];
+                      else
+                        s_uq_1[tid] = 0;
+                    }
+
+                    if constexpr (dim > 2)
+                      {
+                        const unsigned int dof_z =
+                          dof_indices(2 * n_dofs_per_component + local_dof_index_1d,
+                                      global_cell_id);
+
+                        if (dof_z != numbers::invalid_unsigned_int)
+                          s_uq_2[tid] = vector_in[dof_z];
+                        else
+                          s_uq_2[tid] = 0;
+                      }
+                  }
+                team_member.team_barrier();
+              }
+
+              // ====================================================
+              // PHASE 2: Interpolate to quadrature nodes
+              // ====================================================
+              {
+                // ------------------------ Component 0 (x-direction) ------------------------
+                // x is normal (basis_n), y and z are tangent (basis_t)
+                {
+                  // component 0 in x direction
+                  {
+                    constexpr int co_dimension_size = Utilities::pow(n_t, dim - 1);
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int j = tid % co_dimension_size;
+
+                            for (int i = 0; i < n_n; ++i)
+                              r_p[i] = s_uq_0[e * n_n * n_t + j * n_n + i];
+
+                            for (int p = 0; p < n_q; ++p)
+                              {
+                                Number tmp = 0;
+                                for (int i = 0; i < n_n; ++i)
+                                  tmp += shape_values_normal[i * n_q + p] * r_p[i];
+
+                                s_duq_1[e * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int j = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int i = 0; i < n_n; ++i)
+                              r_p[i] = s_uq_0[e * n_n * n_t * n_t + k * n_n * n_t + j * n_n + i];
+
+                            for (int p = 0; p < n_q; ++p)
+                              {
+                                Number tmp = 0;
+                                for (int i = 0; i < n_n; ++i)
+                                  tmp += shape_values_normal[i * n_q + p] * r_p[i];
+
+
+                                s_duq_1[e * n_q * n_t * n_t + k * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 0 in y direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_q : n_q * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int p = tid % co_dimension_size;
+
+                            for (int j = 0; j < n_t; ++j)
+                              r_p[j] = s_duq_1[e * n_q * n_t + j * n_q + p];
+
+                            for (int q = 0; q < n_q; ++q)
+                              {
+                                Number tmp = 0;
+                                for (int j = 0; j < n_t; ++j)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[j];
+
+                                s_uq_0[e * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int p = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int j = 0; j < n_t; ++j)
+                              r_p[j] = s_duq_1[e * n_q * n_t * n_t + k * n_q * n_t + j * n_q + p];
+
+                            for (int q = 0; q < n_q; ++q)
+                              {
+                                Number tmp = 0;
+                                for (int j = 0; j < n_t; ++j)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[j];
+
+                                s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 0 in z direction
+                  {
+                    if constexpr (dim == 3)
+                      {
+                        constexpr int co_dimension_size = n_q * n_q;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int p = (tid % co_dimension_size) / n_q;
+                            const int q = tid % n_q;
+
+                            for (int k = 0; k < n_t; ++k)
+                              r_p[k] = s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p];
+
+                            for (int r = 0; r < n_q; ++r)
+                              {
+                                Number tmp = 0;
+                                for (int k = 0; k < n_t; ++k)
+                                  tmp += shape_values_tangent[k * n_q + r] * r_p[k];
+
+                                s_uq_0[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+                  }
+                }
+
+                // ------------------------ Component 1 (y-direction) ------------------------
+                // y is normal (basis_n), x and z are tangent (basis_t)
+                {
+                  // component 1 in x direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_n : n_n * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int j = tid % co_dimension_size;
+
+                            for (int i = 0; i < n_t; ++i)
+                              r_p[i] = s_uq_1[e * n_t * n_n + j * n_t + i];
+
+                            for (int p = 0; p < n_q; ++p)
+                              {
+                                Number tmp = 0;
+                                for (int i = 0; i < n_t; ++i)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[i];
+                                s_duq_1[e * n_q * n_n + j * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int j = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int i = 0; i < n_t; ++i)
+                              r_p[i] = s_uq_1[e * n_t * n_n * n_t + k * n_t * n_n + j * n_t + i];
+
+                            for (int p = 0; p < n_q; ++p)
+                              {
+                                Number tmp = 0;
+                                for (int i = 0; i < n_t; ++i)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[i];
+
+                                s_duq_1[e * n_q * n_n * n_t + k * n_q * n_n + j * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 1 in y direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_q : n_q * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int p = tid % co_dimension_size;
+
+                            for (int j = 0; j < n_n; ++j)
+                              r_p[j] = s_duq_1[e * n_q * n_n + j * n_q + p];
+
+                            for (int q = 0; q < n_q; ++q)
+                              {
+                                Number tmp = 0;
+                                for (int j = 0; j < n_n; ++j)
+                                  tmp += shape_values_normal[j * n_q + q] * r_p[j];
+
+                                s_uq_1[e * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int p = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int j = 0; j < n_n; ++j)
+                              r_p[j] = s_duq_1[e * n_q * n_n * n_t + k * n_q * n_n + j * n_q + p];
+
+                            for (int q = 0; q < n_q; ++q)
+                              {
+                                Number tmp = 0;
+                                for (int j = 0; j < n_n; ++j)
+                                  tmp += shape_values_normal[j * n_q + q] * r_p[j];
+
+                                s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 1 in z direction
+                  {
+                    if constexpr (dim == 3)
+                      {
+                        constexpr int co_dimension_size = n_q * n_q;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int p = (tid % co_dimension_size) / n_q;
+                            const int q = tid % n_q;
+
+                            for (int k = 0; k < n_t; ++k)
+                              r_p[k] =
+                                s_duq_0[e * n_dofs_per_component + k * n_q * n_q + q * n_q + p];
+
+                            for (int r = 0; r < n_q; ++r)
+                              {
+                                Number tmp = 0;
+                                for (int k = 0; k < n_t; ++k)
+                                  tmp += shape_values_tangent[k * n_q + r] * r_p[k];
+
+                                s_uq_1[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+                  }
+                }
+                {
+                  // ------------------------ Component 2 (x-direction) ------------------------
+                  // z is normal (basis_n), x and y are tangent (basis_t)
+                  if constexpr (dim == 3)
+                    {
+                      // component 2 in x direction
+                      {
+                        constexpr int co_dimension_size = n_t * n_n;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int j = (tid % co_dimension_size) / n_n;
+                            const int k = tid % n_n;
+
+                            for (int i = 0; i < n_t; ++i)
+                              r_p[i] = s_uq_2[e * n_t * n_t * n_n + k * n_t * n_t + j * n_t + i];
+
+                            for (int p = 0; p < n_q; ++p)
+                              {
+                                Number tmp = 0;
+                                for (int i = 0; i < n_t; ++i)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[i];
+
+                                s_duq_1[e * n_q * n_t * n_n + k * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+
+                      // component 2 in y direction
+                      {
+                        constexpr int co_dimension_size = n_q * n_n;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int p = (tid % co_dimension_size) / n_n;
+                            const int k = tid % n_n;
+
+                            for (int j = 0; j < n_t; ++j)
+                              r_p[j] = s_duq_1[e * n_q * n_t * n_n + k * n_q * n_t + j * n_q + p];
+
+                            for (int q = 0; q < n_q; ++q)
+                              {
+                                Number tmp = 0;
+                                for (int j = 0; j < n_t; ++j)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[j];
+
+                                s_duq_0[e * n_q * n_q * n_n + k * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+
+                      // component 2 in z direction
+                      {
+                        constexpr int co_dimension_size = n_q * n_q;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int p = (tid % co_dimension_size) / n_q;
+                            const int q = tid % n_q;
+
+                            for (int k = 0; k < n_n; ++k)
+                              r_p[k] = s_duq_0[e * n_q * n_q * n_n + k * n_q * n_q + q * n_q + p];
+
+                            for (int r = 0; r < n_q; ++r)
+                              {
+                                Number tmp = 0;
+                                for (int k = 0; k < n_n; ++k)
+                                  tmp += shape_values_normal[k * n_q + r] * r_p[k];
+
+                                s_uq_2[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+                    }
+                }
+              }
+
+              // ====================================================
+              // PHASE 3: Evaluate gradients at quadrature nodes
+              // ====================================================
+
+              {
+                // 1. evaluate gradients in reference space and multiply by stiffness geometric
+                // tensor
+                {
+                  constexpr int co_dimension_size          = Utilities::pow(n_q, dim - 1);
+                  constexpr int symmetric_tensor_dimension = (dim * (dim + 1)) / 2;
+                  for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                       tid += blockSize)
+                    {
+                      const int e = tid / co_dimension_size;
+
+                      //  Base offset for the current element's geometric factors
+                      const int e_offset =
+                        eb * nelmtPerBatch * symmetric_tensor_dimension * n_q_total +
+                        e * symmetric_tensor_dimension * n_q_total;
+
+                      if constexpr (dim == 2)
+                        {
+                          const int q = tid % co_dimension_size;
+
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              r_p0[n] = s_uq_0[e * n_q * n_q + q * n_q + n];
+                              r_p1[n] = s_uq_1[e * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                            }
+
+                          Number d_G[dim][dim];
+                          Number qr[dim];
+                          Number qs[dim];
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              // Load stiffness geometric tensor
+                              int index = 0;
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  qr[d1] = 0;
+                                  qs[d1] = 0;
+                                  for (int d2 = d1; d2 < dim; ++d2)
+                                    {
+                                      d_G[d1][d2] =
+                                        geometric_tensor_stiffness[e_offset + index * n_q_total +
+                                                                   q * n_q + p];
+                                      if (d2 != d1)
+                                        d_G[d2][d1] = d_G[d1][d2]; // symmetric
+                                      ++index;
+                                    }
+                                }
+
+                              // Multiply by D
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+
+                                  qs[0] += r_q[n] * s_uq_0[e * n_q * n_q + n * n_q + p];
+                                  qs[1] += r_q[n] * s_uq_1[e * n_q * n_q + n * n_q + p];
+                                }
+
+                              const int idx0 = e * dim * n_q_total + 0 * n_q_total + q * n_q + p;
+                              const int idx1 = e * dim * n_q_total + 1 * n_q_total + q * n_q + p;
+
+                              s_duq_0[idx0] = qr[0] * d_G[0][0] + qs[0] * d_G[1][0];
+                              s_duq_0[idx1] = qr[0] * d_G[0][1] + qs[0] * d_G[1][1];
+
+                              s_duq_1[idx0] = qr[1] * d_G[0][0] + qs[1] * d_G[1][0];
+                              s_duq_1[idx1] = qr[1] * d_G[0][1] + qs[1] * d_G[1][1];
+                            }
+                        }
+                      else if constexpr (dim == 3)
+                        {
+                          const int q = (tid % co_dimension_size) / n_q;
+                          const int r = tid % n_q;
+
+                          for (int n = 0; n < n_q; ++n)
+
+                            {
+                              r_p0[n] = s_uq_0[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + n];
+                              r_p1[n] = s_uq_1[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + n];
+                              r_p2[n] = s_uq_2[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                              r_r[n] = co_shape_gradients[n * n_q + r];
+                            }
+
+                          Number d_G[dim][dim];
+                          Number qr[dim];
+                          Number qs[dim];
+                          Number qt[dim];
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              // Load stiffness geometric tensor
+                              int index = 0;
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  qr[d1] = 0;
+                                  qs[d1] = 0;
+                                  qt[d1] = 0;
+                                  for (int d2 = d1; d2 < dim; ++d2)
+                                    {
+                                      d_G[d1][d2] =
+                                        geometric_tensor_stiffness[e_offset + index * n_q_total +
+                                                                   r * n_q * n_q + q * n_q + p];
+                                      if (d2 != d1)
+                                        d_G[d2][d1] = d_G[d1][d2]; // symmetric
+                                      ++index;
+                                    }
+                                }
+                              // Multiply by D
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+                                  qr[2] += co_shape_gradients[n * n_q + p] * r_p2[n];
+
+                                  qs[0] +=
+                                    r_q[n] * s_uq_0[e * n_q_total + r * n_q * n_q + n * n_q + p];
+                                  qs[1] +=
+                                    r_q[n] * s_uq_1[e * n_q_total + r * n_q * n_q + n * n_q + p];
+                                  qs[2] +=
+                                    r_q[n] * s_uq_2[e * n_q_total + r * n_q * n_q + n * n_q + p];
+
+                                  qt[0] +=
+                                    r_r[n] * s_uq_0[e * n_q_total + n * n_q * n_q + q * n_q + p];
+                                  qt[1] +=
+                                    r_r[n] * s_uq_1[e * n_q_total + n * n_q * n_q + q * n_q + p];
+                                  qt[2] +=
+                                    r_r[n] * s_uq_2[e * n_q_total + n * n_q * n_q + q * n_q + p];
+                                }
+
+                              const int idx0 =
+                                e * dim * n_q_total + 0 * n_q_total + r * n_q * n_q + q * n_q + p;
+                              const int idx1 =
+                                e * dim * n_q_total + 1 * n_q_total + r * n_q * n_q + q * n_q + p;
+                              const int idx2 =
+                                e * dim * n_q_total + 2 * n_q_total + r * n_q * n_q + q * n_q + p;
+
+                              s_duq_0[idx0] =
+                                qr[0] * d_G[0][0] + qs[0] * d_G[1][0] + qt[0] * d_G[2][0];
+                              s_duq_0[idx1] =
+                                qr[0] * d_G[0][1] + qs[0] * d_G[1][1] + qt[0] * d_G[2][1];
+                              s_duq_0[idx2] =
+                                qr[0] * d_G[0][2] + qs[0] * d_G[1][2] + qt[0] * d_G[2][2];
+
+                              s_duq_1[idx0] =
+                                qr[1] * d_G[0][0] + qs[1] * d_G[1][0] + qt[1] * d_G[2][0];
+                              s_duq_1[idx1] =
+                                qr[1] * d_G[0][1] + qs[1] * d_G[1][1] + qt[1] * d_G[2][1];
+                              s_duq_1[idx2] =
+                                qr[1] * d_G[0][2] + qs[1] * d_G[1][2] + qt[1] * d_G[2][2];
+
+                              s_duq_2[idx0] =
+                                qr[2] * d_G[0][0] + qs[2] * d_G[1][0] + qt[2] * d_G[2][0];
+                              s_duq_2[idx1] =
+                                qr[2] * d_G[0][1] + qs[2] * d_G[1][1] + qt[2] * d_G[2][1];
+                              s_duq_2[idx2] =
+                                qr[2] * d_G[0][2] + qs[2] * d_G[1][2] + qt[2] * d_G[2][2];
+                            }
+                        }
+                    }
+                  team_member.team_barrier();
+                }
+
+                // 2. multiply by the mass geometric tensor
+                {
+                  constexpr int co_dimension_size          = Utilities::pow(n_q, dim - 1);
+                  constexpr int symmetric_tensor_dimension = (dim * (dim + 1)) / 2;
+
+                  for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                       tid += blockSize)
+                    {
+                      const int e = tid / co_dimension_size;
+
+                      //  Base offset for the current element's geometric factors
+                      const int e_offset =
+                        eb * nelmtPerBatch * symmetric_tensor_dimension * n_q_total +
+                        e * symmetric_tensor_dimension * n_q_total;
+
+                      Number d_G[dim][dim];
+                      Number qr[dim];
+                      Number qs[dim];
+
+                      Number u[dim];
+
+                      if constexpr (dim == 2)
+                        {
+                          const int q = tid % co_dimension_size;
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              int index = 0;
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  for (int d2 = d1; d2 < dim; ++d2)
+                                    {
+                                      d_G[d1][d2] =
+                                        geometric_tensor_mass[e_offset + index * n_q_total +
+                                                              q * n_q + p];
+                                      if (d2 != d1)
+                                        d_G[d2][d1] = d_G[d1][d2]; // symmetric
+                                      ++index;
+                                    }
+
+                                  qr[d1] =
+                                    factor_laplace *
+                                    s_duq_0[e * dim * n_q_total + d1 * n_q_total + q * n_q + p];
+                                  qs[d1] =
+                                    factor_laplace *
+                                    s_duq_1[e * dim * n_q_total + d1 * n_q_total + q * n_q + p];
+                                }
+
+                              u[0] = factor_mass * s_uq_0[e * n_q_total + q * n_q + p];
+                              u[1] = factor_mass * s_uq_1[e * n_q_total + q * n_q + p];
+
+                              const int idx0 = e * dim * n_q_total + 0 * n_q_total + q * n_q + p;
+                              const int idx1 = e * dim * n_q_total + 1 * n_q_total + q * n_q + p;
+
+                              s_duq_0[idx0] = d_G[0][0] * qr[0] + d_G[0][1] * qs[0];
+                              s_duq_0[idx1] = d_G[0][0] * qr[1] + d_G[0][1] * qs[1];
+
+                              s_duq_1[idx0] = d_G[1][0] * qr[0] + d_G[1][1] * qs[0];
+                              s_duq_1[idx1] = d_G[1][0] * qr[1] + d_G[1][1] * qs[1];
+
+                              // also apply mass tensor to the value itself
+                              s_uq_0[e * n_q_total + q * n_q + p] =
+                                d_G[0][0] * u[0] + d_G[0][1] * u[1];
+                              s_uq_1[e * n_q_total + q * n_q + p] =
+                                d_G[1][0] * u[0] + d_G[1][1] * u[1];
+                            }
+                        }
+
+                      else if constexpr (dim == 3)
+                        {
+                          Number qt[dim];
+
+                          const int q = (tid % co_dimension_size) / n_q;
+                          const int r = tid % n_q;
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              int index = 0;
+                              for (int d1 = 0; d1 < dim; ++d1)
+                                {
+                                  for (int d2 = d1; d2 < dim; ++d2)
+                                    {
+                                      d_G[d1][d2] =
+                                        geometric_tensor_mass[e_offset + index * n_q_total +
+                                                              r * n_q * n_q + q * n_q + p];
+                                      if (d2 != d1)
+                                        d_G[d2][d1] = d_G[d1][d2]; // symmetric
+                                      ++index;
+                                    }
+                                  qr[d1] =
+                                    factor_laplace * s_duq_0[e * dim * n_q_total + d1 * n_q_total +
+                                                             r * n_q * n_q + q * n_q + p];
+                                  qs[d1] =
+                                    factor_laplace * s_duq_1[e * dim * n_q_total + d1 * n_q_total +
+                                                             r * n_q * n_q + q * n_q + p];
+                                  qt[d1] =
+                                    factor_laplace * s_duq_2[e * dim * n_q_total + d1 * n_q_total +
+                                                             r * n_q * n_q + q * n_q + p];
+                                }
+
+                              u[0] =
+                                factor_mass * s_uq_0[e * n_q_total + r * n_q * n_q + q * n_q + p];
+                              u[1] =
+                                factor_mass * s_uq_1[e * n_q_total + r * n_q * n_q + q * n_q + p];
+                              u[2] =
+                                factor_mass * s_uq_2[e * n_q_total + r * n_q * n_q + q * n_q + p];
+
+                              const int idx0 =
+                                e * dim * n_q_total + 0 * n_q_total + r * n_q * n_q + q * n_q + p;
+                              const int idx1 =
+                                e * dim * n_q_total + 1 * n_q_total + r * n_q * n_q + q * n_q + p;
+                              const int idx2 =
+                                e * dim * n_q_total + 2 * n_q_total + r * n_q * n_q + q * n_q + p;
+
+                              s_duq_0[idx0] =
+                                d_G[0][0] * qr[0] + d_G[0][1] * qs[0] + d_G[0][2] * qt[0];
+                              s_duq_0[idx1] =
+                                d_G[0][0] * qr[1] + d_G[0][1] * qs[1] + d_G[0][2] * qt[1];
+                              s_duq_0[idx2] =
+                                d_G[0][0] * qr[2] + d_G[0][1] * qs[2] + d_G[0][2] * qt[2];
+
+                              s_duq_1[idx0] =
+                                d_G[1][0] * qr[0] + d_G[1][1] * qs[0] + d_G[1][2] * qt[0];
+                              s_duq_1[idx1] =
+                                d_G[1][0] * qr[1] + d_G[1][1] * qs[1] + d_G[1][2] * qt[1];
+                              s_duq_1[idx2] =
+                                d_G[1][0] * qr[2] + d_G[1][1] * qs[2] + d_G[1][2] * qt[2];
+
+                              s_duq_2[idx0] =
+                                d_G[2][0] * qr[0] + d_G[2][1] * qs[0] + d_G[2][2] * qt[0];
+                              s_duq_2[idx1] =
+                                d_G[2][0] * qr[1] + d_G[2][1] * qs[1] + d_G[2][2] * qt[1];
+                              s_duq_2[idx2] =
+                                d_G[2][0] * qr[2] + d_G[2][1] * qs[2] + d_G[2][2] * qt[2];
+
+                              // also apply mass tensor to the value itself
+                              s_uq_0[e * n_q_total + r * n_q * n_q + q * n_q + p] =
+                                d_G[0][0] * u[0] + d_G[0][1] * u[1] + d_G[0][2] * u[2];
+                              s_uq_1[e * n_q_total + r * n_q * n_q + q * n_q + p] =
+                                d_G[1][0] * u[0] + d_G[1][1] * u[1] + d_G[1][2] * u[2];
+                              s_uq_2[e * n_q_total + r * n_q * n_q + q * n_q + p] =
+                                d_G[2][0] * u[0] + d_G[2][1] * u[1] + d_G[2][2] * u[2];
+                            }
+                        }
+                    }
+                  team_member.team_barrier();
+                }
+
+                // 3. integrate, i.e apply D^T
+                {
+                  constexpr int co_dimension_size = Utilities::pow(n_q, dim - 1);
+
+                  for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                       tid += blockSize)
+                    {
+                      const int e = tid / co_dimension_size;
+
+                      if constexpr (dim == 2)
+                        {
+                          const int q = tid % co_dimension_size;
+
+                          // copy to register
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              const int idx_0 = e * dim * n_q_total + 0 * n_q_total + q * n_q + n;
+
+                              r_p0[n] = s_duq_0[idx_0];
+                              r_p1[n] = s_duq_1[idx_0];
+
+                              r_q[n] = co_shape_gradients[q * n_q + n];
+                            }
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              Number tmp0 = 0, tmp1 = 0;
+
+                              for (unsigned int n = 0; n < n_q; ++n)
+                                {
+                                  tmp0 += r_p0[n] * co_shape_gradients[p * n_q + n];
+                                  tmp1 += r_p1[n] * co_shape_gradients[p * n_q + n];
+                                }
+
+                              for (unsigned int n = 0; n < n_q; ++n)
+                                {
+                                  const int idx_1 =
+                                    e * dim * n_q_total + 1 * n_q_total + n * n_q + p;
+                                  tmp0 += s_duq_0[idx_1] * r_q[n];
+                                  tmp1 += s_duq_1[idx_1] * r_q[n];
+                                }
+
+                              s_uq_0[e * n_q_total + q * n_q + p] += tmp0;
+                              s_uq_1[e * n_q_total + q * n_q + p] += tmp1;
+                            }
+                        }
+                      else if constexpr (dim == 3)
+                        {
+                          const int q = (tid % co_dimension_size) / n_q;
+                          const int r = tid % n_q;
+
+                          // copy to register
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              const int idx_0 =
+                                e * dim * n_q_total + 0 * n_q_total + r * n_q * n_q + q * n_q + n;
+
+                              r_p0[n] = s_duq_0[idx_0];
+                              r_p1[n] = s_duq_1[idx_0];
+                              r_p2[n] = s_duq_2[idx_0];
+
+                              r_q[n] = co_shape_gradients[q * n_q + n];
+                              r_r[n] = co_shape_gradients[r * n_q + n];
+                            }
+
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              Number tmp0 = 0, tmp1 = 0, tmp2 = 0;
+
+                              for (unsigned int n = 0; n < n_q; ++n)
+                                {
+                                  tmp0 += r_p0[n] * co_shape_gradients[p * n_q + n];
+                                  tmp1 += r_p1[n] * co_shape_gradients[p * n_q + n];
+                                  tmp2 += r_p2[n] * co_shape_gradients[p * n_q + n];
+                                }
+
+                              for (unsigned int n = 0; n < n_q; ++n)
+                                {
+                                  const int idx_1 = e * dim * n_q_total + 1 * n_q_total +
+                                                    r * n_q * n_q + n * n_q + p;
+
+                                  tmp0 += s_duq_0[idx_1] * r_q[n];
+                                  tmp1 += s_duq_1[idx_1] * r_q[n];
+                                  tmp2 += s_duq_2[idx_1] * r_q[n];
+                                }
+
+                              for (unsigned int n = 0; n < n_q; ++n)
+                                {
+                                  const int idx_2 = e * dim * n_q_total + 2 * n_q_total +
+                                                    n * n_q * n_q + q * n_q + p;
+
+                                  tmp0 += s_duq_0[idx_2] * r_r[n];
+                                  tmp1 += s_duq_1[idx_2] * r_r[n];
+                                  tmp2 += s_duq_2[idx_2] * r_r[n];
+                                }
+
+                              s_uq_0[e * n_q_total + r * n_q * n_q + q * n_q + p] += tmp0;
+                              s_uq_1[e * n_q_total + r * n_q * n_q + q * n_q + p] += tmp1;
+                              s_uq_2[e * n_q_total + r * n_q * n_q + q * n_q + p] += tmp2;
+                            }
+                        }
+                    }
+                }
+                team_member.team_barrier();
+              }
+
+
+              // ====================================================
+              // PHASE 4: Project back to Nodes
+              // ====================================================
+              {
+                // ------------------------ Component 0 (x-direction) ------------------------
+                // x is normal (basis_n), y and z are tangent (basis_t)
+                {
+                  // component 0 in z direction
+                  if constexpr (dim == 3)
+                    {
+                      constexpr int co_dimension_size = n_q * n_q;
+
+                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                           tid += blockSize)
+                        {
+                          const int e = tid / co_dimension_size;
+
+                          const int p = (tid % co_dimension_size) / n_q;
+                          const int q = tid % n_q;
+
+                          for (int r = 0; r < n_q; ++r)
+                            r_p[r] = s_uq_0[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p];
+
+                          for (int k = 0; k < n_t; ++k)
+                            {
+                              Number tmp = 0;
+                              for (int r = 0; r < n_q; ++r)
+                                tmp += shape_values_tangent[k * n_q + r] * r_p[r];
+
+                              s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p] = tmp;
+                            }
+                        }
+                      team_member.team_barrier();
+                    }
+
+                  // component 0 in y direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_q : n_q * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int p = tid % co_dimension_size;
+
+                            for (int q = 0; q < n_q; ++q)
+                              r_p[q] = s_uq_0[e * n_q * n_q + q * n_q + p];
+
+                            for (int j = 0; j < n_t; ++j)
+                              {
+                                Number tmp = 0;
+                                for (int q = 0; q < n_q; ++q)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[q];
+
+                                s_duq_1[e * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int p = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int q = 0; q < n_q; ++q)
+                              r_p[q] = s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p];
+
+                            for (int j = 0; j < n_t; ++j)
+                              {
+                                Number tmp = 0;
+                                for (int q = 0; q < n_q; ++q)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[q];
+
+                                s_duq_1[e * n_q * n_t * n_t + k * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 0 in x direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_t : n_t * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int j = tid % co_dimension_size;
+
+                            for (int p = 0; p < n_q; ++p)
+                              r_p[p] = s_duq_1[e * n_q * n_t + j * n_q + p];
+
+                            for (int i = 0; i < n_n; ++i)
+                              {
+                                Number tmp = 0;
+                                for (int p = 0; p < n_q; ++p)
+                                  tmp += shape_values_normal[i * n_q + p] * r_p[p];
+
+                                s_uq_0[e * n_n * n_t + j * n_n + i] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int j = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int p = 0; p < n_q; ++p)
+                              r_p[p] = s_duq_1[e * n_q * n_t * n_t + k * n_q * n_t + j * n_q + p];
+
+                            for (int i = 0; i < n_n; ++i)
+                              {
+                                Number tmp = 0;
+                                for (int p = 0; p < n_q; ++p)
+                                  tmp += shape_values_normal[i * n_q + p] * r_p[p];
+
+                                s_uq_0[e * n_n * n_t * n_t + k * n_n * n_t + j * n_n + i] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+                }
+
+                // ------------------------ Component 1 (y-direction) ------------------------
+                // y is normal (basis_n), x and z are tangent (basis_t)
+                {
+                  // component 1 in z direction
+                  if constexpr (dim == 3)
+                    {
+                      constexpr int co_dimension_size = n_q * n_q;
+
+                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                           tid += blockSize)
+                        {
+                          const int e = tid / co_dimension_size;
+
+                          const int p = (tid % co_dimension_size) / n_q;
+                          const int q = tid % n_q;
+
+                          for (int r = 0; r < n_q; ++r)
+                            r_p[r] = s_uq_1[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p];
+
+                          for (int k = 0; k < n_t; ++k)
+                            {
+                              Number tmp = 0;
+                              for (int r = 0; r < n_q; ++r)
+                                tmp += shape_values_tangent[k * n_q + r] * r_p[r];
+
+                              s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p] = tmp;
+                            }
+                        }
+                      team_member.team_barrier();
+                    }
+
+                  // component 1 in y direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_q : n_q * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int p = tid % co_dimension_size;
+
+                            for (int q = 0; q < n_q; ++q)
+                              r_p[q] = s_uq_1[e * n_q * n_q + q * n_q + p];
+
+                            for (int j = 0; j < n_n; ++j)
+                              {
+                                Number tmp = 0;
+                                for (int q = 0; q < n_q; ++q)
+                                  tmp += shape_values_normal[j * n_q + q] * r_p[q];
+
+                                s_duq_1[e * n_q * n_n + j * n_q + p] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int p = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int q = 0; q < n_q; ++q)
+                              r_p[q] = s_duq_0[e * n_q * n_q * n_t + k * n_q * n_q + q * n_q + p];
+
+                            for (int j = 0; j < n_n; ++j)
+                              {
+                                Number tmp = 0;
+                                for (int q = 0; q < n_q; ++q)
+                                  tmp += shape_values_normal[j * n_q + q] * r_p[q];
+
+                                s_duq_1[e * n_q * n_n * n_t + k * n_q * n_n + j * n_q + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // component 1 in x direction
+                  {
+                    constexpr int co_dimension_size = (dim == 2) ? n_n : n_n * n_t;
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if constexpr (dim == 2)
+                          {
+                            const int j = tid % co_dimension_size;
+
+                            for (int p = 0; p < n_q; ++p)
+                              r_p[p] = s_duq_1[e * n_q * n_n + j * n_q + p];
+
+                            for (int i = 0; i < n_t; ++i)
+                              {
+                                Number tmp = 0;
+                                for (int p = 0; p < n_q; ++p)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[p];
+
+                                s_uq_1[e * n_t * n_n + j * n_t + i] = tmp;
+                              }
+                          }
+                        else if constexpr (dim == 3)
+                          {
+                            const int j = (tid % co_dimension_size) / n_t;
+                            const int k = tid % n_t;
+
+                            for (int p = 0; p < n_q; ++p)
+                              r_p[p] = s_duq_1[e * n_q * n_n * n_t + k * n_q * n_n + j * n_q + p];
+
+                            for (int i = 0; i < n_t; ++i)
+                              {
+                                Number tmp = 0;
+                                for (int p = 0; p < n_q; ++p)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[p];
+
+                                s_uq_1[e * n_t * n_n * n_t + k * n_t * n_n + j * n_t + i] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+                }
+
+                // ------------------------ Component 2 (z-direction) ------------------------
+                // z is normal (basis_n), x and y are tangent (basis_t)
+                if constexpr (dim == 3)
+                  {
+                    // component 2 in z direction
+                    {
+                      constexpr int co_dimension_size = n_q * n_q;
+
+                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                           tid += blockSize)
+                        {
+                          const int e = tid / co_dimension_size;
+
+                          const int p = (tid % co_dimension_size) / n_q;
+                          const int q = tid % n_q;
+
+                          for (int r = 0; r < n_q; ++r)
+                            r_p[r] = s_uq_2[e * n_q * n_q * n_q + r * n_q * n_q + q * n_q + p];
+
+                          for (int k = 0; k < n_n; ++k)
+                            {
+                              Number tmp = 0;
+                              for (int r = 0; r < n_q; ++r)
+                                tmp += shape_values_normal[k * n_q + r] * r_p[r];
+
+                              s_duq_0[e * n_q * n_q * n_n + k * n_q * n_q + q * n_q + p] = tmp;
+                            }
+                        }
+                      team_member.team_barrier();
+                    }
+
+                    // component 2 in y direction
+                    {
+                      constexpr int co_dimension_size = n_q * n_n;
+
+                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                           tid += blockSize)
+                        {
+                          const int e = tid / co_dimension_size;
+
+                          {
+                            const int p = (tid % co_dimension_size) / n_n;
+                            const int k = tid % n_n;
+
+                            for (int q = 0; q < n_q; ++q)
+                              r_p[q] = s_duq_0[e * n_q * n_q * n_n + k * n_q * n_q + q * n_q + p];
+
+                            for (int j = 0; j < n_t; ++j)
+                              {
+                                Number tmp = 0;
+                                for (int q = 0; q < n_q; ++q)
+                                  tmp += shape_values_tangent[j * n_q + q] * r_p[q];
+
+                                s_duq_1[e * n_q * n_t * n_n + k * n_q * n_t + j * n_q + p] = tmp;
+                              }
+                          }
+                          team_member.team_barrier();
+                        }
+
+                      // component 2 in x direction
+                      {
+                        constexpr int co_dimension_size = n_t * n_n;
+
+                        for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                             tid += blockSize)
+                          {
+                            const int e = tid / co_dimension_size;
+
+                            const int j = (tid % co_dimension_size) / n_n;
+                            const int k = tid % n_n;
+
+                            for (int p = 0; p < n_q; ++p)
+                              r_p[p] = s_duq_1[e * n_q * n_t * n_n + k * n_q * n_t + j * n_q + p];
+
+                            for (int i = 0; i < n_t; ++i)
+                              {
+                                Number tmp = 0;
+                                for (int p = 0; p < n_q; ++p)
+                                  tmp += shape_values_tangent[i * n_q + p] * r_p[p];
+
+                                s_uq_2[e * n_t * n_t * n_n + k * n_t * n_t + j * n_t + i] = tmp;
+                              }
+                          }
+                        team_member.team_barrier();
+                      }
+                    }
+                  }
+              }
+
+              // ====================================================
+              // PHASE 5: Write the results to the global L vector.
+              // ====================================================
+
+              {
+                for (int tid = threadIdx; tid < c_nelmtPerBatch * n_dofs_per_component;
+                     tid += blockSize)
+                  {
+                    const int e                  = tid / n_dofs_per_component;
+                    const int local_dof_index_1d = tid % n_dofs_per_component;
+
+                    const int global_cell_id = eb * nelmtPerBatch + e;
+
+                    {
+                      const unsigned int dof_x =
+                        dof_indices(0 * n_dofs_per_component + local_dof_index_1d, global_cell_id);
+
+                      if (dof_x != numbers::invalid_unsigned_int)
+                        Kokkos::atomic_add(&vector_out[dof_x], s_uq_0[tid]);
+                    }
+                    {
+                      const unsigned int dof_y =
+                        dof_indices(1 * n_dofs_per_component + local_dof_index_1d, global_cell_id);
+
+                      if (dof_y != numbers::invalid_unsigned_int)
+                        Kokkos::atomic_add(&vector_out[dof_y], s_uq_1[tid]);
+                    }
+
+                    if constexpr (dim > 2)
+                      {
+                        const unsigned int dof_z =
+                          dof_indices(2 * n_dofs_per_component + local_dof_index_1d,
+                                      global_cell_id);
+
+                        if (dof_z != numbers::invalid_unsigned_int)
+                          Kokkos::atomic_add(&vector_out[dof_z], s_uq_2[tid]);
+                      }
+                  }
+                team_member.team_barrier();
+              }
+
+              eb += team_member.league_size();
+            }
+        });
+
+      Kokkos::fence();
+    }
+
+
   } // namespace RT
 } // namespace Portable
 

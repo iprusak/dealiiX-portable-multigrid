@@ -360,6 +360,43 @@ namespace Portable
 
           Kokkos::deep_copy(dof_indices_per_cell, dof_indices_per_cell_host);
           Kokkos::fence();
+
+          {
+            std::vector<Polynomials::Polynomial<double>> basis =
+              Polynomials::generate_complete_Lagrange_basis(quadrature.get_points());
+
+
+            interpolate_quad_to_boundary =
+              Kokkos::View<Number ***, MemorySpace::Default::kokkos_space>(
+                Kokkos::view_alloc("interpolate_quad_to_boundary", Kokkos::WithoutInitializing),
+                2,
+                basis.size(),
+                2);
+            auto interpolate_quad_to_boundary_host =
+              Kokkos::create_mirror_view(interpolate_quad_to_boundary);
+
+            std::vector<double> val_and_der(2);
+
+            for (unsigned int i = 0; i < basis.size(); ++i)
+              {
+                basis[i].value(0., val_and_der);
+                interpolate_quad_to_boundary_host(0, i, 0) = val_and_der[0];
+                interpolate_quad_to_boundary_host(0, i, 1) = val_and_der[1];
+
+                basis[i].value(1., val_and_der);
+                interpolate_quad_to_boundary_host(1, i, 0) = val_and_der[0];
+                interpolate_quad_to_boundary_host(1, i, 1) = val_and_der[1];
+              }
+
+            Kokkos::deep_copy(interpolate_quad_to_boundary, interpolate_quad_to_boundary_host);
+            Kokkos::fence();
+          }
+
+          quad_values = Kokkos::View<Number ***, MemorySpace::Default::kokkos_space>(
+            Kokkos::view_alloc("quad_values", Kokkos::WithoutInitializing),
+            Utilities::pow(quadrature.size(), dim),
+            dim,
+            n_cells);
         }
 
         compute_geometric_tensors(mapping, quadrature, dof_handler, n_cells);
@@ -1113,6 +1150,41 @@ namespace Portable
         // const unsigned int nn_t = shape_info[0].fe_degree;
         // const unsigned int nn_q = shape_info[0].n_q_points_1d;
 
+        std::cout << "-----------------------------------\n";
+        std::cout << "shape_info[0].shape_data_on_face[0].size() = "
+                  << shape_info[0].shape_data_on_face[0].size() << std::endl;
+        std::cout << "shape_info[0].shape_data_on_face[1].size() = "
+                  << shape_info[0].shape_data_on_face[1].size() << std::endl;
+        std::cout << "-----------------------------------\n";
+
+        std::cout << "-----------------------------------\n";
+        std::cout << "shape_info[1].shape_data_on_face[0].size() = "
+                  << shape_info[1].shape_data_on_face[0].size() << std::endl;
+        std::cout << "shape_info[1].shape_data_on_face[1].size() = "
+                  << shape_info[1].shape_data_on_face[1].size() << std::endl;
+        std::cout << "-----------------------------------\n";
+
+        std::cout << "-----------------------------------\n";
+        for (unsigned int i = 0; i < shape_info[0].shape_data_on_face[0].size(); ++i)
+          std::cout << shape_info[0].shape_data_on_face[0][i] << "  ";
+        std::cout << std::endl << std::endl;
+
+        for (unsigned int i = 0; i < shape_info[0].shape_data_on_face[1].size(); ++i)
+          std::cout << shape_info[0].shape_data_on_face[1][i] << "  ";
+        std::cout << std::endl << std::endl;
+
+        for (unsigned int i = 0; i < shape_info[1].shape_data_on_face[0].size(); ++i)
+          std::cout << shape_info[1].shape_data_on_face[0][i] << "  ";
+        std::cout << std::endl << std::endl;
+
+
+        for (unsigned int i = 0; i < shape_info[1].shape_data_on_face[1].size(); ++i)
+          std::cout << shape_info[1].shape_data_on_face[1][i] << "  ";
+        std::cout << std::endl << std::endl;
+
+        std::cout << "-----------------------------------\n";
+
+
         // std::cout << std::endl << std::endl;
         if (shape_info[0].fe_degree == 2)
           {
@@ -1129,6 +1201,7 @@ namespace Portable
             //                                                    1u);
 
 
+
             // Portable::RT::stiffness_operator<dim, n_t, n_q, Number>(
             //   shape_values,
             //   shape_info[0].shape_gradients_collocation,
@@ -1142,13 +1215,29 @@ namespace Portable
             //   1u,
             //   1u);
 
-            Portable::RT::helmholtz_operator<dim, n_t, n_q, Number>(
+            // Portable::RT::helmholtz_operator<dim, n_t, n_q, Number>(
+            //   shape_values,
+            //   shape_info[0].shape_gradients_collocation,
+            //   geometric_tensor_mass,
+            //   geometric_tensor_stiffness,
+            //   src_device,
+            //   dst_device,
+            //   dof_indices_per_cell,
+            //   n_cells,
+            //   factor_mass,
+            //   factor_laplace,
+            //   1u,
+            //   1u,
+            //   1u);
+
+            Portable::RT::compute_cell<dim, n_t, n_q, Number>(
               shape_values,
               shape_info[0].shape_gradients_collocation,
               geometric_tensor_mass,
               geometric_tensor_stiffness,
               src_device,
               dst_device,
+              quad_values,
               dof_indices_per_cell,
               n_cells,
               factor_mass,
@@ -1195,13 +1284,29 @@ namespace Portable
             //   1u,
             //   1u);
 
-            Portable::RT::helmholtz_operator<dim, n_t, n_q, Number>(
+            // Portable::RT::helmholtz_operator<dim, n_t, n_q, Number>(
+            // shape_values,
+            // shape_info[0].shape_gradients_collocation,
+            // geometric_tensor_mass,
+            // geometric_tensor_stiffness,
+            // src_device,
+            // dst_device,
+            // dof_indices_per_cell,
+            // n_cells,
+            // factor_mass,
+            // factor_laplace,
+            // 1u,
+            // 1u,
+            // 1u);
+
+            Portable::RT::compute_cell<dim, n_t, n_q, Number>(
               shape_values,
               shape_info[0].shape_gradients_collocation,
               geometric_tensor_mass,
               geometric_tensor_stiffness,
               src_device,
               dst_device,
+              quad_values,
               dof_indices_per_cell,
               n_cells,
               factor_mass,
@@ -1243,13 +1348,29 @@ namespace Portable
             //   1u,
             //   1u);
 
-            Portable::RT::helmholtz_operator<dim, n_t, n_q, Number>(
+            // Portable::RT::helmholtz_operator<dim, n_t, n_q, Number>(
+            // shape_values,
+            // shape_info[0].shape_gradients_collocation,
+            // geometric_tensor_mass,
+            // geometric_tensor_stiffness,
+            // src_device,
+            // dst_device,
+            // dof_indices_per_cell,
+            // n_cells,
+            // factor_mass,
+            // factor_laplace,
+            // 1u,
+            // 1u,
+            // 1u);
+
+            Portable::RT::compute_cell<dim, n_t, n_q, Number>(
               shape_values,
               shape_info[0].shape_gradients_collocation,
               geometric_tensor_mass,
               geometric_tensor_stiffness,
               src_device,
               dst_device,
+              quad_values,
               dof_indices_per_cell,
               n_cells,
               factor_mass,
@@ -1291,13 +1412,29 @@ namespace Portable
             //   1u,
             //   1u);
 
-            Portable::RT::helmholtz_operator<dim, n_t, n_q, Number>(
+            // Portable::RT::helmholtz_operator<dim, n_t, n_q, Number>(
+            // shape_values,
+            // shape_info[0].shape_gradients_collocation,
+            // geometric_tensor_mass,
+            // geometric_tensor_stiffness,
+            // src_device,
+            // dst_device,
+            // dof_indices_per_cell,
+            // n_cells,
+            // factor_mass,
+            // factor_laplace,
+            // 1u,
+            // 1u,
+            // 1u);
+
+            Portable::RT::compute_cell<dim, n_t, n_q, Number>(
               shape_values,
               shape_info[0].shape_gradients_collocation,
               geometric_tensor_mass,
               geometric_tensor_stiffness,
               src_device,
               dst_device,
+              quad_values,
               dof_indices_per_cell,
               n_cells,
               factor_mass,
@@ -1328,9 +1465,11 @@ namespace Portable
 
       Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_per_cell;
 
+      // used as a boundary mask to distinguish which faces are on the boundary and which are not
       Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> neighbor_cells;
 
-      std::shared_ptr<const Utilities::MPI::Partitioner> partitioner;
+      Kokkos::View<Number ***, MemorySpace::Default::kokkos_space> quad_values;
+      std::shared_ptr<const Utilities::MPI::Partitioner>           partitioner;
 
       mutable std::array<double, 15> timings;
 
@@ -1346,7 +1485,9 @@ namespace Portable
       DeviceVector<Number> cell_inverse_jacobians_transpose;
       DeviceVector<Number> cell_inverse_jacobians;
 
+      // std::array<std::vector<std::array<Number, 2>>, 2> interpolate_quad_to_boundary;
 
+      Kokkos::View<Number ***, MemorySpace::Default::kokkos_space> interpolate_quad_to_boundary;
 
       unsigned int n_cells;
     };

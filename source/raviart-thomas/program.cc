@@ -499,7 +499,7 @@ LaplaceProblem<dim, fe_degree>::run()
 {
   pcout << "============== fe_degree = " << fe_degree << " ============== \n\n";
 
-  for (unsigned int cycle = 0; cycle < 5; ++cycle)
+  for (unsigned int cycle = 0; cycle < 1; ++cycle)
     {
       pcout << std::endl << std::endl;
       pcout << "Cycle " << cycle << std::endl;
