@@ -4951,25 +4951,24 @@ namespace Portable
 
     template <int dim, int n_t, int n_q, typename Number, bool compute_exterior>
     void
-    compute_face(
-      // const Kokkos::Array<DeviceView<Number>, 2> shape_values_info,
-      //            const DeviceView<Number>                   shape_gradients_collocation,
-      const Kokkos::Array<Kokkos::Array<DeviceView<Number>, 2>, 2> shape_data_on_face,
-      const Kokkos::View<Number ***, MemorySpace::Default::kokkos_space>
-                               interpolate_quad_to_boundary,
-      const DeviceView<Number> geometric_tensor_mass,
-      const DeviceView<Number> geometric_tensor_stiffness,
-      const Kokkos::View<Number **, MemorySpace::Default::kokkos_space> quad_values,
-      const DeviceView<Number>                                          vector_in,
-      DeviceView<Number>                                                vector_out,
-      const DoFIndicesView                                              dof_indices,
-      const DoFIndicesView                                              neighbor_cells,
-      const unsigned int                                                n_cells,
-      const Number                                                      factor_mass    = Number(1),
-      const Number                                                      factor_laplace = Number(1),
-      const unsigned int n_cells_per_batch = numbers::invalid_unsigned_int,
-      const unsigned int n_blocks          = numbers::invalid_unsigned_int,
-      const unsigned int threads_per_block = numbers::invalid_unsigned_int)
+    compute_face(const Kokkos::Array<DeviceView<Number>, 2> shape_values_info,
+                 const DeviceView<Number>                   shape_gradients_collocation,
+                 const Kokkos::Array<Kokkos::Array<DeviceView<Number>, 2>, 2> shape_data_on_face,
+                 const Kokkos::View<Number ***, MemorySpace::Default::kokkos_space>
+                                          interpolate_quad_to_boundary,
+                 const DeviceView<Number> geometric_tensor_mass,
+                 const DeviceView<Number> geometric_tensor_stiffness,
+                 const Kokkos::View<Number **, MemorySpace::Default::kokkos_space> quad_values,
+                 const DeviceView<Number>                                          vector_in,
+                 DeviceView<Number>                                                vector_out,
+                 const DoFIndicesView                                              dof_indices,
+                 const DoFIndicesView                                              neighbor_cells,
+                 const unsigned int                                                n_cells,
+                 const Number       factor_mass       = Number(1),
+                 const Number       factor_laplace    = Number(1),
+                 const unsigned int n_cells_per_batch = numbers::invalid_unsigned_int,
+                 const unsigned int n_blocks          = numbers::invalid_unsigned_int,
+                 const unsigned int threads_per_block = numbers::invalid_unsigned_int)
 
     {
       constexpr int n_components = dim;
@@ -5038,10 +5037,8 @@ namespace Portable
           Number r_p0[n_q];
           Number r_p1[n_q];
           Number r_p2[n_q];
-          Number r_q0[n_q];
-          Number r_q1[n_q];
-          Number r_r0[n_q];
-          Number r_r1[n_q];
+          Number r_q[n_q];
+          Number r_r[n_q];
 
 
           Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
@@ -5056,39 +5053,164 @@ namespace Portable
           Number *quad_to_boundary_grads_1  = quad_to_boundary_grads_0 + n_q;
 
           // x=0
-          Number *normal_face_values_0 = quad_to_boundary_grads_1 + n_q;
-          Number *normal_face_grads_0  = normal_face_values_0 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_values_u0_face0 = quad_to_boundary_grads_1 + n_q;
+          Number *normal_face_grads_u0_face0 =
+            normal_face_values_u0_face0 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_values_u1_face0 =
+            normal_face_grads_u0_face0 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_grads_u1_face0 =
+            normal_face_values_u1_face0 + nelmtPerBatch * n_q_total_face;
+
+          Number *tangential_face_grads_u0_face0 =
+            normal_face_grads_u1_face0 + nelmtPerBatch * n_q_total_face;
+          Number *tangential_face_grads_u1_face0 =
+            tangential_face_grads_u0_face0 + nelmtPerBatch * n_q_total_face * (dim - 1);
 
           // x=1
-          Number *normal_face_values_1 = normal_face_grads_0 + nelmtPerBatch * n_q_total_face * dim;
-          Number *normal_face_grads_1  = normal_face_values_1 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_values_u0_face1 =
+            tangential_face_grads_u1_face0 + nelmtPerBatch * n_q_total_face * (dim - 1);
+          Number *normal_face_grads_u0_face1 =
+            normal_face_values_u0_face1 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_values_u1_face1 =
+            normal_face_grads_u0_face1 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_grads_u1_face1 =
+            normal_face_values_u1_face1 + nelmtPerBatch * n_q_total_face;
+
+          Number *tangential_face_grads_u0_face1 =
+            normal_face_grads_u1_face1 + nelmtPerBatch * n_q_total_face;
+          Number *tangential_face_grads_u1_face1 =
+            tangential_face_grads_u0_face1 + nelmtPerBatch * n_q_total_face * (dim - 1);
 
           // y=0
-          Number      *normal_face_values_2 = normal_face_grads_1 + nelmtPerBatch * n_q_total_face;
-          *dim Number *normal_face_grads_2  = normal_face_values_2 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_values_u0_face2 =
+            tangential_face_grads_u1_face1 + nelmtPerBatch * n_q_total_face * (dim - 1);
+          Number *normal_face_grads_u0_face2 =
+            normal_face_values_u0_face2 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_values_u1_face2 =
+            normal_face_grads_u0_face2 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_grads_u1_face2 =
+            normal_face_grads_u1_face2 + nelmtPerBatch * n_q_total_face;
+
+          Number *tangential_face_grads_u0_face2 =
+            normal_face_grads_u1_face2 + nelmtPerBatch * n_q_total_face;
+          Number *tangential_face_grads_u1_face2 =
+            tangential_face_grads_u0_face2 + nelmtPerBatch * n_q_total_face * (dim - 1);
 
           // y=1
-          Number *normal_face_values_3 = normal_face_grads_2 + nelmtPerBatch * n_q_total_face * dim;
-          Number *normal_face_grads_3  = normal_face_values_3 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_values_u0_face3 =
+            tangential_face_grads_u1_face2 + nelmtPerBatch * n_q_total_face * (dim - 1);
+          Number *normal_face_grads_u0_face3 =
+            normal_face_values_u0_face3 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_values_u1_face3 =
+            normal_face_grads_u0_face3 + nelmtPerBatch * n_q_total_face;
+          Number *normal_face_grads_u1_face3 =
+            normal_face_values_u1_face3 + nelmtPerBatch * n_q_total_face;
 
-          Number *quad_values_0 = normal_face_grads_3 + nelmtPerBatch * n_q_total_face * dim;
+
+          Number *tangential_face_grads_u0_face3 =
+            normal_face_grads_u1_face3 + nelmtPerBatch * n_q_total_face;
+          Number *tangential_face_grads_u1_face3 =
+            tangential_face_grads_u0_face3 + nelmtPerBatch * n_q_total_face * (dim - 1);
+
+          Number *quad_values_0 =
+            tangential_face_grads_u1_face3 + nelmtPerBatch * n_q_total * (dim - 1);
           Number *quad_values_1 = quad_values_0 + nelmtPerBatch * n_q_total;
+          Number *quad_values_2;
 
-          Number *normal_face_values_4, normal_face_grads_4, normal_face_values_5,
-            normal_face_grads_5, quad_values_2;
+          Number *normal_face_values_u0_face4, normal_face_grads_u0_face4,
+            normal_face_values_u1_face4, normal_face_grads_u1_face4, normal_face_values_u0_face5,
+            normal_face_grads_u0_face5, normal_face_values_u1_face5, normal_face_grads_u1_face5;
+
+          Number *normal_face_values_u2_face0, normal_face_grads_u2_face0;
+          Number *normal_face_values_u2_face1, normal_face_grads_u2_face1;
+          Number *normal_face_values_u2_face2, normal_face_grads_u2_face2;
+          Number *normal_face_values_u2_face3, normal_face_grads_u2_face3;
+          Number *normal_face_values_u2_face4, normal_face_grads_u2_face4;
+          Number *normal_face_values_u2_face5, normal_face_grads_u2_face5;
+          Number *tangential_face_grads_u0_face4, tangential_face_grads_u0_face5,
+            tangential_face_grads_u1_face4, tangential_face_grads_u1_face5;
+          Number *tangential_face_grads_u2_face0, tangential_face_grads_u2_face1,
+            tangential_face_grads_u2_face2, tangential_face_grads_u2_face3,
+            tangential_face_grads_u2_face4, tangential_face_grads_u2_face5;
 
           if (dim > 3)
             {
+              quad_values_2 = normal_face_grads_u1_face3 + nelmtPerBatch * n_q_total_face;
+
+              // x=0
+              normal_face_values_u2_face0 = quad_values_2 + nelmtPerBatch * n_q_total;
+              normal_face_grads_u2_face0 =
+                normal_face_values_u2_face0 + nelmtPerBatch * n_q_total_face;
+              tangential_face_grads_u2_face0 =
+                normal_face_grads_u2_face0 + nelmtPerBatch * n_q_total_face;
+
+
+              // x=1
+              normal_face_values_u2_face1 =
+                tangential_face_grads_u2_face0 + nelmtPerBatch * n_q_total_face * (dim - 1);
+              normal_face_grads_u2_face1 =
+                normal_face_values_u2_face1 + nelmtPerBatch * n_q_total_face;
+              tangential_face_grads_u2_face1 =
+                normal_face_grads_u2_face1 + nelmtPerBatch * n_q_total_face;
+
+
+              // y=0
+              normal_face_values_u2_face2 =
+                tangential_face_grads_u2_face1 + nelmtPerBatch * n_q_total_face * (dim - 1);
+              normal_face_grads_u2_face2 =
+                normal_face_values_u2_face2 + nelmtPerBatch * n_q_total_face;
+              tangential_face_grads_u2_face2 =
+                normal_face_grads_u2_face2 + nelmtPerBatch * n_q_total_face;
+
+              // y=1
+              normal_face_values_u2_face3 =
+                tangential_face_grads_u2_face2 + nelmtPerBatch * n_q_total_face * (dim - 1);
+              normal_face_grads_u2_face3 =
+                normal_face_values_u2_face3 + nelmtPerBatch * n_q_total_face;
+              tangential_face_grads_u2_face3 =
+                normal_face_grads_u2_face3 + nelmtPerBatch * n_q_total_face;
+
               // z=0
-              normal_face_values_4 = quad_values_1 + nelmtPerBatch * n_q_total;
-              normal_face_grads_4  = normal_face_values_4 + nelmtPerBatch * n_q_total_face;
+              normal_face_values_u0_face4 =
+                tangential_face_grads_u2_face3 + nelmtPerBatch * n_q_total_face * (dim - 1);
+              normal_face_grads_u0_face4 =
+                normal_face_values_u0_face4 + nelmtPerBatch * n_q_total_face;
+              normal_face_values_u1_face4 =
+                normal_face_grads_u0_face4 + nelmtPerBatch * n_q_total_face;
+              normal_face_grads_u1_face4 =
+                normal_face_values_u1_face4 + nelmtPerBatch * n_q_total_face;
+              normal_face_values_u2_face4 =
+                normal_face_grads_u1_face4 + nelmtPerBatch * n_q_total_face;
+              normal_face_grads_u2_face4 =
+                normal_face_values_u2_face4 + nelmtPerBatch * n_q_total_face;
+              tangential_face_grads_u0_face4 =
+                normal_face_grads_u2_face4 + nelmtPerBatch * n_q_total_face;
+              tangential_face_grads_u1_face4 =
+                tangential_face_grads_u0_face4 + nelmtPerBatch * n_q_total_face * (dim - 1);
+              tangential_face_grads_u2_face4 =
+                tangential_face_grads_u1_face4 + nelmtPerBatch * n_q_total_face * (dim - 1);
 
               // z=1
-              normal_face_values_5 = normal_face_grads_4 + nelmtPerBatch * n_q_total_face * dim;
-              normal_face_grads_5  = normal_face_values_1 + nelmtPerBatch * n_q_total_face;
-
-
-              quad_values_2 = normal_face_values_5 + nelmtPerBatch * n_q_total_face * dim;
+              normal_face_values_u0_face5 =
+                tangential_face_grads_u2_face4 + nelmtPerBatch * n_q_total_face * (dim - 1);
+              normal_face_grads_u0_face5 =
+                normal_face_values_u0_face5 + nelmtPerBatch * n_q_total_face;
+              normal_face_values_u1_face5 =
+                normal_face_grads_u0_face5 + nelmtPerBatch * n_q_total_face;
+              normal_face_grads_u1_face5 =
+                normal_face_values_u1_face5 + nelmtPerBatch * n_q_total_face;
+              normal_face_values_u2_face5 =
+                normal_face_grads_u1_face5 + nelmtPerBatch * n_q_total_face;
+              normal_face_grads_u2_face5 =
+                normal_face_values_u2_face5 + nelmtPerBatch * n_q_total_face;
+              tangential_face_grads_u0_face4 =
+                normal_face_grads_u2_face4 + nelmtPerBatch * n_q_total_face;
+              tangential_face_grads_u0_face5 =
+                normal_face_grads_u2_face5 + nelmtPerBatch * n_q_total_face;
+              tangential_face_grads_u1_face5 =
+                tangential_face_grads_u0_face5 + nelmtPerBatch * n_q_total_face * (dim - 1);
+              tangential_face_grads_u2_face4 =
+                tangential_face_grads_u1_face5 + nelmtPerBatch * n_q_total_face * (dim - 1);
             }
 
           // Number *s_uq_0  = co_shape_gradients + n_q * n_q;
@@ -5112,24 +5234,24 @@ namespace Portable
           {
             for (int tid = threadIdx; tid < n_q; tid += blockSize)
               {
-                quad_to_boundary_values_0[i] = interpolate_quad_to_boundary(0, tid, 0);
-                quad_to_boundary_grads_0[i]  = interpolate_quad_to_boundary(1, tid, 0);
+                quad_to_boundary_values_0[tid] = interpolate_quad_to_boundary(0, tid, 0);
+                quad_to_boundary_grads_0[tid]  = interpolate_quad_to_boundary(1, tid, 0);
 
-                quad_to_boundary_values_1[i] = interpolate_quad_to_boundary(0, tid, 1);
-                quad_to_boundary_grads_1[i]  = interpolate_quad_to_boundary(1, tid, 1);
+                quad_to_boundary_values_1[tid] = interpolate_quad_to_boundary(0, tid, 1);
+                quad_to_boundary_grads_1[tid]  = interpolate_quad_to_boundary(1, tid, 1);
               }
-            //   for (int tid = threadIdx; tid < n_n * n_q; tid += blockSize)
-            //     {
-            //       shape_values_normal[tid] = shape_values_info[0][tid];
-            //     }
-            //   for (int tid = threadIdx; tid < n_t * n_q; tid += blockSize)
-            //     {
-            //       shape_values_tangent[tid] = shape_values_info[1][tid];
-            //     }
-            //   for (int tid = threadIdx; tid < n_q * n_q; tid += blockSize)
-            //     {
-            //       co_shape_gradients[tid] = shape_gradients_collocation[tid];
-            //     }
+            for (int tid = threadIdx; tid < n_n * n_q; tid += blockSize)
+              {
+                shape_values_normal[tid] = shape_values_info[0][tid];
+              }
+            for (int tid = threadIdx; tid < n_t * n_q; tid += blockSize)
+              {
+                shape_values_tangent[tid] = shape_values_info[1][tid];
+              }
+            for (int tid = threadIdx; tid < n_q * n_q; tid += blockSize)
+              {
+                co_shape_gradients[tid] = shape_gradients_collocation[tid];
+              }
             team_member.team_barrier();
           }
 
@@ -5148,7 +5270,7 @@ namespace Portable
                   neighbor_cell_ids[e * n_faces + f] = neighbor_cells(f, eb * nelmtPerBatch + e);
 
 
-              // read quad valuesf
+              // read quad values
               {
                 for (int tid = threadIdx; tid < c_nelmtPerBatch * n_q_total; tid += blockSize)
                   {
@@ -5172,51 +5294,635 @@ namespace Portable
                     const int e = tid / n_q_total_face;
                     if (dim == 2)
                       {
-                        const int q = tiq % n_q_total_face;
+                        {
+                          const int q = tid % n_q_total_face;
 
-                        for (int n = 0; n < n_q; ++n)
-                          {
-                            // component 0
-                            r_p0[n] = quad_values_0[e * n_q * n_q + q * n_q + n];
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              // component 0
+                              r_p0[n] = quad_values_0[e * n_q * n_q + q * n_q + n];
 
-                            // component 1
-                            r_p1[n] = quad_values_1[e * n_q * n_q + q * n_q + n];
-                          }
+                              // component 1
+                              r_p1[n] = quad_values_1[e * n_q * n_q + q * n_q + n];
+                            }
 
-                        Number v0[2], d0[2], v1[2], v2[2];
-                        for (int n = 0; i < n_q; ++n)
-                          {
-                            // component 0, x=0
-                            v0[0] += quad_to_boundary_values_0[i] * r_p0[n];
-                            d0[0] += quad_to_boundary_grads_0[i] * r_p0[n];
+                          Number v0[2], d0[2], v1[2], d1[2];
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              // component 0, x=0
+                              v0[0] += quad_to_boundary_values_0[n] * r_p0[n];
+                              d0[0] += quad_to_boundary_grads_0[n] * r_p0[n];
 
-                            // component 0, x=1
-                            v0[1] += quad_to_boundary_values_1[i] * r_p0[n];
-                            d0[1] += quad_to_boundary_grads_1[i] * r_p0[n];
+                              // component 0, x=1
+                              v0[1] += quad_to_boundary_values_1[n] * r_p0[n];
+                              d0[1] += quad_to_boundary_grads_1[n] * r_p0[n];
 
-                            // component 1, y=0
-                            v1[0] += quad_to_boundary_values_0[i] * r_p1[n];
-                            d1[0] += quad_to_boundary_grads_0[i] * r_p1[n];
+                              // component 1, x=0
+                              v1[0] += quad_to_boundary_values_0[n] * r_p1[n];
+                              d1[0] += quad_to_boundary_grads_0[n] * r_p1[n];
 
-                            // component 1, x=1
-                            v1[1] += quad_to_boundary_values_1[i] * r_p1[n];
-                            d1[1] += quad_to_boundary_grads_1[i] * r_p1[n];
-                          }
+                              // component 1, x=1
+                              v1[1] += quad_to_boundary_values_1[n] * r_p1[n];
+                              d1[1] += quad_to_boundary_grads_1[n] * r_p1[n];
+                            }
 
-                        normal_face_values_0[tid] = v0[0];
-                        normal_face_grads_0[tid]  = d0[0];
+                          // x=0
+                          normal_face_values_u0_face0[tid] = v0[0];
+                          normal_face_grads_u0_face0[tid]  = d0[0];
+                          normal_face_values_u1_face0[tid] = v1[0];
+                          normal_face_grads_u1_face0[tid]  = d1[0];
 
-                        normal_face_values_1[tid] = v0[1];
-                        normal_face_grads_1[tid]  = d0[1];
+                          // x=1
+                          normal_face_values_u0_face1[tid] = v0[1];
+                          normal_face_grads_u0_face1[tid]  = d0[1];
+                          normal_face_values_u1_face1[tid] = v1[1];
+                          normal_face_grads_u1_face1[tid]  = d1[1];
+                        }
 
-                        normal_face_values_2[tid] = v1[0];
-                        normal_face_grads_2[tid]  = d1[0];
+                        {
+                          const int p = tid % n_q_total_face;
 
-                        normal_face_values_3[tid] = v1[1];
-                        normal_face_grads_3[tid]  = d1[1];
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              // component 0
+                              r_p0[n] = quad_values_0[e * n_q * n_q + n * n_q + p];
+
+                              // component 1
+                              r_p1[n] = quad_values_1[e * n_q * n_q + n * n_q + p];
+                            }
+
+                          Number v0[2], d0[2], v1[2], d1[2];
+
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              // component 0, x=0
+                              v0[0] += quad_to_boundary_values_0[n] * r_p0[n];
+                              d0[0] += quad_to_boundary_grads_0[n] * r_p0[n];
+
+                              // component 0, x=1
+                              v0[1] += quad_to_boundary_values_1[n] * r_p0[n];
+                              d0[1] += quad_to_boundary_grads_1[n] * r_p0[n];
+
+                              // component 1, x=0
+                              v1[0] += quad_to_boundary_values_0[n] * r_p1[n];
+                              d1[0] += quad_to_boundary_grads_0[n] * r_p1[n];
+
+                              // component 1, x=1
+                              v1[1] += quad_to_boundary_values_1[n] * r_p1[n];
+                              d1[1] += quad_to_boundary_grads_1[n] * r_p1[n];
+                            }
+
+                          // y=0
+                          normal_face_values_u0_face0[tid] = v0[0];
+                          normal_face_grads_u0_face0[tid]  = d0[0];
+                          normal_face_values_u1_face0[tid] = v1[0];
+                          normal_face_grads_u1_face0[tid]  = d1[0];
+
+                          // y=1
+                          normal_face_values_u0_face1[tid] = v0[1];
+                          normal_face_grads_u0_face1[tid]  = d0[1];
+                          normal_face_values_u1_face1[tid] = v1[1];
+                          normal_face_grads_u1_face1[tid]  = d1[1];
+                        }
                       }
                     else if constexpr (dim == 3)
                       {
+                        {
+                          const int q = (tid % n_q_total_face) / n_q;
+                          const int r = tid % n_q;
+
+                          const int quad_offset = e * n_q_total + r * n_q * n_q + q * n_q;
+
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              // component 0
+                              r_p0[n] = quad_values_0[quad_offset + n];
+
+                              // component 1
+                              r_p1[n] = quad_values_1[quad_offset + n];
+
+                              // component 2
+                              r_p2[n] = quad_values_2[quad_offset + n];
+                            }
+
+                          Number v0[2], d0[2], v1[2], d1[2], v2[2], d2[2];
+
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              // component 0, x=0
+                              v0[0] += quad_to_boundary_values_0[n] * r_p0[n];
+                              d0[0] += quad_to_boundary_grads_0[n] * r_p0[n];
+
+                              // component 0, x=1
+                              v0[1] += quad_to_boundary_values_1[n] * r_p0[n];
+                              d0[1] += quad_to_boundary_grads_1[n] * r_p0[n];
+
+                              // component 1, x=0
+                              v1[0] += quad_to_boundary_values_0[n] * r_p1[n];
+                              d1[0] += quad_to_boundary_grads_0[n] * r_p1[n];
+
+                              // component 1, x=1
+                              v1[1] += quad_to_boundary_values_1[n] * r_p1[n];
+                              d1[1] += quad_to_boundary_grads_1[n] * r_p1[n];
+
+                              // component 2, x=0
+                              v2[0] += quad_to_boundary_values_0[n] * r_p2[n];
+                              d2[0] += quad_to_boundary_grads_0[n] * r_p2[n];
+
+                              // component 2, x=1
+                              v2[1] += quad_to_boundary_values_1[n] * r_p2[n];
+                              d2[1] += quad_to_boundary_grads_1[n] * r_p2[n];
+                            }
+
+                          // x=0
+                          normal_face_values_u0_face0[tid] = v0[0];
+                          normal_face_grads_u0_face0[tid]  = d0[0];
+                          normal_face_values_u1_face0[tid] = v1[0];
+                          normal_face_grads_u1_face0[tid]  = d1[0];
+                          normal_face_values_u2_face0[tid] = v2[0];
+                          normal_face_grads_u2_face0[tid]  = d2[0];
+
+
+                          // x=1
+                          normal_face_values_u0_face1[tid] = v0[1];
+                          normal_face_grads_u0_face1[tid]  = d0[1];
+                          normal_face_values_u1_face1[tid] = v1[1];
+                          normal_face_grads_u1_face1[tid]  = d1[1];
+                          normal_face_values_u2_face1[tid] = v2[1];
+                          normal_face_grads_u2_face1[tid]  = d2[1];
+                        }
+
+                        {
+                          const int p = (tid % n_q_total_face) / n_q;
+                          const int r = tid % n_q;
+
+                          const int quad_offset = e * n_q_total + r * n_q * n_q + p;
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              // component 0
+                              r_p0[n] = quad_values_0[quad_offset + n * n_q];
+
+                              // component 1
+                              r_p1[n] = quad_values_1[quad_offset + n * n_q];
+
+                              // component 2
+                              r_p2[n] = quad_values_2[quad_offset + n * n_q];
+                            }
+
+                          Number v0[2], d0[2], v1[2], d1[2], v2[2], d2[2];
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              // component 0, y=0
+                              v0[0] += quad_to_boundary_values_0[n] * r_p0[n];
+                              d0[0] += quad_to_boundary_grads_0[n] * r_p0[n];
+
+                              // component 0, y=1
+                              v0[1] += quad_to_boundary_values_1[n] * r_p0[n];
+                              d0[1] += quad_to_boundary_grads_1[n] * r_p0[n];
+
+                              // component 1, y=0
+                              v1[0] += quad_to_boundary_values_0[n] * r_p1[n];
+                              d1[0] += quad_to_boundary_grads_0[n] * r_p1[n];
+
+                              // component 1, y=1
+                              v1[1] += quad_to_boundary_values_1[n] * r_p1[n];
+                              d1[1] += quad_to_boundary_grads_1[n] * r_p1[n];
+
+                              // component 2, y=0
+                              v2[0] += quad_to_boundary_values_0[n] * r_p2[n];
+                              d2[0] += quad_to_boundary_grads_0[n] * r_p2[n];
+
+                              // component 2, y=1
+                              v2[1] += quad_to_boundary_values_1[n] * r_p2[n];
+                              d2[1] += quad_to_boundary_grads_1[n] * r_p2[n];
+                            }
+
+                          // y=0
+                          normal_face_values_u0_face2[tid] = v0[0];
+                          normal_face_grads_u0_face2[tid]  = d0[0];
+                          normal_face_values_u1_face2[tid] = v1[0];
+                          normal_face_grads_u1_face2[tid]  = d1[0];
+                          normal_face_values_u2_face2[tid] = v2[0];
+                          normal_face_grads_u2_face2[tid]  = d2[0];
+
+
+                          // y=1
+                          normal_face_values_u0_face3[tid] = v0[1];
+                          normal_face_grads_u0_face3[tid]  = d0[1];
+                          normal_face_values_u1_face3[tid] = v1[1];
+                          normal_face_grads_u1_face3[tid]  = d1[1];
+                          normal_face_values_u2_face3[tid] = v2[1];
+                          normal_face_grads_u2_face3[tid]  = d2[1];
+                        }
+
+                        {
+                          const int p = (tid % n_q_total_face) / n_q;
+                          const int q = tid % n_q;
+
+                          const int quad_offset = e * n_q_total + q * n_q + p;
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              // component 0
+                              r_p0[n] = quad_values_0[quad_offset + n * n_q * n_q];
+
+                              // component 1
+                              r_p1[n] = quad_values_1[quad_offset + n * n_q * n_q];
+
+                              // component 2
+                              r_p2[n] = quad_values_2[quad_offset + n * n_q * n_q];
+                            }
+
+                          Number v0[2], d0[2], v1[2], d1[2], v2[2], d2[2];
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              // component 0, z=0
+                              v0[0] += quad_to_boundary_values_0[n] * r_p0[n];
+                              d0[0] += quad_to_boundary_grads_0[n] * r_p0[n];
+
+                              // component 0, z=1
+                              v0[1] += quad_to_boundary_values_1[n] * r_p0[n];
+                              d0[1] += quad_to_boundary_grads_1[n] * r_p0[n];
+
+                              // component 1, z=0
+                              v1[0] += quad_to_boundary_values_0[n] * r_p1[n];
+                              d1[0] += quad_to_boundary_grads_0[n] * r_p1[n];
+
+                              // component 1, z=1
+                              v1[1] += quad_to_boundary_values_1[n] * r_p1[n];
+                              d1[1] += quad_to_boundary_grads_1[n] * r_p1[n];
+
+                              // component 2, z=0
+                              v2[0] += quad_to_boundary_values_0[n] * r_p2[n];
+                              d2[0] += quad_to_boundary_grads_0[n] * r_p2[n];
+
+                              // component 2, z=1
+                              v2[1] += quad_to_boundary_values_1[n] * r_p2[n];
+                              d2[1] += quad_to_boundary_grads_1[n] * r_p2[n];
+                            }
+
+                          // z=0
+                          normal_face_values_u0_face4[tid] = v0[0];
+                          normal_face_grads_u0_face4[tid]  = d0[0];
+                          normal_face_values_u1_face4[tid] = v1[0];
+                          normal_face_grads_u1_face4[tid]  = d1[0];
+                          normal_face_values_u2_face4[tid] = v2[0];
+                          normal_face_grads_u2_face4[tid]  = d2[0];
+
+
+                          // z=1
+                          normal_face_values_u0_face5[tid] = v0[1];
+                          normal_face_grads_u0_face5[tid]  = d0[1];
+                          normal_face_values_u1_face5[tid] = v1[1];
+                          normal_face_grads_u1_face5[tid]  = d1[1];
+                          normal_face_values_u2_face5[tid] = v2[1];
+                          normal_face_grads_u2_face5[tid]  = d2[1];
+                        }
+                      }
+                  }
+              }
+
+              // compute tangential derivatives at quadrature points
+              {
+                constexpr int co_dimension_size = Utilities::pow(n_q, dim - 2);
+                for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                     tid += blockSize)
+                  {
+                    const int e = tid / co_dimension_size;
+
+                    if constexpr (dim == 2)
+                      {
+                        {
+                          for (int q = 0; q < n_q; ++q)
+                            {
+                              Number qr0 = 0, qs0 = 0, qr1 = 0, qs1 = 0;
+
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr0 += co_shape_gradients[n * n_q + q] *
+                                         normal_face_values_u0_face0[e * n_q + n];
+                                  qs0 += co_shape_gradients[n * n_q + q] *
+                                         normal_face_values_u1_face0[e * n_q + n];
+
+                                  qr1 += co_shape_gradients[n * n_q + q] *
+                                         normal_face_values_u0_face1[e * n_q + n];
+                                  qs1 += co_shape_gradients[n * n_q + q] *
+                                         normal_face_values_u1_face1[e * n_q + n];
+                                }
+
+                              tangential_face_grads_u0_face0[e * n_q + q] = qr0;
+                              tangential_face_grads_u1_face0[e * n_q + q] = qs0;
+
+                              tangential_face_grads_u0_face1[e * n_q + q] = qr1;
+                              tangential_face_grads_u1_face1[e * n_q + q] = qs1;
+                            }
+                        }
+                        {
+                          for (int q = 0; q < n_q; ++q)
+                            {
+                              Number qr0 = 0, qs0 = 0, qr1 = 0, qs1 = 0;
+
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr0 += co_shape_gradients[n * n_q + q] *
+                                         normal_face_values_u0_face2[e * n_q + n];
+                                  qs0 += co_shape_gradients[n * n_q + q] *
+                                         normal_face_values_u1_face2[e * n_q + n];
+
+                                  qr1 += co_shape_gradients[n * n_q + q] *
+                                         normal_face_values_u0_face3[e * n_q + n];
+                                  qs1 += co_shape_gradients[n * n_q + q] *
+                                         normal_face_values_u1_face3[e * n_q + n];
+                                }
+
+                              tangential_face_grads_u0_face2[e * n_q + q] = qr0;
+                              tangential_face_grads_u1_face2[e * n_q + q] = qs0;
+
+                              tangential_face_grads_u0_face3[e * n_q + q] = qr1;
+                              tangential_face_grads_u1_face3[e * n_q + q] = qs1;
+                            }
+                        }
+                      }
+                    else if constexpr (dim == 3)
+                      {
+                        {
+                          const int q = tid % n_q;
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              r_p0[n] = normal_face_values_u0_face0[e * n_q * n_q + q * n_q + n];
+                              r_p1[n] = normal_face_values_u1_face0[e * n_q * n_q + q * n_q + n];
+                              r_p2[n] = normal_face_values_u2_face0[e * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                            }
+
+                          Number qr[dim], qs[dim], qt[dim];
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              for (int d = 0; d < dim; ++d)
+                                {
+                                  qr[d] = 0;
+                                  qs[d] = 0;
+                                }
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+                                  qr[2] += co_shape_gradients[n * n_q + p] * r_p2[n];
+
+                                  qs[0] += r_q[n] *
+                                           normal_face_values_u0_face0[e * n_q * n_q + n * n_q + p];
+                                  qs[1] += r_q[n] *
+                                           normal_face_values_u1_face0[e * n_q * n_q + n * n_q + p];
+                                  qs[2] += r_q[n] *
+                                           normal_face_values_u2_face0[e * n_q * n_q + n * n_q + p];
+                                }
+
+                              const int idx0 =
+                                e * dim * n_q_total_face + 0 * n_q_total_face + q * n_q + p;
+                              const int idx1 =
+                                e * dim * n_q_total_face + 1 * n_q_total_face + q * n_q + p;
+
+                              tangential_face_grads_u0_face0[idx0] = qr[0];
+                              tangential_face_grads_u0_face0[idx1] = qs[0];
+                              tangential_face_grads_u1_face0[idx0] = qr[1];
+                              tangential_face_grads_u1_face0[idx1] = qs[1];
+                              tangential_face_grads_u2_face0[idx0] = qr[2];
+                              tangential_face_grads_u2_face0[idx1] = qs[2];
+                            }
+                        }
+
+                        {
+                          const int q = tid % n_q;
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              r_p0[n] = normal_face_values_u0_face1[e * n_q * n_q + q * n_q + n];
+                              r_p1[n] = normal_face_values_u1_face1[e * n_q * n_q + q * n_q + n];
+                              r_p2[n] = normal_face_values_u2_face1[e * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                            }
+
+                          Number qr[dim], qs[dim];
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              for (int d = 0; d < dim; ++d)
+                                {
+                                  qr[d] = 0;
+                                  qs[d] = 0;
+                                }
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+                                  qr[2] += co_shape_gradients[n * n_q + p] * r_p2[n];
+
+                                  qs[0] += r_q[n] *
+                                           normal_face_values_u0_face1[e * n_q * n_q + n * n_q + p];
+                                  qs[1] += r_q[n] *
+                                           normal_face_values_u1_face1[e * n_q * n_q + n * n_q + p];
+                                  qs[2] += r_q[n] *
+                                           normal_face_values_u2_face1[e * n_q * n_q + n * n_q + p];
+                                }
+
+                              const int idx0 =
+                                e * dim * n_q_total_face + 0 * n_q_total_face + q * n_q + p;
+                              const int idx1 =
+                                e * dim * n_q_total_face + 1 * n_q_total_face + q * n_q + p;
+
+                              tangential_face_grads_u0_face1[idx0] = qr[0];
+                              tangential_face_grads_u0_face1[idx1] = qs[0];
+                              tangential_face_grads_u1_face1[idx0] = qr[1];
+                              tangential_face_grads_u1_face1[idx1] = qs[1];
+                              tangential_face_grads_u2_face1[idx0] = qr[2];
+                              tangential_face_grads_u2_face1[idx1] = qs[2];
+                            }
+                        }
+
+                        {
+                          const int q = tid % n_q;
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              r_p0[n] = normal_face_values_u0_face2[e * n_q * n_q + q * n_q + n];
+                              r_p1[n] = normal_face_values_u1_face2[e * n_q * n_q + q * n_q + n];
+                              r_p2[n] = normal_face_values_u2_face2[e * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                            }
+
+                          Number qr[dim], qs[dim];
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              for (int d = 0; d < dim; ++d)
+                                {
+                                  qr[d] = 0;
+                                  qs[d] = 0;
+                                }
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+                                  qr[2] += co_shape_gradients[n * n_q + p] * r_p2[n];
+
+                                  qs[0] += r_q[n] *
+                                           normal_face_values_u0_face2[e * n_q * n_q + n * n_q + p];
+                                  qs[1] += r_q[n] *
+                                           normal_face_values_u1_face2[e * n_q * n_q + n * n_q + p];
+                                  qs[2] += r_q[n] *
+                                           normal_face_values_u2_face2[e * n_q * n_q + n * n_q + p];
+                                }
+
+                              const int idx0 =
+                                e * dim * n_q_total_face + 0 * n_q_total_face + q * n_q + p;
+                              const int idx1 =
+                                e * dim * n_q_total_face + 1 * n_q_total_face + q * n_q + p;
+
+                              tangential_face_grads_u0_face2[idx0] = qr[0];
+                              tangential_face_grads_u0_face2[idx1] = qs[0];
+                              tangential_face_grads_u1_face2[idx0] = qr[1];
+                              tangential_face_grads_u1_face2[idx1] = qs[1];
+                              tangential_face_grads_u2_face2[idx0] = qr[2];
+                              tangential_face_grads_u2_face2[idx1] = qs[2];
+                            }
+                        }
+
+                        {
+                          const int q = tid % n_q;
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              r_p0[n] = normal_face_values_u0_face3[e * n_q * n_q + q * n_q + n];
+                              r_p1[n] = normal_face_values_u1_face3[e * n_q * n_q + q * n_q + n];
+                              r_p2[n] = normal_face_values_u2_face3[e * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                            }
+
+                          Number qr[dim], qs[dim];
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              for (int d = 0; d < dim; ++d)
+                                {
+                                  qr[d] = 0;
+                                  qs[d] = 0;
+                                }
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+                                  qr[2] += co_shape_gradients[n * n_q + p] * r_p2[n];
+
+                                  qs[0] += r_q[n] *
+                                           normal_face_values_u0_face3[e * n_q * n_q + n * n_q + p];
+                                  qs[1] += r_q[n] *
+                                           normal_face_values_u1_face3[e * n_q * n_q + n * n_q + p];
+                                  qs[2] += r_q[n] *
+                                           normal_face_values_u2_face3[e * n_q * n_q + n * n_q + p];
+                                }
+
+                              const int idx0 =
+                                e * dim * n_q_total_face + 0 * n_q_total_face + q * n_q + p;
+                              const int idx1 =
+                                e * dim * n_q_total_face + 1 * n_q_total_face + q * n_q + p;
+
+                              tangential_face_grads_u0_face3[idx0] = qr[0];
+                              tangential_face_grads_u0_face3[idx1] = qs[0];
+                              tangential_face_grads_u1_face3[idx0] = qr[1];
+                              tangential_face_grads_u1_face3[idx1] = qs[1];
+                              tangential_face_grads_u2_face3[idx0] = qr[2];
+                              tangential_face_grads_u2_face3[idx1] = qs[2];
+                            }
+                        }
+                        {
+                          const int q = tid % n_q;
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              r_p0[n] = normal_face_values_u0_face4[e * n_q * n_q + q * n_q + n];
+                              r_p1[n] = normal_face_values_u1_face4[e * n_q * n_q + q * n_q + n];
+                              r_p2[n] = normal_face_values_u2_face4[e * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                            }
+
+                          Number qr[dim], qs[dim];
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              for (int d = 0; d < dim; ++d)
+                                {
+                                  qr[d] = 0;
+                                  qs[d] = 0;
+                                }
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+                                  qr[2] += co_shape_gradients[n * n_q + p] * r_p2[n];
+
+                                  qs[0] += r_q[n] *
+                                           normal_face_values_u0_face4[e * n_q * n_q + n * n_q + p];
+                                  qs[1] += r_q[n] *
+                                           normal_face_values_u1_face4[e * n_q * n_q + n * n_q + p];
+                                  qs[2] += r_q[n] *
+                                           normal_face_values_u2_face4[e * n_q * n_q + n * n_q + p];
+                                }
+
+                              const int idx0 =
+                                e * dim * n_q_total_face + 0 * n_q_total_face + q * n_q + p;
+                              const int idx1 =
+                                e * dim * n_q_total_face + 1 * n_q_total_face + q * n_q + p;
+
+                              tangential_face_grads_u0_face4[idx0] = qr[0];
+                              tangential_face_grads_u0_face4[idx1] = qs[0];
+                              tangential_face_grads_u1_face4[idx0] = qr[1];
+                              tangential_face_grads_u1_face4[idx1] = qs[1];
+                              tangential_face_grads_u2_face4[idx0] = qr[2];
+                              tangential_face_grads_u2_face4[idx1] = qs[2];
+                            }
+                        }
+                        {
+                          const int q = tid % n_q;
+                          for (int n = 0; n < n_q; ++n)
+                            {
+                              r_p0[n] = normal_face_values_u0_face5[e * n_q * n_q + q * n_q + n];
+                              r_p1[n] = normal_face_values_u1_face5[e * n_q * n_q + q * n_q + n];
+                              r_p2[n] = normal_face_values_u2_face5[e * n_q * n_q + q * n_q + n];
+
+                              r_q[n] = co_shape_gradients[n * n_q + q];
+                            }
+
+                          Number qr[dim], qs[dim];
+                          for (int p = 0; p < n_q; ++p)
+                            {
+                              for (int d = 0; d < dim; ++d)
+                                {
+                                  qr[d] = 0;
+                                  qs[d] = 0;
+                                }
+                              for (int n = 0; n < n_q; ++n)
+                                {
+                                  qr[0] += co_shape_gradients[n * n_q + p] * r_p0[n];
+                                  qr[1] += co_shape_gradients[n * n_q + p] * r_p1[n];
+                                  qr[2] += co_shape_gradients[n * n_q + p] * r_p2[n];
+
+                                  qs[0] += r_q[n] *
+                                           normal_face_values_u0_face5[e * n_q * n_q + n * n_q + p];
+                                  qs[1] += r_q[n] *
+                                           normal_face_values_u1_face5[e * n_q * n_q + n * n_q + p];
+                                  qs[2] += r_q[n] *
+                                           normal_face_values_u2_face5[e * n_q * n_q + n * n_q + p];
+                                }
+
+                              const int idx0 =
+                                e * dim * n_q_total_face + 0 * n_q_total_face + q * n_q + p;
+                              const int idx1 =
+                                e * dim * n_q_total_face + 1 * n_q_total_face + q * n_q + p;
+
+                              tangential_face_grads_u0_face5[idx0] = qr[0];
+                              tangential_face_grads_u0_face5[idx1] = qs[0];
+                              tangential_face_grads_u1_face5[idx0] = qr[1];
+                              tangential_face_grads_u1_face5[idx1] = qs[1];
+                              tangential_face_grads_u2_face5[idx0] = qr[2];
+                              tangential_face_grads_u2_face5[idx1] = qs[2];
+                            }
+                        }
                       }
                   }
               }
