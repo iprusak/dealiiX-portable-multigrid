@@ -37,7 +37,7 @@ BraceWrapping:
   AfterUnion: true
   BeforeCatch: true
   BeforeElse: true
-  BeforeLambdaBody: false
+  BeforeLambdaBody: true
   BeforeWhile: true
   IndentBraces: true
   SplitEmptyFunction: false
@@ -51,7 +51,7 @@ BreakBeforeTernaryOperators: false
 BreakConstructorInitializers: BeforeComma
 BreakStringLiterals: false
 
-ColumnLimit: 80
+ColumnLimit: 100
 
 CompactNamespaces: false
 
