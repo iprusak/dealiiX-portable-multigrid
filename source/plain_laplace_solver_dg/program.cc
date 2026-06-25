@@ -61,7 +61,7 @@ public:
   void
   vmult(VectorType &dst, const VectorType &src) const
   {
-    std::cout << "LaplaceOperatorCPU::vmult" << std::endl;
+    // std::cout << "LaplaceOperatorCPU::vmult" << std::endl;
     matrix_free->loop(&LaplaceOperatorCPU::cell_operation,
                       &LaplaceOperatorCPU::inner_face_operation,
                       &LaplaceOperatorCPU::boundary_face_operation,
@@ -100,19 +100,29 @@ private:
                  const VectorType                            &src,
                  const std::pair<unsigned int, unsigned int> &cell_range) const
   {
-    std::cout << "LaplaceOperatorCPU::cell_operation" << std::endl;
+    // std::cout << "LaplaceOperatorCPU::cell_operation" << std::endl;
     FEEvaluation<dim, -1, 0, 1, Number> eval(matrix_free);
 
     for (unsigned int cell = cell_range.first; cell < cell_range.second; ++cell)
       {
         eval.reinit(cell);
-        eval.gather_evaluate(src, EvaluationFlags::gradients);
+        eval.gather_evaluate(src, EvaluationFlags::values | EvaluationFlags::gradients);
+
+        // for (unsigned int i = 0; i < eval.dofs_per_component; ++i)
+        // std::cout << eval.get_dof_value(i) << "   ";
+
         for (const unsigned int q : eval.quadrature_point_indices())
           {
+            // std::cout << eval.get_value(q) << "  ";
             const auto grad = eval.get_gradient(q);
             eval.submit_gradient(make_vectorized_array<Number>(1.0) * grad, q);
           }
         eval.integrate_scatter(EvaluationFlags::gradients, dst);
+
+
+        // for (unsigned int i = 0; i < eval.dofs_per_component; ++i)
+        //   std::cout << eval.get_dof_value(i) << "   ";
+        // std::cout << std::endl;
       }
   }
 
@@ -122,13 +132,13 @@ private:
                        const VectorType                            &src,
                        const std::pair<unsigned int, unsigned int> &face_range) const
   {
-    std::cout << "LaplaceOperatorCPU::inner_face_operation" << std::endl;
+    // std::cout << "LaplaceOperatorCPU::inner_face_operation" << std::endl;
     FEFaceEvaluation<dim, -1, 0, 1, Number> fe_eval(data, true);
     FEFaceEvaluation<dim, -1, 0, 1, Number> fe_eval_neighbor(data, false);
 
     const int actual_degree = data.get_dof_handler().get_fe().degree;
 
-    std::cout << "actual_degree = " << actual_degree << std::endl;
+    // std::cout << "actual_degree = " << actual_degree << std::endl;
     for (unsigned int face = face_range.first; face < face_range.second; ++face)
       {
         fe_eval.reinit(face);
@@ -148,8 +158,8 @@ private:
         for (const unsigned int q : fe_eval.quadrature_point_indices())
           {
             const auto normal = fe_eval.normal_vector(q);
-            std::cout << "normal at quadrature point " << fe_eval.quadrature_point(q) << " = "
-                      << normal << std::endl;
+            // std::cout << "normal at quadrature point " << fe_eval.quadrature_point(q) << " = "
+            //           << normal << std::endl;
 
 
             const auto u_minus = fe_eval.get_value(q);
@@ -165,7 +175,10 @@ private:
 
             fe_eval.submit_value(-flux, q);
             fe_eval_neighbor.submit_value(flux, q);
+
+            std::cout << u_minus << " | " <<u_plus<<std::endl;
           }
+        // std::cout << std::endl;
         fe_eval.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
         fe_eval_neighbor.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
         fe_eval.distribute_local_to_global(dst);
@@ -180,7 +193,12 @@ private:
                           const VectorType                            &src,
                           const std::pair<unsigned int, unsigned int> &face_range) const
   {
-    std::cout << "LaplaceOperatorCPU::boundary_face_operation" << std::endl;
+    (void)data;
+    (void)dst;
+    (void)src;
+    (void)face_range;
+
+    // std::cout << "LaplaceOperatorCPU::boundary_face_operation" << std::endl;
   }
 };
 
@@ -237,10 +255,10 @@ private:
   MatrixFree<dim, double>         matrix_free_cpu;
   LaplaceOperatorCPU<dim, double> system_matrix_cpu;
 
-  Portable::LaplaceOperatorDG<dim, fe_degree, double>              system_matrix;
-  LinearAlgebra::distributed::Vector<double, MemorySpace::Host>    ghost_solution_host;
-  LinearAlgebra::distributed::Vector<double, MemorySpace::Default> solution_device;
-  LinearAlgebra::distributed::Vector<double, MemorySpace::Default> system_rhs_device;
+  Portable::LaplaceOperatorDG<dim, fe_degree, fe_degree + 1, double> system_matrix;
+  LinearAlgebra::distributed::Vector<double, MemorySpace::Host>      ghost_solution_host;
+  LinearAlgebra::distributed::Vector<double, MemorySpace::Default>   solution_device;
+  LinearAlgebra::distributed::Vector<double, MemorySpace::Default>   system_rhs_device;
 
   using VectorTypeMG = LinearAlgebra::distributed::Vector<double, MemorySpace::Default>;
 
@@ -288,8 +306,8 @@ template <int dim, int fe_degree>
 void
 LaplaceProblem<dim, fe_degree>::setup_matrix_free()
 {
-  QGauss<1> quadrature_1d(fe_degree + 1);
   {
+    QGauss<1>                                        quadrature_1d(fe_degree + 1);
     typename MatrixFree<dim, double>::AdditionalData additional_data;
     additional_data.tasks_parallel_scheme = MatrixFree<dim, double>::AdditionalData::none;
     additional_data.mapping_update_flags  = update_values | update_gradients | update_JxW_values |
@@ -304,8 +322,7 @@ LaplaceProblem<dim, fe_degree>::setup_matrix_free()
 
     system_matrix_cpu.reinit(matrix_free_cpu);
   }
-  system_matrix.reinit(
-    mapping, quadrature_1d, dof_handler, constraints, overlap_communication_computation);
+  system_matrix.reinit(mapping, dof_handler, constraints, overlap_communication_computation);
 
 
   system_matrix.initialize_dof_vector(solution_device);
@@ -447,16 +464,41 @@ void
 LaplaceProblem<dim, fe_degree>::test()
 {
   using VecTypeHost = LinearAlgebra::distributed::Vector<double, MemorySpace::Host>;
+  using VecType     = LinearAlgebra::distributed::Vector<double, MemorySpace::Default>;
 
-  VecTypeHost dst, src;
 
-  matrix_free_cpu.initialize_dof_vector(dst);
-  matrix_free_cpu.initialize_dof_vector(src);
+  VecTypeHost dst_cpu, src_cpu;
 
-  for (unsigned int i = 0; i < src.locally_owned_size(); ++i)
-    src.local_element(i) = (double)(i);
+  matrix_free_cpu.initialize_dof_vector(dst_cpu);
+  matrix_free_cpu.initialize_dof_vector(src_cpu);
 
-  system_matrix_cpu.vmult(dst, src);
+  for (unsigned int i = 0; i < src_cpu.locally_owned_size(); ++i)
+    src_cpu.local_element(i) = (double)(i);
+
+  system_matrix_cpu.vmult(dst_cpu, src_cpu);
+
+  Portable::LaplaceOperatorDG<dim, fe_degree, fe_degree + 1, double> op;
+  op.reinit(mapping, dof_handler, constraints, false);
+
+  VecType dst, src;
+
+  op.initialize_dof_vector(dst);
+  op.initialize_dof_vector(src);
+
+  LinearAlgebra::ReadWriteVector<double> rw(src.locally_owned_elements());
+  rw.import_elements(src_cpu, VectorOperation::insert);
+  src.import_elements(rw, VectorOperation::insert);
+
+  std::cout << std::endl << std::endl;
+
+  // src_cpu.print(std::cout);
+  // src.print(std::cout);
+
+  op.vmult(dst, src);
+
+
+  // dst_cpu.print(std::cout);
+  // dst.print(std::cout);
 }
 template <int dim, int fe_degree>
 void
