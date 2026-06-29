@@ -141,11 +141,11 @@ namespace BK3
                 s_quad_to_boundary_grad_0[tid] = interpolate_quad_to_boundary(1, tid, 0);
                 s_quad_to_boundary_grad_1[tid] = interpolate_quad_to_boundary(1, tid, 1);
 
-                std::cout << s_quad_to_boundary_grad_0[tid] << "   ";
+                // std::cout << s_quad_to_boundary_grad_0[tid] << "   ";
               }
             team_member.team_barrier();
 
-            std::cout << std::endl;
+            // std::cout << std::endl;
 
             /*
             Interpolate to GL nodes
@@ -364,10 +364,13 @@ namespace BK3
                         {
                           const int m = tid % nq_total_per_face;
 
+                          const int offset_0 = e * nq * nq + m * nq;
+                          const int offset_1 = e * nq * nq + m;
+
                           for (int n = 0; n < nq; ++n)
                             {
-                              r_p[n] = scratch_values[e * nq * nq + m * nq + n]; // x direction
-                              r_q[n] = scratch_values[e * nq * nq + n * nq + m]; // y direction
+                              r_p[n] = scratch_values[offset_0 + n];      // x direction
+                              r_q[n] = scratch_values[offset_1 + n * nq]; // y direction
                             }
 
                           Number v_x[2], d_x[2], v_y[2], d_y[2];
@@ -375,6 +378,7 @@ namespace BK3
                             {
                               v_x[i] = 0;
                               d_x[i] = 0;
+
                               v_y[i] = 0;
                               d_y[i] = 0;
                             }
@@ -394,8 +398,8 @@ namespace BK3
                               d_y[1] += s_quad_to_boundary_grad_1[n] * r_q[n];
                             }
 
-                          std::cout << v_x[0] << "  " << v_x[1] << std::endl;
-                          std::cout << v_y[0] << "  " << v_y[1] << std::endl;
+                          // std::cout << v_x[0] << "  " << v_x[1] << std::endl;
+                          // std::cout << v_y[0] << "  " << v_y[1] << std::endl;
 
 
                           const int global_cell_id = eb * nelmtPerBatch + e;
@@ -419,17 +423,29 @@ namespace BK3
                           const int m2 = (tid % nq_total_per_face) / nq;
                           const int m1 = tid % nq;
 
+                          const int offset_0 = e * nq * nq * nq + m2 * nq * nq + m1 * nq;
+                          const int offset_1 = e * nq * nq * nq + m2 * nq * nq + m1;
+                          const int offset_2 = e * nq * nq * nq + m2 * nq + m1;
+
                           for (int n = 0; n < nq; ++n)
                             {
-                              r_p[n] = scratch_values[e * nq * nq * nq + m2 * nq * nq + m1 * nq +
-                                                      n]; // x direction
-                              r_q[n] = scratch_values[e * nq * nq * nq + m2 * nq * nq + n * nq +
-                                                      m1]; // y direction
-                              r_r[n] = scratch_values[e * nq * nq * nq + n * nq * nq + m2 * nq +
-                                                      m1]; // z direction
+                              r_p[n] = scratch_values[offset_0 + n];           // x direction
+                              r_q[n] = scratch_values[offset_1 + n * nq];      // y direction
+                              r_r[n] = scratch_values[offset_2 + n * nq * nq]; // z direction
                             }
 
                           Number v_x[2], d_x[2], v_y[2], d_y[2], v_z[2], d_z[2];
+                          for (int i = 0; i < 2; ++i)
+                            {
+                              v_x[i] = 0;
+                              d_x[i] = 0;
+
+                              v_y[i] = 0;
+                              d_y[i] = 0;
+
+                              v_z[i] = 0;
+                              d_z[i] = 0;
+                            }
 
                           for (int n = 0; n < nq; ++n)
                             {
@@ -461,19 +477,19 @@ namespace BK3
                           face_normal_derivatives_at_quads(local_q_id, 0, global_cell_id) = d_x[0];
 
                           face_values_at_quads(local_q_id, 1, global_cell_id)             = v_x[1];
-                          face_normal_derivatives_at_quads(local_q_id, 1, global_cell_id) = v_x[1];
+                          face_normal_derivatives_at_quads(local_q_id, 1, global_cell_id) = d_x[1];
 
                           face_values_at_quads(local_q_id, 2, global_cell_id)             = v_y[0];
                           face_normal_derivatives_at_quads(local_q_id, 2, global_cell_id) = d_y[0];
 
                           face_values_at_quads(local_q_id, 3, global_cell_id)             = v_y[1];
-                          face_normal_derivatives_at_quads(local_q_id, 3, global_cell_id) = v_y[1];
+                          face_normal_derivatives_at_quads(local_q_id, 3, global_cell_id) = d_y[1];
 
                           face_values_at_quads(local_q_id, 4, global_cell_id)             = v_z[0];
                           face_normal_derivatives_at_quads(local_q_id, 4, global_cell_id) = d_z[0];
 
                           face_values_at_quads(local_q_id, 5, global_cell_id)             = v_z[1];
-                          face_normal_derivatives_at_quads(local_q_id, 5, global_cell_id) = v_z[1];
+                          face_normal_derivatives_at_quads(local_q_id, 5, global_cell_id) = d_z[1];
                         }
                     }
                 }
