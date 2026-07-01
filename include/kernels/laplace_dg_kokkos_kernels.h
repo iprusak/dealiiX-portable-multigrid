@@ -861,6 +861,9 @@ namespace BK3
                                               static_cast<int>(threads_per_block)));
 
 
+      // std::cout << "compute_inner_faces: n_faces = " << n_faces << ", nelmt = " << nelmt
+      //           << ", nelmtPerBatch = " << nelmtPerBatch << ", numBlocks = " << numBlocks
+      //           << ", threadsPerBlock = " << threadsPerBlock << std::endl;
       {
         const int ssize = nm * nq + // shape values
                           nq * nq + // co-shape gradients
@@ -923,9 +926,12 @@ namespace BK3
               {
                 // current nelmtPerBatch (edge case, last batch size can be
                 // less)
-                int c_nelmtPerBatch = (eb * nelmtPerBatch + nelmtPerBatch > nelmt) ?
-                                        (nelmt - eb * nelmtPerBatch) :
-                                        nelmtPerBatch;
+                const int c_nelmtPerBatch = (eb * nelmtPerBatch + nelmtPerBatch > nelmt) ?
+                                              (nelmt - eb * nelmtPerBatch) :
+                                              nelmtPerBatch;
+
+                // std::cout << "compute_inner_faces: eb = " << eb
+                //           << ", c_nelmtPerBatch = " << c_nelmtPerBatch << std::endl;
 
                 // step-1 : Copy quad values and normal derivatives
                 {
@@ -935,31 +941,51 @@ namespace BK3
                       const int e = tid / nq_total_per_face;
                       const int q = tid % nq_total_per_face;
 
-                      const int cell_minus = face_info(e, 0);
-                      const int cell_plus  = face_info(e, 1);
-                      const int f_minus    = face_info(e, 2);
-                      const int f_plus     = face_info(e, 3);
+                      const int e_global = eb * nelmtPerBatch + e;
+
+                      const int cell_minus = face_info(e_global, 0);
+                      const int cell_plus  = face_info(e_global, 1);
+                      const int f_minus    = face_info(e_global, 2);
+                      const int f_plus     = face_info(e_global, 3);
 
                       const int normal_direction = f_minus / 2;
+
 
                       scratch_values_minus[tid] = face_values_at_quads(q, f_minus, cell_minus);
                       scratch_values_plus[tid]  = face_values_at_quads(q, f_plus, cell_plus);
 
                       Number jac_per_n[2];
-                      jac_per_n[0] = jacobian_times_normal(
-                        e * dim * nq_total_per_face + normal_direction * nq_total_per_face + q, 0);
-                      jac_per_n[1] = jacobian_times_normal(
-                        e * dim * nq_total_per_face + normal_direction * nq_total_per_face + q, 1);
+                      jac_per_n[0] =
+                        jacobian_times_normal(e_global * dim * nq_total_per_face +
+                                                normal_direction * nq_total_per_face + q,
+                                              0);
+                      jac_per_n[1] =
+                        jacobian_times_normal(e_global * dim * nq_total_per_face +
+                                                normal_direction * nq_total_per_face + q,
+                                              1);
 
                       scratch_normal_derivative_minus[e * nq_total_per_face + q] =
                         face_normal_derivatives_at_quads(q, f_minus, cell_minus) * jac_per_n[0];
 
                       scratch_normal_derivative_plus[e * nq_total_per_face + q] =
                         face_normal_derivatives_at_quads(q, f_plus, cell_plus) * jac_per_n[1];
+
+                      // std::cout << "face " << e_global << ": " << jac_per_n[0] << ":"
+                      //           << face_normal_derivatives_at_quads(q, f_minus, cell_minus) << " | "
+                      //           << jac_per_n[1] << " : "
+                      //           << face_normal_derivatives_at_quads(q, f_plus, cell_plus)
+                      //           << std::endl;
                     }
                   team_member.team_barrier();
                 }
 
+
+
+                //  for (int i = 0; i < nq_total_per_face; ++i)
+                //   {
+                //     std::cout << scratch_normal_derivative_minus[i] << " | "
+                //               << scratch_normal_derivative_plus[i] << std::endl;
+                //   }
                 // step-2 : Evaluate tangential derivatives
                 {
                   constexpr int co_dimension_size = Utilities::pow(nq, dim - 2);
@@ -968,11 +994,15 @@ namespace BK3
                     {
                       const int e = tid / co_dimension_size;
 
-                      const int f_minus = face_info(e, 2);
+                      const int e_global = eb * nelmtPerBatch + e;
+
+                      const int f_minus = face_info(e_global, 2);
 
                       if (dim == 2)
                         {
-                          const int tangent_direction = f_minus % 2;
+                          const int normal_direction = f_minus / 2;
+
+                          const int tangent_direction = 1 - normal_direction;
 
                           // copy to register
                           for (int n = 0; n < nq; n++)
@@ -995,16 +1025,17 @@ namespace BK3
                                 }
 
                               jac_per_n[0] =
-                                jacobian_times_normal(e * dim * nq_total_per_face +
+                                jacobian_times_normal(e_global * dim * nq_total_per_face +
                                                         tangent_direction * nq_total_per_face + p,
                                                       0);
                               jac_per_n[1] =
-                                jacobian_times_normal(e * dim * nq_total_per_face +
+                                jacobian_times_normal(e_global * dim * nq_total_per_face +
                                                         tangent_direction * nq_total_per_face + p,
                                                       1);
 
                               scratch_normal_derivative_minus[e * nq_total_per_face + p] +=
                                 qr * jac_per_n[0];
+
                               scratch_normal_derivative_plus[e * nq_total_per_face + p] +=
                                 qs * jac_per_n[1];
                             }
@@ -1046,19 +1077,19 @@ namespace BK3
                                 }
 
                               jac_per_n[0][0] =
-                                jacobian_times_normal(e * dim * nq_total_per_face +
+                                jacobian_times_normal(e_global * dim * nq_total_per_face +
                                                         tangent_direction_0 * nq_total_per_face + q,
                                                       0);
                               jac_per_n[0][1] =
-                                jacobian_times_normal(e * dim * nq_total_per_face +
+                                jacobian_times_normal(e_global * dim * nq_total_per_face +
                                                         tangent_direction_0 * nq_total_per_face + q,
                                                       1);
                               jac_per_n[1][0] =
-                                jacobian_times_normal(e * dim * nq_total_per_face +
+                                jacobian_times_normal(e_global * dim * nq_total_per_face +
                                                         tangent_direction_1 * nq_total_per_face + q,
                                                       0);
                               jac_per_n[1][1] =
-                                jacobian_times_normal(e * dim * nq_total_per_face +
+                                jacobian_times_normal(e_global * dim * nq_total_per_face +
                                                         tangent_direction_1 * nq_total_per_face + q,
                                                       1);
 
@@ -1072,6 +1103,13 @@ namespace BK3
                     }
                   team_member.team_barrier();
                 }
+
+                for (int i = 0; i < nq_total_per_face; ++i)
+                  {
+                    std::cout << scratch_values_minus[i] - scratch_values_plus[i] << std::endl;
+                  }
+
+
                 eb += team_member.league_size();
               }
           });

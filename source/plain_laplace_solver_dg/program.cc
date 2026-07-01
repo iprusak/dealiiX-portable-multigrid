@@ -134,60 +134,46 @@ private:
                        const std::pair<unsigned int, unsigned int> &face_range) const
   {
     // std::cout << "LaplaceOperatorCPU::inner_face_operation" << std::endl;
-    FEFaceEvaluation<dim, -1, 0, 1, Number> fe_eval(data, true);
-    FEFaceEvaluation<dim, -1, 0, 1, Number> fe_eval_neighbor(data, false);
+    FEFaceEvaluation<dim, -1, 0, 1, Number> phi_inner(data, true);
+    FEFaceEvaluation<dim, -1, 0, 1, Number> phi_outer(data, false);
 
     const int actual_degree = data.get_dof_handler().get_fe().degree;
 
     // std::cout << "actual_degree = " << actual_degree << std::endl;
     for (unsigned int face = face_range.first; face < face_range.second; ++face)
       {
-        fe_eval.reinit(face);
-        fe_eval_neighbor.reinit(face);
+        phi_inner.reinit(face);
+        phi_inner.gather_evaluate(src, EvaluationFlags::values | EvaluationFlags::gradients);
+        phi_outer.reinit(face);
+        phi_outer.gather_evaluate(src, EvaluationFlags::values | EvaluationFlags::gradients);
 
-        fe_eval.read_dof_values(src);
-        fe_eval.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
+        const VectorizedArray<Number> inverse_length_normal_to_face =
+          0.5 * (std::abs((phi_inner.normal_vector(0) * phi_inner.inverse_jacobian(0))[dim - 1]) +
+                 std::abs((phi_outer.normal_vector(0) * phi_outer.inverse_jacobian(0))[dim - 1]));
+        const VectorizedArray<Number> sigma =
+          inverse_length_normal_to_face * Number(actual_degree * (actual_degree + 1));
 
-        fe_eval_neighbor.read_dof_values(src);
-        fe_eval_neighbor.evaluate(EvaluationFlags::values | EvaluationFlags::gradients);
-
-        const VectorizedArray<Number> sigmaF =
-          (std::abs((fe_eval.normal_vector(0) * fe_eval.inverse_jacobian(0))[dim - 1]) +
-           std::abs((fe_eval.normal_vector(0) * fe_eval_neighbor.inverse_jacobian(0))[dim - 1])) *
-          (Number)(std::max(actual_degree, 1) * (actual_degree + 1.0));
-
-        for (const unsigned int q : fe_eval.quadrature_point_indices())
+        for (const unsigned int q : phi_inner.quadrature_point_indices())
           {
-            const auto normal = fe_eval.normal_vector(q);
-            // std::cout << "normal at quadrature point " << fe_eval.quadrature_point(q) << " = "
-            //           << normal << std::endl;
+            const VectorizedArray<Number> solution_jump =
+              (phi_inner.get_value(q) - phi_outer.get_value(q));
 
+            std::cout << solution_jump << std::endl;
+            const VectorizedArray<Number> average_normal_derivative =
+              (phi_inner.get_normal_derivative(q) + phi_outer.get_normal_derivative(q)) *
+              Number(0.5);
+            const VectorizedArray<Number> test_by_value =
+              solution_jump * sigma - average_normal_derivative;
 
-            const auto u_minus = fe_eval.get_value(q);
-            const auto u_plus  = fe_eval_neighbor.get_value(q);
+            phi_inner.submit_value(test_by_value, q);
+            phi_outer.submit_value(-test_by_value, q);
 
-            const auto flux = make_vectorized_array<Number>(0.5) *
-                                (fe_eval.get_gradient(q) + fe_eval_neighbor.get_gradient(q)) *
-                                normal -
-                              sigmaF * (u_minus - u_plus);
-
-            fe_eval.submit_gradient(flux * normal, q);
-            fe_eval_neighbor.submit_gradient(flux * normal, q);
-
-            fe_eval.submit_value(-flux, q);
-            fe_eval_neighbor.submit_value(flux, q);
-
-            // std::cout << u_plus << " | " << u_minus << std::endl;
-
-            auto temp = fe_eval.get_normal_derivative(q);
+            phi_inner.submit_normal_derivative(-solution_jump * Number(0.5), q);
+            phi_outer.submit_normal_derivative(-solution_jump * Number(0.5), q);
           }
-        std::cout << std::endl;
 
-        // std::cout << std::endl;
-        fe_eval.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
-        fe_eval_neighbor.integrate(EvaluationFlags::values | EvaluationFlags::gradients);
-        fe_eval.distribute_local_to_global(dst);
-        fe_eval_neighbor.distribute_local_to_global(dst);
+        phi_inner.integrate_scatter(EvaluationFlags::values | EvaluationFlags::gradients, dst);
+        phi_outer.integrate_scatter(EvaluationFlags::values | EvaluationFlags::gradients, dst);
       }
   }
 

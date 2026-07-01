@@ -550,22 +550,42 @@ namespace Portable
               n_blocks,
               threads_per_block);
 
-            for (unsigned int i = 0; i < face_info[0].extent(0); ++i)
-              {
-                const unsigned int cell_minus = face_info[0](i, 0);
-                const unsigned int cell_plus  = face_info[0](i, 1);
-                const unsigned int f_minus    = face_info[0](i, 2);
-                const unsigned int f_plus     = face_info[0](i, 3);
+            const unsigned int n_inner_faces = face_info[0].extent(0);
 
-                // std::cout << cell_minus << "  " << cell_plus << " " << f_minus << "  " << f_plus
-                //           << std::endl;
+            BK3::DG::compute_inner_faces<dim, fe_degree + 1, n_q_points_1d, Number>(
+              precomputed_data.shape_values,
+              precomputed_data.co_shape_gradients,
+              jacobian_times_normal_inner_face,
+              src_device,
+              dst_device,
+              face_values_at_quads[color],
+              face_normal_derivatives_at_quads[color],
+              dof_indices_per_color[color],
+              face_info[0],
+              n_inner_faces,
+              n_cells_per_batch,
+              n_blocks,
+              threads_per_block);
 
-                for (unsigned int i = 0; i < Utilities::pow(n_q_points_1d, dim - 1); ++i)
-                  {
-                    std::cout << face_normal_derivatives_at_quads[color](i, f_minus, cell_minus) <<" | "
-                              << face_normal_derivatives_at_quads[color](i, f_plus, cell_plus) << std::endl;
-                  }
-              }
+            // for (unsigned int i = 0; i < face_info[0].extent(0); ++i)
+            //   {
+            //     const unsigned int cell_minus = face_info[0](i, 0);
+            //     const unsigned int cell_plus  = face_info[0](i, 1);
+            //     const unsigned int f_minus    = face_info[0](i, 2);
+            //     const unsigned int f_plus     = face_info[0](i, 3);
+
+            //     // std::cout << cell_minus << "  " << cell_plus << " " << f_minus << "  " <<
+            //     f_plus
+            //     //           << std::endl;
+
+            //     for (unsigned int i = 0; i < Utilities::pow(n_q_points_1d, dim - 1); ++i)
+            //       {
+            //         std::cout << face_normal_derivatives_at_quads[color](i, f_minus, cell_minus)
+            //                   << " | "
+            //                   << face_normal_derivatives_at_quads[color](i, f_plus, cell_plus)
+            //                   << std::endl;
+            //       }
+            //   }
           }
       };
 
