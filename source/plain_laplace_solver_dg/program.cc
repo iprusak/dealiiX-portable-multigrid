@@ -66,7 +66,6 @@ public:
   void
   vmult(VectorType &dst, const VectorType &src) const
   {
-    // std::cout << "LaplaceOperatorCPU::vmult" << std::endl;
     matrix_free->loop(&LaplaceOperatorCPU::cell_operation,
                       &LaplaceOperatorCPU::inner_face_operation,
                       &LaplaceOperatorCPU::boundary_face_operation,
@@ -105,20 +104,19 @@ private:
                  const VectorType                            &src,
                  const std::pair<unsigned int, unsigned int> &cell_range) const
   {
-    // FEEvaluation<dim, -1, 0, 1, Number> eval(matrix_free);
+    FEEvaluation<dim, -1, 0, 1, Number> eval(matrix_free);
 
-    // for (unsigned int cell = cell_range.first; cell < cell_range.second; ++cell)
-    //   {
-    //     eval.reinit(cell);
-    //     eval.gather_evaluate(src,  EvaluationFlags::gradients);
-    //     for (const unsigned int q : eval.quadrature_point_indices())
-    //       {
-    //         const auto grad = eval.get_gradient(q);
-    //         eval.submit_gradient(make_vectorized_array<Number>(1.0) * grad, q);
-    //       }
-    //     eval.integrate_scatter(EvaluationFlags::gradients, dst);
-
-    //   }
+    for (unsigned int cell = cell_range.first; cell < cell_range.second; ++cell)
+      {
+        eval.reinit(cell);
+        eval.gather_evaluate(src, EvaluationFlags::gradients);
+        for (const unsigned int q : eval.quadrature_point_indices())
+          {
+            const auto grad = eval.get_gradient(q);
+            eval.submit_gradient(make_vectorized_array<Number>(1.0) * grad, q);
+          }
+        eval.integrate_scatter(EvaluationFlags::gradients, dst);
+      }
   }
 
   void
@@ -127,13 +125,11 @@ private:
                        const VectorType                            &src,
                        const std::pair<unsigned int, unsigned int> &face_range) const
   {
-    // // std::cout << "LaplaceOperatorCPU::inner_face_operation" << std::endl;
     FEFaceEvaluation<dim, -1, 0, 1, Number> phi_inner(data, true);
     FEFaceEvaluation<dim, -1, 0, 1, Number> phi_outer(data, false);
 
     const int actual_degree = data.get_dof_handler().get_fe().degree;
 
-    // std::cout << "actual_degree = " << actual_degree << std::endl;
     for (unsigned int face = face_range.first; face < face_range.second; ++face)
       {
         phi_inner.reinit(face);
@@ -156,30 +152,19 @@ private:
               (phi_inner.get_normal_derivative(q) + phi_outer.get_normal_derivative(q)) *
               Number(0.5);
 
-            // std::cout << average_normal_derivative << std::endl;
-
             const VectorizedArray<Number> test_by_value =
               solution_jump * sigma - average_normal_derivative;
-
-            // std::cout << sigma << std::endl;
-
-            // std::cout << test_by_value << std::endl;
 
             phi_inner.submit_value(test_by_value, q);
             phi_outer.submit_value(-test_by_value, q);
 
             phi_inner.submit_normal_derivative(-solution_jump * Number(0.5), q);
             phi_outer.submit_normal_derivative(-solution_jump * Number(0.5), q);
-
-            // std::cout<<phi_inner.get_value(q)<<"  | "
-            //          <<phi_outer.get_value(q)<<std::endl;
           }
 
         phi_inner.integrate_scatter(EvaluationFlags::values | EvaluationFlags::gradients, dst);
-        std::cout << std::endl;
 
         phi_outer.integrate_scatter(EvaluationFlags::values | EvaluationFlags::gradients, dst);
-        std::cout << std::endl;
       }
   }
 
@@ -190,40 +175,40 @@ private:
                           const VectorType                            &src,
                           const std::pair<unsigned int, unsigned int> &face_range) const
   {
-    // FEFaceEvaluation<dim, -1, 0, 1, Number> phi_inner(data, true);
+    FEFaceEvaluation<dim, -1, 0, 1, Number> phi_inner(data, true);
 
-    // const int actual_degree = data.get_dof_handler().get_fe().degree;
+    const int actual_degree = data.get_dof_handler().get_fe().degree;
 
 
-    // for (unsigned int face = face_range.first; face < face_range.second; ++face)
-    //   {
-    //     phi_inner.reinit(face);
-    //     phi_inner.gather_evaluate(src, EvaluationFlags::values | EvaluationFlags::gradients);
+    for (unsigned int face = face_range.first; face < face_range.second; ++face)
+      {
+        phi_inner.reinit(face);
+        phi_inner.gather_evaluate(src, EvaluationFlags::values | EvaluationFlags::gradients);
 
-    //     const VectorizedArray<Number> inverse_length_normal_to_face =
-    //       std::abs((phi_inner.normal_vector(0) * phi_inner.inverse_jacobian(0))[dim - 1]);
-    //     const VectorizedArray<Number> sigma =
-    //       inverse_length_normal_to_face * Number(actual_degree * (actual_degree + 1));
-    //     const bool is_dirichlet = (data.get_boundary_id(face) == 0);
+        const VectorizedArray<Number> inverse_length_normal_to_face =
+          std::abs((phi_inner.normal_vector(0) * phi_inner.inverse_jacobian(0))[dim - 1]);
+        const VectorizedArray<Number> sigma =
+          inverse_length_normal_to_face * Number(actual_degree * (actual_degree + 1));
+        const bool is_dirichlet = (data.get_boundary_id(face) == 0);
 
-    //     for (const unsigned int q : phi_inner.quadrature_point_indices())
-    //       {
-    //         const VectorizedArray<Number> u_inner = phi_inner.get_value(q);
-    //         const VectorizedArray<Number> u_outer = is_dirichlet ? -u_inner : u_inner;
-    //         const VectorizedArray<Number> normal_derivative_inner =
-    //           phi_inner.get_normal_derivative(q);
-    //         const VectorizedArray<Number> normal_derivative_outer =
-    //           is_dirichlet ? normal_derivative_inner : -normal_derivative_inner;
-    //         const VectorizedArray<Number> solution_jump = (u_inner - u_outer);
-    //         const VectorizedArray<Number> average_normal_derivative =
-    //           (normal_derivative_inner + normal_derivative_outer) * Number(0.5);
-    //         const VectorizedArray<Number> test_by_value =
-    //           solution_jump * sigma - average_normal_derivative;
-    //         phi_inner.submit_normal_derivative(-solution_jump * Number(0.5), q);
-    //         phi_inner.submit_value(test_by_value, q);
-    //       }
-    //     phi_inner.integrate_scatter(EvaluationFlags::values | EvaluationFlags::gradients, dst);
-    //   }
+        for (const unsigned int q : phi_inner.quadrature_point_indices())
+          {
+            const VectorizedArray<Number> u_inner = phi_inner.get_value(q);
+            const VectorizedArray<Number> u_outer = is_dirichlet ? -u_inner : u_inner;
+            const VectorizedArray<Number> normal_derivative_inner =
+              phi_inner.get_normal_derivative(q);
+            const VectorizedArray<Number> normal_derivative_outer =
+              is_dirichlet ? normal_derivative_inner : -normal_derivative_inner;
+            const VectorizedArray<Number> solution_jump = (u_inner - u_outer);
+            const VectorizedArray<Number> average_normal_derivative =
+              (normal_derivative_inner + normal_derivative_outer) * Number(0.5);
+            const VectorizedArray<Number> test_by_value =
+              solution_jump * sigma - average_normal_derivative;
+            phi_inner.submit_normal_derivative(-solution_jump * Number(0.5), q);
+            phi_inner.submit_value(test_by_value, q);
+          }
+        phi_inner.integrate_scatter(EvaluationFlags::values | EvaluationFlags::gradients, dst);
+      }
   }
 };
 
@@ -242,9 +227,6 @@ private:
 
   void
   setup_matrix_free();
-
-  void
-  setup_smoothers();
 
   void
   assemble_rhs();
@@ -283,14 +265,10 @@ private:
   Portable::LaplaceOperatorDG<dim, fe_degree, fe_degree + 1, double> system_matrix;
   LinearAlgebra::distributed::Vector<double, MemorySpace::Host>      ghost_solution_host;
   LinearAlgebra::distributed::Vector<double, MemorySpace::Default>   solution_device;
-  LinearAlgebra::distributed::Vector<double, MemorySpace::Default>   system_rhs_device;
+  LinearAlgebra::distributed::Vector<double, MemorySpace::Host>      solution_cpu;
 
-  using VectorTypeMG = LinearAlgebra::distributed::Vector<double, MemorySpace::Default>;
-
-  using SmootherType =
-    PreconditionChebyshev<Portable::LaplaceOperatorBase<dim, double>, VectorTypeMG>;
-
-  SmootherType smoother;
+  LinearAlgebra::distributed::Vector<double, MemorySpace::Default> system_rhs_device;
+  LinearAlgebra::distributed::Vector<double, MemorySpace::Host>    system_rhs_cpu;
 
   bool overlap_communication_computation;
 
@@ -355,39 +333,16 @@ LaplaceProblem<dim, fe_degree>::setup_matrix_free()
   system_rhs_device.reinit(solution_device);
   ghost_solution_host.reinit(locally_owned_dofs, locally_relevant_dofs, mpi_communicator);
 
-  std::cout << "Locally owned dofs: " << locally_owned_dofs.n_elements() << std::endl;
-  std::cout << "Locally relevant dofs: " << locally_relevant_dofs.n_elements() << std::endl;
 
-  // for (unsigned int i = 0; i < ghost_solution_host.locally_owned_size(); ++i)
-  //   ghost_solution_host[i] = i;
+  matrix_free_cpu.initialize_dof_vector(system_rhs_cpu);
+  matrix_free_cpu.initialize_dof_vector(solution_cpu);
 
-  // ghost_solution_host.update_ghost_values();
-  // ghost_solution_host.print(std::cout);
-}
-
-template <int dim, int fe_degree>
-void
-LaplaceProblem<dim, fe_degree>::setup_smoothers()
-{
-  // system_matrix.compute_diagonal();
-
-  // typename SmootherType::AdditionalData smoother_data;
-
-  // smoother_data.smoothing_range     = 15.;
-  // smoother_data.degree              = 5;
-  // smoother_data.eig_cg_n_iterations = 10;
-  // smoother_data.preconditioner =
-  // system_matrix.get_matrix_diagonal_inverse();
-
-  // smoother.initialize( system_matrix, smoother_data);
 }
 
 template <int dim, int fe_degree>
 void
 LaplaceProblem<dim, fe_degree>::assemble_rhs()
 {
-  LinearAlgebra::distributed::Vector<double, MemorySpace::Host> system_rhs_host(
-    locally_owned_dofs, locally_relevant_dofs, mpi_communicator);
 
   const QGauss<dim> quadrature_formula(fe_degree + 1);
 
@@ -413,14 +368,14 @@ LaplaceProblem<dim, fe_degree>::assemble_rhs()
               cell_rhs(i) += (fe_values.shape_value(i, q_index) * 1.0 * fe_values.JxW(q_index));
 
           cell->get_dof_indices(local_dof_indices);
-          constraints.distribute_local_to_global(cell_rhs, local_dof_indices, system_rhs_host);
+          constraints.distribute_local_to_global(cell_rhs, local_dof_indices, system_rhs_cpu);
         }
     }
 
-  system_rhs_host.compress(VectorOperation::add);
+  system_rhs_cpu.compress(VectorOperation::add);
   LinearAlgebra::ReadWriteVector<double> rw_vector(locally_owned_dofs);
 
-  rw_vector.import_elements(system_rhs_host, VectorOperation::insert);
+  rw_vector.import_elements(system_rhs_cpu, VectorOperation::insert);
   system_rhs_device.import_elements(rw_vector, VectorOperation::insert);
 
   pcout << "  RHS assembled" << std::endl;
@@ -430,25 +385,33 @@ template <int dim, int fe_degree>
 void
 LaplaceProblem<dim, fe_degree>::solve()
 {
-  // SolverControl solver_control(system_rhs_device.size(),
-  //                              1e-12 * system_rhs_device.l2_norm());
-  // SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>
-  // cg(
-  //   solver_control);
+  SolverControl solver_control(system_rhs_device.size(), 1e-12 * system_rhs_device.l2_norm());
+  SolverControl solver_control_cpu(system_rhs_cpu.size(), 1e-12 * system_rhs_cpu.l2_norm());
 
-  // // cg.solve(*system_matrix, solution_device, system_rhs_device, smoother);
-  // // cg.solve(*system_matrix, solution_device, system_rhs_device, smoother);
+  SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>> cg(solver_control);
+  SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Host>>    cg_cpu(
+    solver_control_cpu);
 
-  // pcout << "  Solver converged in " << solver_control.last_step()
-  //       << " iterations." << std::endl;
+  solution_device = 0;
+  solution_cpu    = 0;
 
-  // LinearAlgebra::ReadWriteVector<double> rw_vector(locally_owned_dofs);
-  // rw_vector.import_elements(solution_device, VectorOperation::insert);
-  // ghost_solution_host.import_elements(rw_vector, VectorOperation::insert);
+  // cg.solve(system_matrix, solution_device, system_rhs_device, smoother);
+  cg.solve(system_matrix, solution_device, system_rhs_device, PreconditionIdentity());
 
-  // constraints.distribute(ghost_solution_host);
+  pcout << "  Solver converged in " << solver_control.last_step() << " iterations." << std::endl;
 
-  // ghost_solution_host.update_ghost_values();
+  cg_cpu.solve(system_matrix_cpu, solution_cpu, system_rhs_cpu, PreconditionIdentity());
+
+  pcout << "  Solver CPU converged in " << solver_control.last_step() << " iterations."
+        << std::endl;
+
+  LinearAlgebra::ReadWriteVector<double> rw_vector(locally_owned_dofs);
+  rw_vector.import_elements(solution_device, VectorOperation::insert);
+  ghost_solution_host.import_elements(rw_vector, VectorOperation::insert);
+
+  constraints.distribute(ghost_solution_host);
+
+  ghost_solution_host.update_ghost_values();
 }
 
 template <int dim, int fe_degree>
@@ -468,20 +431,18 @@ LaplaceProblem<dim, fe_degree>::output_results(const unsigned int cycle) const
   // data_out.write_vtu_with_pvtu_record(
   //   "./", "solution", cycle, mpi_communicator, 2);
 
-  // Vector<float> cellwise_norm(triangulation.n_active_cells());
-  // VectorTools::integrate_difference(dof_handler,
-  //                                   ghost_solution_host,
-  //                                   Functions::ZeroFunction<dim>(),
-  //                                   cellwise_norm,
-  //                                   QGauss<dim>(fe.degree + 2),
-  //                                   VectorTools::L2_norm);
+  Vector<float> cellwise_norm(triangulation.n_active_cells());
+  VectorTools::integrate_difference(dof_handler,
+                                    ghost_solution_host,
+                                    Functions::ZeroFunction<dim>(),
+                                    cellwise_norm,
+                                    QGauss<dim>(fe.degree + 2),
+                                    VectorTools::L2_norm);
 
-  // const double global_norm =
-  //   VectorTools::compute_global_error(triangulation,
-  //                                     cellwise_norm,
-  //                                     VectorTools::L2_norm);
+  const double global_norm =
+    VectorTools::compute_global_error(triangulation, cellwise_norm, VectorTools::L2_norm);
 
-  // pcout << "  solution norm: " << global_norm << std::endl;
+  pcout << "  solution norm: " << global_norm << std::endl;
 }
 
 template <int dim, int fe_degree>
@@ -546,11 +507,22 @@ LaplaceProblem<dim, fe_degree>::test()
 
   op.vmult(dst, src);
 
-  dst_cpu.print(std::cout);
-  // std::cout<<"====================================="<<std::endl<<std::endl;
+  // dst_cpu.print(std::cout);
+  // std::cout << "=====================================" << std::endl << std::endl;
   // dst.print(std::cout);
-  
 
+
+  VecTypeHost err(dst_cpu.get_partitioner());
+
+
+  rw.import_elements(dst, VectorOperation::insert);
+  err.import_elements(rw, VectorOperation::insert);
+
+  err -= dst_cpu;
+
+  std::cout << "dst_cpu.l2_norm = " << dst_cpu.l2_norm() << std::endl;
+  std::cout << "dst.l2_norm     = " << dst.l2_norm() << std::endl;
+  std::cout << "err.l2_norm     = " << err.l2_norm() << std::endl;
 
   // dst_cpu.print(std::cout);
   // dst.print(std::cout);
@@ -561,7 +533,7 @@ LaplaceProblem<dim, fe_degree>::run()
 {
   pcout << "============== fe_degree = " << fe_degree << " ============== \n\n";
 
-  for (unsigned int cycle = 0; cycle < 2; ++cycle)
+  for (unsigned int cycle = 0; cycle < 3; ++cycle)
     {
       pcout << std::endl << std::endl;
       pcout << "Cycle " << cycle << std::endl;
@@ -569,7 +541,7 @@ LaplaceProblem<dim, fe_degree>::run()
       if (cycle == 0)
         {
           GridGenerator::hyper_cube(triangulation, 0., 1.);
-          // triangulation.refine_global(1);
+          triangulation.refine_global(1);
         }
       else
         {
@@ -580,12 +552,12 @@ LaplaceProblem<dim, fe_degree>::run()
       setup_dofs();
       setup_matrix_free();
       // setup_smoothers();
-      // assemble_rhs();
+      assemble_rhs();
 
-      // solve();
-      // output_results(cycle);
+      solve();
+      output_results(cycle);
 
-      test();
+      // test();
 
       pcout << std::endl;
     }
@@ -611,8 +583,8 @@ main(int argc, char *argv[])
     {
       Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
 
-      const int dim           = 2;
-      const int max_fe_degree = 2;
+      const int dim           = 3;
+      const int max_fe_degree = 4;
 
       for (int fe_degree = 1; fe_degree <= max_fe_degree; ++fe_degree)
         {

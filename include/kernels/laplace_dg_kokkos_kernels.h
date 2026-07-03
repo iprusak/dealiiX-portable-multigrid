@@ -122,7 +122,6 @@ namespace BK3
               {
                 s_co_shape_gradients[tid] = d_co_shape_gradients[tid];
               }
-            team_member.team_barrier();
 
             for (int tid = threadIdx; tid < nq; tid += blockSize)
               {
@@ -169,7 +168,7 @@ namespace BK3
                   team_member.team_barrier();
                 }
 
-                // interpolate dof values to quadrature points in each direction
+                // step-2: interpolate dof values to quadrature points in each direction
                 {
                   // direction 0
                   {
@@ -318,7 +317,7 @@ namespace BK3
                     }
                 }
 
-                // interpolate values to faces
+                // step-3: interpolate values to faces and write them to global storage
                 {
                   for (int tid = threadIdx; tid < c_nelmtPerBatch * nq_total_per_face;
                        tid += blockSize)
@@ -361,7 +360,6 @@ namespace BK3
                               v_y[1] += s_quad_to_boundary_value_1[n] * r_q[n];
                               d_y[1] += s_quad_to_boundary_grad_1[n] * r_q[n];
                             }
-
 
                           const int global_cell_id = eb * nelmtPerBatch + e;
 
@@ -429,8 +427,6 @@ namespace BK3
                               d_z[1] += s_quad_to_boundary_grad_1[n] * r_r[n];
                             }
 
-
-
                           const int global_cell_id = eb * nelmtPerBatch + e;
                           const int local_q_id     = m2 * nq + m1;
 
@@ -453,10 +449,11 @@ namespace BK3
                           face_normal_derivatives_at_quads(local_q_id, 5, global_cell_id) = d_z[1];
                         }
                     }
+                  team_member.team_barrier();
                 }
-                team_member.team_barrier();
 
-                // apply geometric factors and compute stiffness contributions at quadrature points
+                // step-4: apply geometric factors and compute stiffness contributions at quadrature
+                // points
                 {
                   constexpr int co_dimension_size = Utilities::pow(nq, dim - 1);
 
@@ -500,6 +497,7 @@ namespace BK3
                                 }
 
                               const int idx = e * nq * nq + q * nq + p;
+
                               // Apply chain rule
                               scratch_grads_0[idx] = Grr * qr + Grs * qs;
                               scratch_grads_1[idx] = Grs * qr + Gss * qs;
@@ -571,7 +569,7 @@ namespace BK3
                   team_member.team_barrier();
                 }
 
-                // apply D^T
+                // step-5: integrate gradient (apply D^T)
                 {
                   constexpr int co_dimension_size = Utilities::pow(nq, dim - 1);
 
@@ -640,9 +638,7 @@ namespace BK3
                     }
                 }
 
-                /*
-                Interpolate to GLL nodes
-                */
+                // step-6: interpolate quad values back to cell dofs
                 {
                   // direction 2
                   if (dim == 3)
@@ -784,10 +780,7 @@ namespace BK3
                     team_member.team_barrier();
                   }
                 }
-                // for (int i = 0; i < nm_total; ++i)
-                //   std::cout << scratch_values[i] << std::endl;
-
-                // step-12 : Copy wsp0 (result) back to global out vector
+                // step-7 : Distribute cell contribution into the global vector
                 for (int tid = threadIdx; tid < c_nelmtPerBatch * nm_total; tid += blockSize)
                   {
                     const int e = tid / nm_total;
@@ -820,16 +813,12 @@ namespace BK3
     template <int dim, int nm, int nq, typename Number>
     void
     compute_inner_faces(
-      const DeviceView<Number>                                            d_shape_values,
       const DeviceView<Number>                                            d_co_shape_gradients,
       const Kokkos::View<Number *[2], MemorySpace::Default::kokkos_space> jacobians_times_normal,
       const Kokkos::View<Number *[2], MemorySpace::Default::kokkos_space> jxw_values,
       const Kokkos::View<Number *, MemorySpace::Default::kokkos_space>    penalty_parameters,
-      const DeviceView<Number>                                            d_in,
-      DeviceView<Number>                                                  d_out,
       Kokkos::View<Number ***, MemorySpace::Default::kokkos_space>        face_values_at_quads,
       Kokkos::View<Number ***, MemorySpace::Default::kokkos_space> face_normal_derivatives_at_quads,
-      const DoFIndicesView                                         dof_indices,
       Kokkos::View<unsigned int *[5], MemorySpace::Default::kokkos_space> face_info,
       const unsigned int                                                  n_faces,
       const unsigned int n_faces_per_batch = numbers::invalid_unsigned_int,
@@ -842,7 +831,7 @@ namespace BK3
       constexpr int shmemPerBlock = 10800; // total shared memory used per block (KB)
 
       constexpr int n_scratch_arrays =
-        2 * (1 + dim) + 2; // values and normal deriatives on both sides of the face + two temp
+        2 * (1 + dim); // values and gradients on both sides of the face
 
       const int nelmt = n_faces;
 
@@ -865,14 +854,18 @@ namespace BK3
                                               static_cast<int>(threads_per_block)));
 
       {
-        const int ssize = nm * nq + // shape values
-                          nq * nq + // co-shape gradients
+        const int ssize = nq * nq + // co-shape gradients
                           n_scratch_arrays * nelmtPerBatch *
                             nq_total_per_face; // working scratch arrays: scratch_values,
                                                // scratch_grads_0, scratch_grads_1
 
-
         const int shmem_size = ssize * sizeof(Number);
+
+        /**
+         * FIXME: store also face and cell indices in scratch memory-- find out how to align memory
+         * properly
+         */
+        //+ 2 * nelmtPerBatch * 4 * sizeof(int);
 
         typedef Kokkos::TeamPolicy<>::member_type member_type;
         Kokkos::TeamPolicy<>                      policy(numBlocks, threadsPerBlock);
@@ -889,13 +882,12 @@ namespace BK3
             constexpr int lookup_tangents_3d[3][2] = {
               {1, 2}, // normal == 0
               {0, 2}, // normal == 1
-              {0, 1}  // normal == 2 (default fallback)
+              {0, 1}  // normal == 2
             };
 
             Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
-            Number *s_shape_values       = scratch;
-            Number *s_co_shape_gradients = s_shape_values + nq * nm;
+            Number *s_co_shape_gradients = scratch;
 
             Number *scratch_values_minus = s_co_shape_gradients + nq * nq;
             Number *scratch_values_plus  = scratch_values_minus + nelmtPerBatch * nq_total_per_face;
@@ -905,19 +897,41 @@ namespace BK3
             Number *scratch_gradients_plus =
               scratch_gradients_minus + nelmtPerBatch * dim * nq_total_per_face;
 
-            Number *scratch_temp_minus =
-              scratch_gradients_plus + nelmtPerBatch * dim * nq_total_per_face;
-            Number *scratch_temp_plus = scratch_temp_minus + nelmtPerBatch * nq_total_per_face;
+            /**
+             * FIXME: store also face and cell indices in scratch memory-- find out how to align
+             * memory properly:
+             *
+             * Gemini suggests the following:
+             */
+
+            // // 1. Get the raw byte-pointer from Kokkos (cast to char* for byte-level math)
+            // char *scratch_base = (char *)team_member.team_shmem().get_shmem(shmem_size);
+
+            // // 2. Assign the Number-based arrays sequentially
+            // Number *s_co_shape_gradients = (Number *)scratch_base;
+            // Number *scratch_values_minus = s_co_shape_gradients + nq * nq;
+            // Number *scratch_values_plus  =
+            // scratch_values_minus + nelmtPerBatch * nq_total_per_face;
+            // Number *scratch_gradients_minus =
+            //   scratch_values_plus + nelmtPerBatch * nq_total_per_face;
+            // Number *scratch_gradients_plus =
+            //   scratch_gradients_minus + nelmtPerBatch * dim * nq_total_per_face;
+
+            // // 3. Find where the Number blocks end (the next free pointer element)
+            // Number *end_of_numbers =
+            //   scratch_gradients_plus + nelmtPerBatch * dim * nq_total_per_face;
+
+            // // 4. Safely cast to int* for your integer arrays.
+            // // (Since Number is usually larger or equal to int in size, this naturally preserves
+            // // alignment)
+            // int *cell_indices = (int *)end_of_numbers;
+            // int *face_indices = cell_indices + 2 * nelmtPerBatch;
+
 
             const int threadIdx = team_member.team_rank();
             const int blockSize = team_member.team_size();
 
             // copy to shared memory
-            for (int tid = threadIdx; tid < nm * nq; tid += blockSize)
-              {
-                s_shape_values[tid] = d_shape_values[tid];
-              }
-
             for (int tid = threadIdx; tid < nq * nq; tid += blockSize)
               {
                 s_co_shape_gradients[tid] = d_co_shape_gradients[tid];
@@ -934,7 +948,8 @@ namespace BK3
                                               (nelmt - eb * nelmtPerBatch) :
                                               nelmtPerBatch;
 
-                // step-1 : Copy quad values and normal derivatives
+                // step-1 : Copy quad values and normal derivatives on both face sides from global
+                // storage
                 {
                   for (int tid = threadIdx; tid < c_nelmtPerBatch * nq_total_per_face;
                        tid += blockSize)
@@ -1087,7 +1102,6 @@ namespace BK3
                                                          q,
                                                        1);
 
-
                               scratch_gradients_minus[e * dim * nq_total_per_face +
                                                       normal_direction * nq_total_per_face +
                                                       q * nq + p] +=
@@ -1182,126 +1196,14 @@ namespace BK3
                   team_member.team_barrier();
                 }
 
-                // integrate normal derivatives
-                // {
-                //   // direction 0
-                //   {
-                //     const int co_dimension_size = Utilities::pow(nq, dim - 2);
-                //     for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
-                //          tid += blockSize)
-                //       {
-                //         const int e = tid / co_dimension_size;
-                //         const int q = tid % co_dimension_size;
-
-                //         const int e_global = eb * nelmtPerBatch + e;
-
-                //         const int cell_minus = face_info(e_global, 0);
-                //         const int cell_plus  = face_info(e_global, 1);
-                //         const int f_minus    = face_info(e_global, 2);
-                //         const int f_plus     = face_info(e_global, 3);
-
-                //         const int normal_direction = f_minus / 2;
-
-                //         // copy to register
-                //         for (int p = 0; p < nq; ++p)
-                //           {
-                //             const int idx = (dim == 2) ? p : p * nq + q;
-
-                //             r_p[p] =
-                //               scratch_gradients_minus[e * nq_total_per_face * dim +
-                //                                       normal_direction * nq_total_per_face +
-                //                                       idx];
-                //             r_q[p] =
-                //               scratch_gradients_plus[e * nq_total_per_face * dim +
-                //                                      normal_direction * nq_total_per_face + idx];
-                //           }
-
-                //         for (int i = 0; i < nm; ++i)
-                //           {
-                //             Number tmp_minus = 0.0;
-                //             Number tmp_plus  = 0.0;
-
-                //             for (int p = 0; p < nq; ++p)
-                //               {
-                //                 tmp_minus += s_shape_values[i * nq + p] * r_p[p];
-                //                 tmp_plus += s_shape_values[i * nq + p] * r_q[p];
-                //               }
-
-                //             if (dim == 2)
-                //               {
-                //                 face_normal_derivatives_at_quads(i, f_minus, cell_minus) =
-                //                   tmp_minus;
-                //                 face_normal_derivatives_at_quads(i, f_plus, cell_plus) =
-                //                 tmp_plus;
-                //               }
-                //             else if (dim == 3)
-                //               {
-                //                 tmp1[e * nm * nq + q * nm + i] = tmp_minus;
-                //                 tmp2[e * nm * nq + q * nm + i] = tmp_plus;
-                //               }
-                //           }
-                //       }
-                //     team_member.team_barrier();
-                //   }
-
-                //   // direction 1
-                //   if (dim == 3)
-                //     {
-                //       const int co_dimension_size = nm;
-
-                //       for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
-                //            tid += blockSize)
-                //         {
-                //           const int e = tid / co_dimension_size;
-                //           const int i = tid % co_dimension_size;
-
-                //           const int e_global = eb * nelmtPerBatch + e;
-
-                //           const int cell_minus = face_info(e_global, 0);
-                //           const int cell_plus  = face_info(e_global, 1);
-                //           const int f_minus    = face_info(e_global, 2);
-                //           const int f_plus     = face_info(e_global, 3);
-
-                //           // copy to register
-                //           for (int q = 0; q < nq; ++q)
-                //             {
-                //               r_p[q] = tmp1[e * nm * nq + q * nm + i];
-                //               r_q[q] = tmp2[e * nm * nq + q * nm + i];
-                //             }
-
-                //           for (int j = 0; j < nm; ++j)
-                //             {
-                //               Number tmp_minus = 0.0;
-                //               Number tmp_plus  = 0.0;
-
-                //               for (int q = 0; q < nq; ++q)
-                //                 {
-                //                   tmp_minus += s_shape_values[j * nq + q] * r_p[q];
-                //                   tmp_plus += s_shape_values[j * nq + q] * r_q[q];
-                //                 }
-
-                //               // scratch_dof_values_minus[e * nm * nm + j * nm + i] = tmp_minus;
-                //               // scratch_dof_values_plus[e * nm * nm + j * nm + i]  = tmp_plus;
-                //               face_normal_derivatives_at_quads(j * nm + i, f_minus, cell_minus) =
-                //                 tmp_minus;
-                //               face_normal_derivatives_at_quads(j * nm + i, f_plus, cell_plus) =
-                //                 tmp_plus;
-                //             }
-                //         }
-                //       team_member.team_barrier();
-                //     }
-                // }
-
-
-                // step-4: integrate tangential derivatives + plus write to global storage
+                // step-4: integrate tangential derivatives +  write to global storage
                 {
                   constexpr int co_dimension_size = Utilities::pow(nq, dim - 2);
                   for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
                        tid += blockSize)
                     {
                       const int e = tid / co_dimension_size;
-                      const int p = tid % co_dimension_size;
-
+                      const int q = tid % co_dimension_size;
 
                       const int e_global = eb * nelmtPerBatch + e;
 
@@ -1322,7 +1224,7 @@ namespace BK3
                       // copy to register
                       for (int n = 0; n < nq; ++n)
                         {
-                          const int idx = (dim == 2) ? n : n * nq + p;
+                          const int idx = (dim == 2) ? n : q * nq + n;
 
                           r_p[n] =
                             scratch_gradients_minus[e * nq_total_per_face * dim +
@@ -1332,18 +1234,21 @@ namespace BK3
                                                    tangent_direction_0 * nq_total_per_face + idx];
 
                           if (dim == 3)
-                            r_r[n] = s_co_shape_gradients[p * nq + n];
+                            r_r[n] = s_co_shape_gradients[q * nq + n];
                         }
 
-                      for (int q = 0; q < nq; ++q)
+                      for (int p = 0; p < nq; ++p)
                         {
-                          Number tmp_minus = 0.0;
-                          Number tmp_plus  = 0.0;
+                          const int idx = (dim == 2) ? p : q * nq + p;
+
+                          // get quad values
+                          Number tmp_minus = scratch_values_minus[e * nq_total_per_face + idx];
+                          Number tmp_plus  = scratch_values_plus[e * nq_total_per_face + idx];
 
                           for (int n = 0; n < nq; ++n)
                             {
-                              tmp_minus += s_co_shape_gradients[q * nq + n] * r_p[n];
-                              tmp_plus += s_co_shape_gradients[q * nq + n] * r_q[n];
+                              tmp_minus += s_co_shape_gradients[p * nq + n] * r_p[n];
+                              tmp_plus += s_co_shape_gradients[p * nq + n] * r_q[n];
                             }
 
                           if (dim == 3)
@@ -1352,23 +1257,17 @@ namespace BK3
                                 tmp_minus +=
                                   scratch_gradients_minus[e * nq_total_per_face * dim +
                                                           tangent_direction_1 * nq_total_per_face +
-                                                          q * nq + n] *
+                                                          n * nq + p] *
                                   r_r[n];
 
                                 tmp_plus +=
                                   scratch_gradients_plus[e * nq_total_per_face * dim +
                                                          tangent_direction_1 * nq_total_per_face +
-                                                         q * nq + n] *
+                                                         n * nq + p] *
                                   r_r[n];
                               }
 
-                          const int idx = (dim == 2) ? q : q * nq + p;
-
-
-                          tmp_minus += scratch_values_minus[e * nq_total_per_face + idx];
-                          tmp_plus += scratch_values_plus[e * nq_total_per_face + idx];
-
-
+                          // write into global storage
                           face_values_at_quads(idx, f_minus, cell_minus) = tmp_minus;
                           face_values_at_quads(idx, f_plus, cell_plus)   = tmp_plus;
 
@@ -1382,105 +1281,8 @@ namespace BK3
                         }
                     }
                   team_member.team_barrier();
-
                 }
 
-                // integrate values
-                {
-                  // direction 0
-                  {
-                    const int co_dimension_size = Utilities::pow(nq, dim - 2);
-                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
-                         tid += blockSize)
-                      {
-                        const int e = tid / co_dimension_size;
-                        const int q = tid % co_dimension_size;
-
-                        const int e_global = eb * nelmtPerBatch + e;
-
-                        const int cell_minus = face_info(e_global, 0);
-                        const int cell_plus  = face_info(e_global, 1);
-                        const int f_minus    = face_info(e_global, 2);
-                        const int f_plus     = face_info(e_global, 3);
-
-                        for (int p = 0; p < nq; ++p)
-                          {
-                            const int idx = (dim == 2) ? e * nq + p : e * nq * nq + q * nq + p;
-
-                            r_p[p] = scratch_values_minus[idx];
-                            r_q[p] = scratch_values_plus[idx];
-                          }
-
-                        for (int i = 0; i < nm; ++i)
-                          {
-                            Number tmp_minus = 0.0;
-                            Number tmp_plus  = 0.0;
-
-                            for (int p = 0; p < nq; ++p)
-                              {
-                                tmp_minus += s_shape_values[i * nq + p] * r_p[p];
-                                tmp_plus += s_shape_values[i * nq + p] * r_q[p];
-                              }
-
-                            if (dim == 2)
-                              {
-                                // scratch_values_minus[e * nm + i] = tmp_minus;
-                                // scratch_values_plus[e * nm + i]  = tmp_plus;
-                                face_values_at_quads(i, f_minus, cell_minus) = tmp_minus;
-                                face_values_at_quads(i, f_plus, cell_plus)   = tmp_plus;
-
-                                // std::cout<<tmp_minus<<" | "<<tmp_plus<<std::endl;
-                              }
-                            else if (dim == 3)
-                              {
-                                tmp1[e * nm * nq + q * nm + i] = tmp_minus;
-                                tmp2[e * nm * nq + q * nm + i] = tmp_plus;
-                              }
-                          }
-                      }
-                    team_member.team_barrier();
-                  }
-
-                  // direction 1
-                  if (dim == 3)
-                    {
-                      const int co_dimension_size = nm;
-
-                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
-                           tid += blockSize)
-                        {
-                          const int e = tid / co_dimension_size;
-                          const int i = tid % co_dimension_size;
-
-                          const int e_global = eb * nelmtPerBatch + e;
-
-                          const int cell_minus = face_info(e_global, 0);
-                          const int cell_plus  = face_info(e_global, 1);
-                          const int f_minus    = face_info(e_global, 2);
-                          const int f_plus     = face_info(e_global, 3);
-
-                          for (int j = 0; j < nm; ++j)
-                            {
-                              Number tmp_minus = 0.0;
-                              Number tmp_plus  = 0.0;
-
-                              for (int q = 0; q < nq; ++q)
-                                {
-                                  const int idx = e * nm * nq + q * nm + i;
-
-                                  tmp_minus += s_shape_values[j * nq + q] * tmp1[idx];
-                                  tmp_plus += s_shape_values[j * nq + q] * tmp2[idx];
-                                }
-
-                              face_values_at_quads(j * nm + i, f_minus, cell_minus) = tmp_minus;
-                              face_values_at_quads(j * nm + i, f_plus, cell_plus)   = tmp_plus;
-                            }
-                        }
-                    }
-                  team_member.team_barrier();
-                }
-                // for(int i=0; i<nm; ++i)
-                // std::cout<<scratch_values_minus[i]<<" | "<<scratch_values_plus[i]<<std::endl;
                 eb += team_member.league_size();
               }
           });
@@ -1492,16 +1294,12 @@ namespace BK3
     template <int dim, int nm, int nq, typename Number>
     void
     compute_boundary_faces(
-      const DeviceView<Number>                                         d_shape_values,
       const DeviceView<Number>                                         d_co_shape_gradients,
       const Kokkos::View<Number *, MemorySpace::Default::kokkos_space> jacobians_times_normal,
       const Kokkos::View<Number *, MemorySpace::Default::kokkos_space> jxw_values,
       const Kokkos::View<Number *, MemorySpace::Default::kokkos_space> penalty_parameters,
-      const DeviceView<Number>                                         d_in,
-      DeviceView<Number>                                               d_out,
       Kokkos::View<Number ***, MemorySpace::Default::kokkos_space>     face_values_at_quads,
       Kokkos::View<Number ***, MemorySpace::Default::kokkos_space> face_normal_derivatives_at_quads,
-      const DoFIndicesView                                         dof_indices,
       Kokkos::View<unsigned int *[5], MemorySpace::Default::kokkos_space> face_info,
       const unsigned int                                                  n_faces,
       const unsigned int n_faces_per_batch = numbers::invalid_unsigned_int,
@@ -1513,8 +1311,7 @@ namespace BK3
       // finding the batch size
       constexpr int shmemPerBlock = 10800; // total shared memory used per block (KB)
 
-      constexpr int n_scratch_arrays =
-        (1 + dim) + 1; // values and gradients on both sides of the face +  tmp
+      constexpr int n_scratch_arrays = (1 + dim); // values and gradients the face
 
       const int nelmt = n_faces;
 
@@ -1537,14 +1334,19 @@ namespace BK3
                                               static_cast<int>(threads_per_block)));
 
       {
-        const int ssize = nm * nq + // shape values
-                          nq * nq + // co-shape gradients
+        const int ssize = nq * nq + // co-shape gradients
                           n_scratch_arrays * nelmtPerBatch *
                             nq_total_per_face; // working scratch arrays: scratch_values,
                                                // scratch_grads_0, scratch_grads_1
 
 
         const int shmem_size = ssize * sizeof(Number);
+
+        /**
+         * FIXME: store also face and cell indices in scratch memory-- find out how to align memory
+         * properly
+         */
+        //+ 2 * nelmtPerBatch * 2 * sizeof(int);
 
         typedef Kokkos::TeamPolicy<>::member_type member_type;
         Kokkos::TeamPolicy<>                      policy(numBlocks, threadsPerBlock);
@@ -1554,36 +1356,26 @@ namespace BK3
           policy, KOKKOS_LAMBDA(member_type team_member) {
             Number r_p[nq];
             Number r_q[nq];
-            Number r_r[nq];
-
 
             // Look up tangent directions based on normal_direction (0, 1, or 2)
             constexpr int lookup_tangents_3d[3][2] = {
               {1, 2}, // normal == 0
               {0, 2}, // normal == 1
-              {0, 1}  // normal == 2 (default fallback)
+              {0, 1}  // normal == 2
             };
 
             Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
-            Number *s_shape_values       = scratch;
-            Number *s_co_shape_gradients = s_shape_values + nq * nm;
+            Number *s_co_shape_gradients = scratch;
 
             Number *scratch_values = s_co_shape_gradients + nq * nq;
 
             Number *scratch_gradients = scratch_values + nelmtPerBatch * nq_total_per_face;
 
-            Number *temp = scratch_gradients + nelmtPerBatch * nq_total_per_face * dim;
-
             const int threadIdx = team_member.team_rank();
             const int blockSize = team_member.team_size();
 
             // copy to shared memory
-            for (int tid = threadIdx; tid < nm * nq; tid += blockSize)
-              {
-                s_shape_values[tid] = d_shape_values[tid];
-              }
-
             for (int tid = threadIdx; tid < nq * nq; tid += blockSize)
               {
                 s_co_shape_gradients[tid] = d_co_shape_gradients[tid];
@@ -1600,7 +1392,7 @@ namespace BK3
                                               (nelmt - eb * nelmtPerBatch) :
                                               nelmtPerBatch;
 
-                // step-1 : Copy quad values and normal derivatives
+                // step-1 : Copy quad values and normal derivatives from global storage
                 {
                   for (int tid = threadIdx; tid < c_nelmtPerBatch * nq_total_per_face;
                        tid += blockSize)
@@ -1621,7 +1413,8 @@ namespace BK3
                         jacobians_times_normal(e_global * dim * nq_total_per_face +
                                                normal_direction * nq_total_per_face + q);
 
-                      scratch_gradients[e * nq_total_per_face + q] =
+                      scratch_gradients[e * dim * nq_total_per_face +
+                                        normal_direction * nq_total_per_face + q] =
                         face_normal_derivatives_at_quads(q, face, cell) * jac_per_n;
                     }
                   team_member.team_barrier();
@@ -1667,7 +1460,9 @@ namespace BK3
                                 jacobians_times_normal(e_global * dim * nq_total_per_face +
                                                        tangent_direction * nq_total_per_face + p);
 
-                              scratch_gradients[e * nq_total_per_face + p] += qr * jac_per_n;
+                              scratch_gradients[e * dim * nq_total_per_face +
+                                                normal_direction * nq_total_per_face + p] +=
+                                qr * jac_per_n;
                             }
                         }
                       else if (dim == 3)
@@ -1706,8 +1501,9 @@ namespace BK3
                                 jacobians_times_normal(e_global * dim * nq_total_per_face +
                                                        tangent_direction_1 * nq_total_per_face + q);
 
-                              scratch_gradients[e * nq_total_per_face + q * nq + p] +=
-                                qr * jac_per_n[0] + qs * jac_per_n[1];
+                              scratch_gradients[e * dim * nq_total_per_face +
+                                                normal_direction * nq_total_per_face + q * nq +
+                                                p] += qr * jac_per_n[0] + qs * jac_per_n[1];
                             }
                         }
                     }
@@ -1727,6 +1523,10 @@ namespace BK3
 
                       const int e_global = eb * nelmtPerBatch + e;
 
+                      const int face = face_info(e_global, 2);
+
+                      const int normal_direction = face / 2;
+
                       const int boundary_id = face_info(e_global, 3);
 
                       Number sigma = penalty_parameters(e_global);
@@ -1735,11 +1535,19 @@ namespace BK3
                       // copy to register
                       for (int n = 0; n < nq; n++)
                         {
-                          const int idx = (dim == 2) ? e * nq + n : e * nq * nq + n * nq + p;
+                          const int idx = (dim == 2) ? n : n * nq + p;
 
-                          Number u_inner, u_outer, normal_derivative_inner, normal_derivative_outer;
-                          u_inner                 = scratch_values[idx];
-                          normal_derivative_inner = scratch_gradients[idx];
+                          const int idx_jump    = e * nq_total_per_face + idx;
+                          const int idx_average = e * dim * nq_total_per_face +
+                                                  normal_direction * nq_total_per_face + idx;
+
+                          Number u_inner                 = 0;
+                          Number u_outer                 = 0;
+                          Number normal_derivative_inner = 0;
+                          Number normal_derivative_outer = 0;
+
+                          u_inner                 = scratch_values[idx_jump];
+                          normal_derivative_inner = scratch_gradients[idx_average];
 
                           if (boundary_id == 0) // is dirichlet boundary
                             {
@@ -1782,119 +1590,28 @@ namespace BK3
                           // submit normal derivatives
                           for (int d = 0; d < dim; ++d)
                             {
-                              scratch_gradients[e * nq_total_per_face + d * nq_total_per_face +
-                                                q_idx] = r_q[n] * jac_per_n[d] * jxw;
+                              scratch_gradients[e * dim * nq_total_per_face +
+                                                d * nq_total_per_face + q_idx] =
+                                r_q[n] * jac_per_n[d] * jxw;
                             }
                         }
                     }
                   team_member.team_barrier();
                 }
 
-                // integrate normal derivatives
-                {
-                  // direction 0
-                  {
-                    const int co_dimension_size = Utilities::pow(nq, dim - 2);
-                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
-                         tid += blockSize)
-                      {
-                        const int e = tid / co_dimension_size;
-                        const int q = tid % co_dimension_size;
-
-                        const int e_global = eb * nelmtPerBatch + e;
-
-                        const int cell = face_info(e_global, 0);
-                        const int face = face_info(e_global, 2);
-
-                        const int normal_direction = face / 2;
-
-                        // copy to register
-                        for (int p = 0; p < nq; ++p)
-                          {
-                            const int idx = (dim == 2) ? p : p * nq + q;
-
-                            r_p[p] = scratch_gradients[e * nq_total_per_face * dim +
-                                                       normal_direction * nq_total_per_face + idx];
-                          }
-
-                        for (int i = 0; i < nm; ++i)
-                          {
-                            Number tmp = 0.0;
-
-                            for (int p = 0; p < nq; ++p)
-                              {
-                                tmp += s_shape_values[i * nq + p] * r_p[p];
-                              }
-
-                            if (dim == 2)
-                              {
-                                face_normal_derivatives_at_quads(i, face, cell) = tmp;
-                              }
-                            else if (dim == 3)
-                              {
-                                temp[e * nm * nq + q * nm + i] = tmp;
-                              }
-                          }
-                      }
-                    team_member.team_barrier();
-                  }
-
-                  // direction 1
-                  if (dim == 3)
-                    {
-                      const int co_dimension_size = nm;
-
-                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
-                           tid += blockSize)
-                        {
-                          const int e = tid / co_dimension_size;
-                          const int i = tid % co_dimension_size;
-
-                          const int e_global = eb * nelmtPerBatch + e;
-
-                          const int cell = face_info(e_global, 0);
-                          const int face = face_info(e_global, 2);
-
-                          const int normal_direction = face / 2;
-
-                          // copy to register
-                          for (int q = 0; q < nq; ++q)
-                            {
-                              r_p[q] = temp[e * nm * nq + q * nm + i];
-                            }
-
-                          for (int j = 0; j < nm; ++j)
-                            {
-                              Number tmp = 0.0;
-
-                              for (int q = 0; q < nq; ++q)
-                                {
-                                  tmp += s_shape_values[j * nq + q] * r_p[q];
-                                }
-
-                              // scratch_dof_values_minus[e * nm * nm + j * nm + i] = tmp_minus;
-                              // scratch_dof_values_plus[e * nm * nm + j * nm + i]  = tmp_plus;
-                              face_normal_derivatives_at_quads(j * nm + i, face, cell) = tmp;
-                            }
-                        }
-                      team_member.team_barrier();
-                    }
-                }
-
-
-                // integrate tangential derivatives
+                // step-4: integrate tangential derivatives +  write to global storage
                 {
                   constexpr int co_dimension_size = Utilities::pow(nq, dim - 2);
                   for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
                        tid += blockSize)
                     {
                       const int e = tid / co_dimension_size;
+                      const int q = tid % co_dimension_size;
 
                       const int e_global = eb * nelmtPerBatch + e;
 
+                      const int cell = face_info(e_global, 0);
                       const int face = face_info(e_global, 2);
-
-                      const int p = tid % co_dimension_size;
 
                       const int normal_direction = face / 2;
 
@@ -1907,22 +1624,25 @@ namespace BK3
                       // copy to register
                       for (int n = 0; n < nq; ++n)
                         {
-                          const int idx = (dim == 2) ? n : n * nq + p;
+                          const int idx = (dim == 2) ? n : q * nq + n;
 
                           r_p[n] = scratch_gradients[e * nq_total_per_face * dim +
                                                      tangent_direction_0 * nq_total_per_face + idx];
 
                           if (dim == 3)
-                            r_q[n] = s_co_shape_gradients[p * nq + n];
+                            r_q[n] = s_co_shape_gradients[q * nq + n];
                         }
 
-                      for (int q = 0; q < nq; ++q)
+                      for (int p = 0; p < nq; ++p)
                         {
-                          Number tmp = 0.0;
+                          const int idx = (dim == 2) ? p : q * nq + p;
+
+                          // get quad values
+                          Number tmp = scratch_values[e * nq_total_per_face + idx];
 
                           for (int n = 0; n < nq; ++n)
                             {
-                              tmp += s_co_shape_gradients[q * nq + n] * r_p[n];
+                              tmp += s_co_shape_gradients[p * nq + n] * r_p[n];
                             }
 
                           if (dim == 3)
@@ -1930,104 +1650,20 @@ namespace BK3
                               {
                                 tmp += scratch_gradients[e * nq_total_per_face * dim +
                                                          tangent_direction_1 * nq_total_per_face +
-                                                         q * nq + n] *
+                                                         n * nq + p] *
                                        r_q[n];
                               }
 
-                          const int idx = (dim == 2) ? e * nq_total_per_face + q :
-                                                       e * nq_total_per_face + q * nq + p;
 
-                          scratch_values[idx] += tmp;
-                        }
-                    }
-                  team_member.team_barrier();
+                          face_values_at_quads(idx, face, cell) = tmp;
 
-                  // for(int i=0; i<nq; ++i)
-                  // std::cout<<scratch_dof_values_minus[i]<<" | "<<scratch_dof_values_plus[i]<<std::endl;
-                }
-
-                // integrate values
-                {
-                  // direction 0
-                  {
-                    const int co_dimension_size = Utilities::pow(nq, dim - 2);
-                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
-                         tid += blockSize)
-                      {
-                        const int e = tid / co_dimension_size;
-                        const int q = tid % co_dimension_size;
-
-                        const int e_global = eb * nelmtPerBatch + e;
-
-                        const int cell = face_info(e_global, 0);
-                        const int face = face_info(e_global, 2);
-
-                        for (int p = 0; p < nq; ++p)
-                          {
-                            const int idx = (dim == 2) ? e * nq + p : e * nq * nq + q * nq + p;
-
-                            r_p[p] = scratch_values[idx];
-                          }
-
-                        for (int i = 0; i < nm; ++i)
-                          {
-                            Number tmp = 0.0;
-
-                            for (int p = 0; p < nq; ++p)
-                              {
-                                tmp += s_shape_values[i * nq + p] * r_p[p];
-                              }
-
-                            if (dim == 2)
-                              {
-                                // scratch_values_minus[e * nm + i] = tmp_minus;
-                                // scratch_values_plus[e * nm + i]  = tmp_plus;
-                                face_values_at_quads(i, face, cell) = tmp;
-                              }
-                            else if (dim == 3)
-                              {
-                                temp[e * nm * nq + q * nm + i] = tmp;
-                              }
-                          }
-                      }
-                    team_member.team_barrier();
-                  }
-
-                  // direction 1
-                  if (dim == 3)
-                    {
-                      const int co_dimension_size = nm;
-
-                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
-                           tid += blockSize)
-                        {
-                          const int e = tid / co_dimension_size;
-                          const int i = tid % co_dimension_size;
-
-                          const int e_global = eb * nelmtPerBatch + e;
-
-                          const int cell = face_info(e_global, 0);
-                          const int face = face_info(e_global, 2);
-
-                          for (int j = 0; j < nm; ++j)
-                            {
-                              Number tmp = 0.0;
-
-                              for (int q = 0; q < nq; ++q)
-                                {
-                                  const int idx = e * nm * nq + q * nm + i;
-
-                                  tmp += s_shape_values[j * nq + q] * temp[idx];
-                                }
-
-                              face_values_at_quads(j * nm + i, face, cell) = tmp;
-                            }
+                          face_normal_derivatives_at_quads(idx, face, cell) =
+                            scratch_gradients[e * nq_total_per_face * dim +
+                                              normal_direction * nq_total_per_face + idx];
                         }
                     }
                   team_member.team_barrier();
                 }
-                // for(int i=0; i<nm; ++i)
-                // std::cout<<scratch_values_minus[i]<<" | "<<scratch_values_plus[i]<<std::endl;
                 eb += team_member.league_size();
               }
           });
@@ -2035,6 +1671,356 @@ namespace BK3
       }
     }
 
+    template <int dim, int nm, int nq, typename Number>
+    void
+    distribute_face_to_global(
+      const DeviceView<Number> d_shape_values,
+      DeviceView<Number>       d_out,
+      const Kokkos::View<Number ***, MemorySpace::Default::kokkos_space>
+        interpolate_quad_to_boundary,
+      const Kokkos::View<Number ***, MemorySpace::Default::kokkos_space> face_values_at_quads,
+      const Kokkos::View<Number ***, MemorySpace::Default::kokkos_space>
+                           face_normal_derivatives_at_quads,
+      const DoFIndicesView dof_indices,
+      const unsigned int   n_cells,
+      const unsigned int   n_cells_per_batch = numbers::invalid_unsigned_int,
+      const unsigned int   n_blocks          = numbers::invalid_unsigned_int,
+      const unsigned int   threads_per_block = numbers::invalid_unsigned_int)
+    {
+      constexpr int nq_total = Utilities::pow(nq, dim);
+
+      constexpr int nm_total = Utilities::pow(nm, dim);
+
+      // finding the batch size
+      constexpr int shmemPerBlock = 10800; // total shared memory used per block (KB)
+
+      constexpr int n_scratch_arrays = dim; // values and 1 temp in 2d / 2 temps in 3d
+
+      const int nelmt = n_cells;
+
+      const int nelmtPerBatch = std::max(1,
+                                         ((n_cells_per_batch == numbers::invalid_unsigned_int) ?
+                                            (shmemPerBlock / (n_scratch_arrays * nq_total) /
+                                             static_cast<int>(sizeof(Number))) :
+                                            static_cast<int>(n_cells_per_batch)));
+
+      const int numBlocks = std::max(1,
+                                     ((n_blocks == numbers::invalid_unsigned_int) ?
+                                        ((nelmt + nelmtPerBatch - 1) / nelmtPerBatch / 2) :
+                                        static_cast<int>(n_blocks)));
+
+
+      const int threadsPerBlock = std::max(1,
+                                           ((threads_per_block == numbers::invalid_unsigned_int) ?
+                                              (Utilities::pow(nq, dim - 1) * nelmtPerBatch) :
+                                              static_cast<int>(threads_per_block)));
+
+
+      {
+        const int ssize =
+          nm * nq + // shape values
+          4 * nq +  // interpolate quad to boundary
+          n_scratch_arrays * nq_total *
+            nelmtPerBatch; // working scratch arrays: scratch_values and temporary vectors
+
+
+        const int shmem_size = ssize * sizeof(Number);
+
+        typedef Kokkos::TeamPolicy<>::member_type member_type;
+        Kokkos::TeamPolicy<>                      policy(numBlocks, threadsPerBlock);
+        policy.set_scratch_size(0, Kokkos::PerTeam(shmem_size));
+
+        Kokkos::parallel_for(
+          policy, KOKKOS_LAMBDA(member_type team_member) {
+            Number r_p[nq];
+
+            Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
+
+            Number *s_shape_values = scratch;
+
+            Number *s_quad_to_boundary_value_0 = s_shape_values + nq * nm;
+            Number *s_quad_to_boundary_value_1 = s_quad_to_boundary_value_0 + nq;
+            Number *s_quad_to_boundary_grad_0  = s_quad_to_boundary_value_1 + nq;
+            Number *s_quad_to_boundary_grad_1  = s_quad_to_boundary_grad_0 + nq;
+
+            Number *scratch_values = s_quad_to_boundary_grad_1 + nq;
+            Number *scratch_temp1  = scratch_values + nelmtPerBatch * nq_total;
+
+            Number *scratch_temp2 = nullptr;
+            if (dim == 3)
+              scratch_temp2 = scratch_temp1 + nelmtPerBatch * nq_total;
+
+
+            const int threadIdx = team_member.team_rank();
+            const int blockSize = team_member.team_size();
+
+            // copy to shared memory
+            for (int tid = threadIdx; tid < nm * nq; tid += blockSize)
+              {
+                s_shape_values[tid] = d_shape_values[tid];
+              }
+
+            for (int tid = threadIdx; tid < nq; tid += blockSize)
+              {
+                s_quad_to_boundary_value_0[tid] = interpolate_quad_to_boundary(0, tid, 0);
+                s_quad_to_boundary_value_1[tid] = interpolate_quad_to_boundary(0, tid, 1);
+
+                s_quad_to_boundary_grad_0[tid] = interpolate_quad_to_boundary(1, tid, 0);
+                s_quad_to_boundary_grad_1[tid] = interpolate_quad_to_boundary(1, tid, 1);
+              }
+            team_member.team_barrier();
+
+
+            /*
+            Interpolate to GL nodes
+            */
+
+            // element batch iteration
+            int eb = team_member.league_rank();
+            while (eb < (nelmt + nelmtPerBatch - 1) / nelmtPerBatch)
+              {
+                // current nelmtPerBatch (edge case, last batch size can be
+                // less)
+                int c_nelmtPerBatch = (eb * nelmtPerBatch + nelmtPerBatch > nelmt) ?
+                                        (nelmt - eb * nelmtPerBatch) :
+                                        nelmtPerBatch;
+
+                for (int tid = threadIdx; tid < c_nelmtPerBatch * nq_total; tid += blockSize)
+                  {
+                    scratch_values[tid] = 0.0;
+                  }
+                team_member.team_barrier();
+
+                // step-1: read face values and normal derivatives from global storage and
+                // interpolate them to cell quad values
+                {
+                  for (int tid = threadIdx; tid < c_nelmtPerBatch * nq_total; tid += blockSize)
+                    {
+                      const int e          = tid / nq_total;
+                      const int q_idx_cell = tid % nq_total;
+
+                      const int r = (dim == 3) ? (q_idx_cell / (nq * nq)) : 0;
+                      const int q =
+                        (dim == 3) ? ((q_idx_cell % (nq * nq) / nq)) : (q_idx_cell / nq);
+                      const int p = q_idx_cell % nq;
+
+                      const int cell_id = eb * nelmtPerBatch + e;
+
+                      Number cell_quad_value = 0.0;
+
+                      // process faces per direction
+                      for (int f = 0; f < dim; ++f)
+                        {
+                          int q_idx_face = 0;
+                          int n_idx      = 0;
+
+                          if (f == 0)
+                            {
+                              q_idx_face = (dim == 3) ? (r * nq + q) : q;
+                              n_idx      = p;
+                            }
+                          else if (f == 1)
+                            {
+                              q_idx_face = (dim == 3) ? (r * nq + p) : p;
+                              n_idx      = q;
+                            }
+                          else if (f == 2)
+                            {
+                              q_idx_face = q * nq + p;
+                              n_idx      = r;
+                            }
+
+                          Number value_0 = face_values_at_quads(q_idx_face, 2 * f, cell_id);
+                          Number value_1 = face_values_at_quads(q_idx_face, 2 * f + 1, cell_id);
+
+                          Number normal_derivative_0 =
+                            face_normal_derivatives_at_quads(q_idx_face, 2 * f, cell_id);
+                          Number normal_derivative_1 =
+                            face_normal_derivatives_at_quads(q_idx_face, 2 * f + 1, cell_id);
+
+                          cell_quad_value +=
+                            s_quad_to_boundary_value_0[n_idx] * value_0 +
+                            s_quad_to_boundary_value_1[n_idx] * value_1 +
+                            s_quad_to_boundary_grad_0[n_idx] * normal_derivative_0 +
+                            s_quad_to_boundary_grad_1[n_idx] * normal_derivative_1;
+                        }
+
+                      scratch_values[tid] = cell_quad_value;
+                    }
+                  team_member.team_barrier();
+                }
+
+                // step-2: interpolate cell quad values to cell dof values
+                {
+                  // direction 2
+                  if (dim == 3)
+                    {
+                      constexpr int co_dimension_size = Utilities::pow(nq, dim - 1);
+
+                      for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                           tid += blockSize)
+                        {
+                          const int e = tid / co_dimension_size;
+
+                          const int q = (tid % co_dimension_size) / nq;
+                          const int p = tid % nq;
+
+                          for (int n = 0; n < nq; ++n)
+                            {
+                              r_p[n] = scratch_values[e * nq * nq * nq + n * nq * nq + q * nq + p];
+                            }
+
+                          for (int k = 0; k < nm; ++k)
+                            {
+                              Number tmp = 0.0;
+
+                              for (int n = 0; n < nq; ++n)
+                                {
+                                  tmp += s_shape_values[k * nq + n] * r_p[n];
+                                }
+
+                              scratch_temp2[e * nq * nq * nm + k * nq * nq + q * nq + p] = tmp;
+                            }
+                        }
+                      team_member.team_barrier();
+                    }
+
+                  //  direction 1
+                  {
+                    constexpr int co_dimension_size = nq * Utilities::pow(nm, dim - 2);
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if (dim == 2)
+                          {
+                            const int p = tid % co_dimension_size;
+
+                            for (int n = 0; n < nq; ++n)
+                              {
+                                r_p[n] = scratch_values[e * nq * nq + n * nq + p];
+                              }
+
+                            for (int j = 0; j < nm; ++j)
+                              {
+                                Number tmp = 0.0;
+
+                                for (int n = 0; n < nq; ++n)
+                                  {
+                                    tmp += s_shape_values[j * nq + n] * r_p[n];
+                                  }
+                                scratch_temp1[e * nq * nm + j * nq + p] = tmp;
+                              }
+                          }
+                        else if (dim == 3)
+                          {
+                            int k = (tid % co_dimension_size) / nq;
+                            int p = tid % nq;
+
+                            for (int n = 0; n < nq; ++n)
+                              {
+                                r_p[n] = scratch_temp2[e * nq * nq * nm + k * nq * nq + n * nq + p];
+                              }
+
+                            for (int j = 0; j < nm; ++j)
+                              {
+                                Number tmp = 0.0;
+
+                                for (int n = 0; n < nq; ++n)
+                                  {
+                                    tmp += s_shape_values[j * nq + n] * r_p[n];
+                                  }
+                                scratch_temp1[e * nq * nm * nm + k * nq * nm + j * nq + p] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+
+                  // direction 0
+                  {
+                    const int co_dimension_size = Utilities::pow(nm, dim - 1);
+
+                    for (int tid = threadIdx; tid < c_nelmtPerBatch * co_dimension_size;
+                         tid += blockSize)
+                      {
+                        const int e = tid / co_dimension_size;
+
+                        if (dim == 2)
+                          {
+                            const int j = tid % co_dimension_size;
+
+                            for (int n = 0; n < nq; ++n)
+                              {
+                                r_p[n] = scratch_temp1[e * nq * nm + j * nq + n];
+                              }
+
+                            for (int i = 0; i < nm; ++i)
+                              {
+                                Number tmp = 0.0;
+                                for (int n = 0; n < nq; ++n)
+                                  {
+                                    tmp += s_shape_values[i * nq + n] * r_p[n];
+                                  }
+                                scratch_values[e * nm * nm + j * nm + i] = tmp;
+                              }
+                          }
+                        else if (dim == 3)
+                          {
+                            int k = (tid % co_dimension_size) / nm;
+                            int j = tid % nm;
+
+                            for (int n = 0; n < nq; ++n)
+                              {
+                                r_p[n] = scratch_temp1[e * nq * nm * nm + k * nq * nm + j * nq + n];
+                              }
+
+                            for (int i = 0; i < nm; ++i)
+                              {
+                                Number tmp = 0.0;
+                                for (int n = 0; n < nq; ++n)
+                                  {
+                                    tmp += s_shape_values[i * nq + n] * r_p[n];
+                                  }
+                                scratch_values[e * nm * nm * nm + k * nm * nm + j * nm + i] = tmp;
+                              }
+                          }
+                      }
+                    team_member.team_barrier();
+                  }
+                }
+
+                // step-3 : distribute results into global vector
+                for (int tid = threadIdx; tid < c_nelmtPerBatch * nm_total; tid += blockSize)
+                  {
+                    const int e = tid / nm_total;
+
+                    const int local_idx = tid % nm_total;
+
+                    const int global_cell_index = eb * nelmtPerBatch + e;
+
+                    // Find where this node lives in the global 'd_out'
+                    // vector
+                    const unsigned int dof_index = dof_indices(local_idx, global_cell_index);
+
+                    if (dof_index != numbers::invalid_unsigned_int)
+                      {
+                        // here we have DG space so we don't need atomic add
+                        // Kokkos::atomic_add(&d_out[dof_index], scratch_values[tid]);
+                        d_out[dof_index] += scratch_values[tid];
+                      }
+                  }
+
+                team_member.team_barrier();
+
+                eb += team_member.league_size();
+              }
+          });
+        Kokkos::fence();
+      }
+    }
   } // namespace DG
 } // namespace BK3
 

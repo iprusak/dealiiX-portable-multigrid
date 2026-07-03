@@ -148,10 +148,11 @@ namespace Portable
 
     // 0 - inner faces, 1 - boundary faces
     Kokkos::Array<Kokkos::View<unsigned int *[5], MemorySpace::Default::kokkos_space>, 2> face_info;
+    Kokkos::View<unsigned int * [2 * dim], MemorySpace::Default::kokkos_space> face_info_per_cell;
     Kokkos::View<Number *[2], MemorySpace::Default::kokkos_space> jacobians_times_normal_inner_face;
     Kokkos::View<Number *, MemorySpace::Default::kokkos_space> jacobians_times_normal_boundary_face;
     Kokkos::View<Number *[2], MemorySpace::Default::kokkos_space> jxw_inner_face;
-    Kokkos::View<Number *[2], MemorySpace::Default::kokkos_space> jxw_boundary_face;
+    Kokkos::View<Number *, MemorySpace::Default::kokkos_space>    jxw_boundary_face;
 
 
     Kokkos::View<Number *, MemorySpace::Default::kokkos_space> penalty_parameters_inner_face;
@@ -222,7 +223,6 @@ namespace Portable
 
       std::vector<double> val_and_der(2);
 
-      std::cout << "******\n";
       for (unsigned int i = 0; i < basis.size(); ++i)
         {
           basis[i].value(0., val_and_der);
@@ -273,10 +273,12 @@ namespace Portable
     unsigned int inner_face_counter    = 0;
     unsigned int boundary_face_counter = 0;
 
-    std::vector<std::array<unsigned int, 5>> inner_faces_v;
-    std::vector<std::array<unsigned int, 5>> boundary_faces_v;
+    std::vector<std::array<unsigned int, 5>>       inner_faces_v;
+    std::vector<std::array<unsigned int, 5>>       boundary_faces_v;
+    std::vector<std::array<unsigned int, 2 * dim>> faces_per_cell;
 
     std::vector<std::pair<unsigned int, unsigned int>> cell_level_index;
+
 
     const auto &triangulation = dof_handler->get_triangulation();
 
@@ -289,16 +291,21 @@ namespace Portable
     {
       std::vector<bool> visited_face(triangulation.n_raw_faces());
 
+      std::array<unsigned int, 2 * dim> f_ids_on_cell;
+
       for (const auto &cell : triangulation.active_cell_iterators())
         {
           if (!cell->is_locally_owned())
             continue;
+
 
           for (const auto f : cell->face_indices())
             {
               const auto &face = cell->face(f);
 
               const unsigned int face_index = face->index();
+
+              f_ids_on_cell[f] = face_index;
 
               if (visited_face[face_index])
                 continue;
@@ -339,6 +346,7 @@ namespace Portable
             }
 
           ++cell_counter;
+          faces_per_cell.push_back(f_ids_on_cell);
           cell_level_index.push_back({cell->level(), cell->index()});
         }
 
@@ -354,6 +362,12 @@ namespace Portable
                    Kokkos::MemoryTraits<Kokkos::Unmanaged>>
         boundary_faces_info_host(boundary_faces_v.data()->data(), boundary_faces_v.size());
 
+      Kokkos::View<unsigned int * [2 * dim],
+                   Kokkos::LayoutRight,
+                   Kokkos::HostSpace,
+                   Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+        face_info_per_cell_host(faces_per_cell.data()->data(), faces_per_cell.size());
+
       face_info[0] = Kokkos::View<unsigned int *[5], MemorySpace::Default::kokkos_space>(
         Kokkos::view_alloc("inner_faces_info", Kokkos::WithoutInitializing), inner_faces_v.size());
 
@@ -361,8 +375,15 @@ namespace Portable
         Kokkos::view_alloc("boundary_faces_info", Kokkos::WithoutInitializing),
         boundary_faces_v.size());
 
+      face_info_per_cell =
+        Kokkos::View<unsigned int * [2 * dim], MemorySpace::Default::kokkos_space>(
+          Kokkos::view_alloc("face_info_per_cell", Kokkos::WithoutInitializing),
+          faces_per_cell.size());
+
       Kokkos::deep_copy(face_info[0], inner_faces_info_host);
       Kokkos::deep_copy(face_info[1], boundary_faces_info_host);
+      Kokkos::deep_copy(face_info_per_cell, face_info_per_cell_host);
+
       Kokkos::fence();
     }
     {
@@ -393,7 +414,7 @@ namespace Portable
         Kokkos::view_alloc("jxw_inner_face", Kokkos::WithoutInitializing),
         inner_faces_v.size() * n_q_points_face);
 
-      jxw_boundary_face = Kokkos::View<Number *[2], MemorySpace::Default::kokkos_space>(
+      jxw_boundary_face = Kokkos::View<Number *, MemorySpace::Default::kokkos_space>(
         Kokkos::view_alloc("jxw_boundary_face", Kokkos::WithoutInitializing),
         boundary_faces_v.size() * n_q_points_face);
 
@@ -500,9 +521,11 @@ namespace Portable
 
               Tensor<1, dim, Number> jac_x_n = inv_jacobian * n;
 
+              jxw_boundary_face_host(f * n_q_points_face + q) = fe_face_values.JxW(q);
+
               for (unsigned int d = 0; d < dim; d++)
                 {
-                  jacobians_times_normal_boundary_face_host(face * dim * n_q_points_face +
+                  jacobians_times_normal_boundary_face_host(f * dim * n_q_points_face +
                                                             d * n_q_points_face + q) = jac_x_n[d];
                 }
             }
@@ -573,42 +596,47 @@ namespace Portable
             const unsigned int n_inner_faces = face_info[0].extent(0);
 
             BK3::DG::compute_inner_faces<dim, fe_degree + 1, n_q_points_1d, Number>(
-              shape_data.shape_values,
               shape_data.shape_gradients_collocation,
               jacobians_times_normal_inner_face,
               jxw_inner_face,
               penalty_parameters_inner_face,
-              src_device,
-              dst_device,
               face_values_at_quads[color],
               face_normal_derivatives_at_quads[color],
-              dof_indices_per_color[color],
               face_info[0],
               n_inner_faces,
               n_cells_per_batch,
               n_blocks,
               threads_per_block);
 
-            // for (unsigned int i = 0; i < face_info[0].extent(0); ++i)
-            //   {
-            //     const unsigned int cell_minus = face_info[0](i, 0);
-            //     const unsigned int cell_plus  = face_info[0](i, 1);
-            //     const unsigned int f_minus    = face_info[0](i, 2);
-            //     const unsigned int f_plus     = face_info[0](i, 3);
+            const unsigned int n_boundary_faces = face_info[1].extent(0);
 
-            //     // std::cout << cell_minus << "  " << cell_plus << " " << f_minus << "  " <<
-            //     f_plus
-            //     //           << std::endl;
+            BK3::DG::compute_boundary_faces<dim, fe_degree + 1, n_q_points_1d, Number>(
+              shape_data.shape_gradients_collocation,
+              jacobians_times_normal_boundary_face,
+              jxw_boundary_face,
+              penalty_parameters_boundary_face,
+              face_values_at_quads[color],
+              face_normal_derivatives_at_quads[color],
+              face_info[1],
+              n_boundary_faces,
+              n_cells_per_batch,
+              n_blocks,
+              threads_per_block);
 
-            //     for (unsigned int i = 0; i < Utilities::pow(n_q_points_1d, dim - 1); ++i)
-            //       {
-            //         std::cout << face_normal_derivatives_at_quads[color](i, f_minus,
-            //         cell_minus)
-            //                   << " | "
-            //                   << face_normal_derivatives_at_quads[color](i, f_plus, cell_plus)
-            //                   << std::endl;
-            //       }
-            //   }
+
+
+            BK3::DG::distribute_face_to_global<dim, fe_degree + 1, n_q_points_1d, Number>(
+              shape_data.shape_values,
+              dst_device,
+              interpolate_quad_to_boundary,
+              face_values_at_quads[color],
+              face_normal_derivatives_at_quads[color],
+              dof_indices_per_color[color],
+              n_cells,
+              n_cells_per_batch,
+              n_blocks,
+              threads_per_block);
+
           }
       };
 
@@ -657,13 +685,6 @@ namespace Portable
     src.zero_out_ghost_values();
     matrix_free.copy_constrained_values(src, dst);
 
-    // dst = 0.;
-
-    // LocalLaplaceOperator<dim, fe_degree, Number> cell_operator;
-
-    // this->cell_loop(cell_operator, src, dst);
-
-    // matrix_free.copy_constrained_values(src, dst);
   }
 
 
