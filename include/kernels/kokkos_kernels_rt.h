@@ -3863,9 +3863,6 @@ namespace Portable
                             const int k = (tid % co_dimension_size) / n_q;
                             const int p = tid % n_q;
 
-                            std::cout << "tid: " << tid % co_dimension_size << ", p: " << p
-                                      << ", k: " << k << std::endl;
-
                             for (int j = 0; j < n_t; ++j)
                               r_p[j] = s_duq_1[e * n_q * n_t * n_t + k * n_q * n_t + j * n_q + p];
 
