@@ -998,16 +998,16 @@ namespace multigrid
 
         compute_rhs();
 
-        // pcout << "Total setup time: " << setup_time << std::endl;
+        pcout << "Total setup time: " << setup_time << std::endl;
 
-        // solve(n_pre_smooth, n_post_smooth);
-        // pcout << std::endl;
+        solve(n_pre_smooth, n_post_smooth);
+        pcout << std::endl;
 
-        // pcout << std::endl;
-        // pcout << std::endl;
-        // matvec_ghost_timing();
-        // pcout << std::endl;
-        // pcout << std::endl;
+        pcout << std::endl;
+        pcout << std::endl;
+        matvec_ghost_timing();
+        pcout << std::endl;
+        pcout << std::endl;
 
         if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
           {
