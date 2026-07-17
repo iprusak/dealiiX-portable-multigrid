@@ -793,7 +793,7 @@ namespace Portable
 
     MemorySpace::Default::kokkos_space::execution_space exec;
 
-    DeviceVector<number> src_device(src.get_values(), src.size()),
+    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
 
     unsigned int scheme_index = 0;
@@ -802,22 +802,23 @@ namespace Portable
         if (scheme.n_coarse_cells == 0)
           continue;
 
-        h_mg_transfer::CellProlongationKernel<dim, fe_degree, number> prolongator;
+        // h_mg_transfer::CellProlongationKernel<dim, fe_degree, number> prolongator;
 
-        auto team_policy = TeamPolicy(exec, scheme.n_coarse_cells, Kokkos::AUTO);
+        // auto team_policy = TeamPolicy(exec, scheme.n_coarse_cells, Kokkos::AUTO);
 
-        h_mg_transfer::ApplyCellKernel<dim, fe_degree, number, Functor> apply_prolongation(
-          prolongator,
-          scheme.prolongation_matrix_shared_memory,
-          scheme.weights,
-          scheme.dof_indices_coarse,
-          scheme.dof_indices_fine,
-          src,
-          dst);
+        // h_mg_transfer::ApplyCellKernel<dim, fe_degree, number, Functor> apply_prolongation(
+        //   prolongator,
+        //   scheme.prolongation_matrix_shared_memory,
+        //   scheme.weights,
+        //   scheme.dof_indices_coarse,
+        //   scheme.dof_indices_fine,
+        //   src,
+        //   dst);
 
-        Kokkos::parallel_for("prolongate_and_add_h_transfer_scheme_" + std::to_string(scheme_index),
-                             team_policy,
-                             apply_prolongation);
+        // Kokkos::parallel_for("prolongate_and_add_h_transfer_scheme_" +
+        // std::to_string(scheme_index),
+        //                      team_policy,
+        //                      apply_prolongation);
 
         constexpr bool is_serial =
           std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
@@ -869,7 +870,7 @@ namespace Portable
 
     MemorySpace::Default::kokkos_space::execution_space exec;
 
-    DeviceVector<number> src_device(src.get_values(), src.size()),
+    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
 
 

@@ -159,7 +159,9 @@ namespace Portable
                                              dof_coarse != numbers::invalid_unsigned_int)
                                            dst_device[dof_fine] += src_device[dof_coarse];
                                        });
+                team_member.team_barrier();
               });
+            Kokkos::fence();
           }
       };
 
@@ -210,6 +212,8 @@ namespace Portable
           }
         // dst.compress(VectorOperation::insert);
       }
+    Kokkos::fence();
+
     src.zero_out_ghost_values();
     // dst.zero_out_ghost_values();
   }
@@ -242,7 +246,6 @@ namespace Portable
 
             using MemberType = typename decltype(team_policy)::member_type;
 
-
             const auto dof_indices_coarse = this->dof_indices_coarse_cg[color];
             const auto dof_indices_fine   = this->dof_indices_fine_dg[color];
 
@@ -265,7 +268,9 @@ namespace Portable
                                            Kokkos::atomic_add(&dst_device[dof_coarse],
                                                               src_device[dof_fine]);
                                        });
+                team_member.team_barrier();
               });
+            Kokkos::fence();
           }
       };
 
@@ -313,8 +318,10 @@ namespace Portable
               do_color(color);
           }
 
+
         dst.compress(VectorOperation::add);
       }
+
     // src.zero_out_ghost_values();
   }
 
@@ -331,7 +338,6 @@ namespace Portable
 
     this->constraints_coarse = &constraints_coarse;
     this->constraints_fine   = &constraints_fine;
-
 
     setup_dof_indices();
   }
@@ -457,6 +463,7 @@ namespace Portable
                     {
                       const auto global_dof_coarse =
                         local_dof_indices_coarse[lex_numbering_coarse[i]];
+
                       const auto global_dof_fine = local_dof_indices_fine[lex_numbering_fine[i]];
 
                       const auto subdomain_local_dof_coarse =

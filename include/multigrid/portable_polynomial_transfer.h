@@ -774,8 +774,7 @@ namespace Portable
     MemorySpace::Default::kokkos_space::execution_space exec;
     using Functor = p_mg_transfer::CellProlongationKernel<dim, p_coarse, p_fine, number>;
 
-
-    DeviceVector<number> src_device(src.get_values(), src.size()),
+    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
 
     const auto &colored_graph = matrix_free_fine->get_colored_graph();
@@ -918,7 +917,7 @@ namespace Portable
 
     const unsigned int n_colors = colored_graph.size();
 
-    DeviceVector<number> src_device(src.get_values(), src.size()),
+    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
 
     constexpr bool is_serial =
