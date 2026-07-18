@@ -421,12 +421,13 @@ namespace Portable
         dst += this->vec_coarse;
     }
 
-     template <int dim, typename number>
+    template <int dim, typename number>
     void
     GeometricTransferCore<dim, number>::prolongate_and_add_dummy(
       VectorType       &dst,
-      const VectorType &src, const bool        ghost_exchange_on,
- const bool        computation_on) const
+      const VectorType &src,
+      const bool        ghost_exchange_on,
+      const bool        computation_on) const
     {
       const bool  use_dst_inplace = this->vec_fine.size() == 0;
       auto *const vec_fine_ptr    = use_dst_inplace ? &dst : &this->vec_fine;
@@ -443,41 +444,44 @@ namespace Portable
 
       const bool src_ghosts_have_been_set = src.has_ghost_elements();
 
-      if(ghost_exchange_on)
-      {
-      if (use_src_inplace == false)
-        this->vec_coarse.copy_locally_owned_data_from(src);
+      if (ghost_exchange_on)
+        {
+          if (use_src_inplace == false)
+            this->vec_coarse.copy_locally_owned_data_from(src);
 
-      if ((use_src_inplace == false) || (src_ghosts_have_been_set == false))
-        this->update_ghost_values(*vec_coarse_ptr);
+          if ((use_src_inplace == false) || (src_ghosts_have_been_set == false))
+            this->update_ghost_values(*vec_coarse_ptr);
+        }
+        
+      if (computation_on)
+        if (use_dst_inplace == false)
+            *vec_fine_ptr = number(0.);
+        
 
-      if (use_dst_inplace == false)
-        *vec_fine_ptr = number(0.);
-      }
+      if (computation_on)
+        this->prolongate_and_add_internal(*vec_fine_ptr, *vec_coarse_ptr);
 
-      if(computation_on)
-      this->prolongate_and_add_internal(*vec_fine_ptr, *vec_coarse_ptr);
+      if (ghost_exchange_on)
+        {
+          if (this->vec_fine_needs_ghost_update || use_dst_inplace == false)
+            this->compress(*vec_fine_ptr, VectorOperation::add);
 
-      if(ghost_exchange_on)
-{
-      if (this->vec_fine_needs_ghost_update || use_dst_inplace == false)
-        this->compress(*vec_fine_ptr, VectorOperation::add);
+          if (use_dst_inplace == false)
+            dst += this->vec_fine;
+        }
 
-      if (use_dst_inplace == false)
-        dst += this->vec_fine;
-}
-
-      if(ghost_exchange_on)
-      if (use_src_inplace && (src_ghosts_have_been_set == false))
-        this->zero_out_ghost_values(*vec_coarse_ptr);
+      if (ghost_exchange_on)
+        if (use_src_inplace && (src_ghosts_have_been_set == false))
+          this->zero_out_ghost_values(*vec_coarse_ptr);
     }
 
     template <int dim, typename number>
     void
     GeometricTransferCore<dim, number>::restrict_and_add_dummy(
       VectorType       &dst,
-      const VectorType &src, const bool        ghost_exchange_on,
- const bool        computation_on) const
+      const VectorType &src,
+      const bool        ghost_exchange_on,
+      const bool        computation_on) const
     {
       const bool        use_src_inplace = this->vec_fine.size() == 0;
       const auto *const vec_fine_ptr = use_src_inplace ? &src : &this->vec_fine;
@@ -493,43 +497,44 @@ namespace Portable
 
       const bool src_ghosts_have_been_set = src.has_ghost_elements();
 
-      if(ghost_exchange_on)
-      {
-      if (use_src_inplace == false)
-        this->vec_fine.copy_locally_owned_data_from(src);
+      if (ghost_exchange_on)
+        {
+          if (use_src_inplace == false)
+            this->vec_fine.copy_locally_owned_data_from(src);
 
-      if ((use_src_inplace == false) ||
-          (vec_fine_needs_ghost_update && (src_ghosts_have_been_set == false)))
-        this->update_ghost_values(*vec_fine_ptr);
-      }
+          if ((use_src_inplace == false) ||
+              (vec_fine_needs_ghost_update &&
+               (src_ghosts_have_been_set == false)))
+            this->update_ghost_values(*vec_fine_ptr);
+        }
 
-    if(computation_on)
-      if (use_dst_inplace == false)
-        *vec_coarse_ptr = number(0.0);
+      if (computation_on)
+        if (use_dst_inplace == false)
+          *vec_coarse_ptr = number(0.0);
 
-          if(ghost_exchange_on)
-      // since we might add into the ghost values and call compress
-      this->zero_out_ghost_values(*vec_coarse_ptr);
-    
-    if(computation_on)
-      this->restrict_and_add_internal(*vec_coarse_ptr, *vec_fine_ptr);
+      if (ghost_exchange_on)
+        // since we might add into the ghost values and call compress
+        this->zero_out_ghost_values(*vec_coarse_ptr);
 
-      if(ghost_exchange_on)
-{
-      // clean up related to update_ghost_values()
-      if (vec_fine_needs_ghost_update == false && use_src_inplace == false)
-        this->zero_out_ghost_values(*vec_fine_ptr); // internal vector (DG)
-      else if (vec_fine_needs_ghost_update && use_src_inplace == false)
-        vec_fine_ptr->set_ghost_state(false); // internal vector (CG)
-      else if (vec_fine_needs_ghost_update &&
-               (src_ghosts_have_been_set == false))
-        this->zero_out_ghost_values(*vec_fine_ptr); // external vector
+      if (computation_on)
+        this->restrict_and_add_internal(*vec_coarse_ptr, *vec_fine_ptr);
 
-      this->compress(*vec_coarse_ptr, VectorOperation::add);
-}
-    if(computation_on)
-      if (use_dst_inplace == false)
-        dst += this->vec_coarse;
+      if (ghost_exchange_on)
+        {
+          // clean up related to update_ghost_values()
+          if (vec_fine_needs_ghost_update == false && use_src_inplace == false)
+            this->zero_out_ghost_values(*vec_fine_ptr); // internal vector (DG)
+          else if (vec_fine_needs_ghost_update && use_src_inplace == false)
+            vec_fine_ptr->set_ghost_state(false); // internal vector (CG)
+          else if (vec_fine_needs_ghost_update &&
+                   (src_ghosts_have_been_set == false))
+            this->zero_out_ghost_values(*vec_fine_ptr); // external vector
+
+          this->compress(*vec_coarse_ptr, VectorOperation::add);
+        }
+      if (computation_on)
+        if (use_dst_inplace == false)
+          dst += this->vec_coarse;
     }
 
 
