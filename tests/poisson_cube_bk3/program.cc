@@ -36,8 +36,6 @@
 #include "multigrid/portable_polynomial_transfer.h"
 #include "operators/portable_laplace_operator.h"
 #include "operators/portable_laplace_operator_bk3.h"
-#include "operators/portable_laplace_operator.h"
-
 #include "portable_multigrid_solver.h"
 
 
@@ -166,6 +164,7 @@ namespace multigrid
     ConvergenceTable convergence_table;
 
     ConvergenceTable ghost_timing_table;
+    ConvergenceTable ghost_timing_table_level;
 
     ConditionalOStream pcout;
 
@@ -745,6 +744,7 @@ namespace multigrid
   }
 
 
+
   template <int dim, int fe_degree>
   void
   LaplaceProblem<dim, fe_degree>::matvec_ghost_timing()
@@ -762,6 +762,8 @@ namespace multigrid
         level_matrices[level]->initialize_dof_vector(dummy_rhs[level]);
       }
 
+    ghost_timing_table_level.clear();
+
     Timer time;
 
     double best_mv_both    = 1e10;
@@ -775,12 +777,8 @@ namespace multigrid
         best_only_comp  = 1e10;
 
         for (unsigned int i = 0; i < 5; ++i)
-          // for (unsigned int i = 0; i < 1; ++i)
           {
-            // const unsigned int n_mv =
-            //   dof_handler.n_dofs() < 10000000 ? 200 : 50;
-
-            const unsigned int n_mv = 1;
+            const unsigned int n_mv = dof_handler.n_dofs() < 10000000 ? 200 : 50;
 
             {
               Kokkos::fence();
@@ -826,6 +824,7 @@ namespace multigrid
               Utilities::MPI::MinMaxAvg stat =
                 Utilities::MPI::min_max_avg(time.wall_time() / n_mv, MPI_COMM_WORLD);
 
+
               best_only_comp = std::min(best_only_comp, stat.max);
             }
           }
@@ -837,7 +836,111 @@ namespace multigrid
                     << "   compute only    =  " << best_only_comp
 
                     << std::endl;
+
+
+        ghost_timing_table_level.add_value("level", level);
+        ghost_timing_table_level.add_value(
+          "cells", level_dof_handlers[level].get_triangulation().n_global_active_cells());
+        ghost_timing_table_level.add_value("dofs", level_dof_handlers[level].n_dofs());
+        ghost_timing_table_level.add_value("mv_ghost_and_compute", best_mv_both);
+        ghost_timing_table_level.add_value("mv_compute_only", best_only_comp);
+        ghost_timing_table_level.add_value("mv_ghost_only", best_only_ghost);
       }
+
+
+    {
+      best_mv_both    = 1e10;
+      best_only_ghost = 1e10;
+      best_only_comp  = 1e10;
+
+      const Portable::LaplaceOperatorBase<dim, full_number> *fine_matrix = nullptr;
+
+      if constexpr (std::is_same_v<full_number, vcycle_number>)
+        {
+          fine_matrix =
+            level_matrices.back().get(); 
+        }
+      else
+        {
+          fine_matrix = fine_level_matrix.get(); 
+        }
+
+      LinearAlgebra::distributed::Vector<full_number, MemorySpace::Default> dummy_solution_fine,
+        dummy_rhs_fine;
+
+      fine_matrix->initialize_dof_vector(dummy_solution_fine);
+
+      fine_matrix->initialize_dof_vector(dummy_rhs_fine);
+
+
+      for (unsigned int i = 0; i < 5; ++i)
+        {
+          const unsigned int n_mv = dof_handler.n_dofs() < 10000000 ? 200 : 50;
+
+          {
+            Kokkos::fence();
+            time.restart();
+            for (unsigned int i = 0; i < n_mv; ++i)
+              fine_matrix->vmult_dummy(dummy_solution_fine,
+                                      dummy_rhs_fine,
+                                      ghost_exchange_on,
+                                      computation_on);
+            Kokkos::fence();
+
+            Utilities::MPI::MinMaxAvg stat =
+              Utilities::MPI::min_max_avg(time.wall_time() / n_mv, MPI_COMM_WORLD);
+
+            best_mv_both = std::min(best_mv_both, stat.max);
+          }
+          {
+            Kokkos::fence();
+            time.restart();
+            for (unsigned int i = 0; i < n_mv; ++i)
+              fine_matrix->vmult_dummy(dummy_solution_fine,
+                                      dummy_rhs_fine,
+                                      ghost_exchange_on,
+                                      !computation_on);
+            Kokkos::fence();
+
+            Utilities::MPI::MinMaxAvg stat =
+              Utilities::MPI::min_max_avg(time.wall_time() / n_mv, MPI_COMM_WORLD);
+
+            best_only_ghost = std::min(best_only_ghost, stat.max);
+          }
+
+          {
+            Kokkos::fence();
+            time.restart();
+            for (unsigned int i = 0; i < n_mv; ++i)
+              fine_matrix->vmult_dummy(dummy_solution_fine,
+                                      dummy_rhs_fine,
+                                      !ghost_exchange_on,
+                                      computation_on);
+            Kokkos::fence();
+
+            Utilities::MPI::MinMaxAvg stat =
+              Utilities::MPI::min_max_avg(time.wall_time() / n_mv, MPI_COMM_WORLD);
+
+            best_only_comp = std::min(best_only_comp, stat.max);
+          }
+        }
+
+      if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+        std::cout << "Best timings for ndof = " << level_dof_handlers.back().n_dofs()
+                  << "   on level " << -1 << "|  ghost & compute =  " << best_mv_both
+                  << "   ghost only      =  " << best_only_ghost
+                  << "   compute only    =  " << best_only_comp << std::endl;
+
+
+
+      ghost_timing_table_level.add_value("level", -1);
+      ghost_timing_table_level.add_value(
+        "cells", level_dof_handlers.back().get_triangulation().n_global_active_cells());
+      ghost_timing_table_level.add_value("dofs", level_dof_handlers.back().n_dofs());
+      ghost_timing_table_level.add_value("mv_ghost_and_compute", best_mv_both);
+      ghost_timing_table_level.add_value("mv_compute_only", best_only_comp);
+      ghost_timing_table_level.add_value("mv_ghost_only", best_only_ghost);
+    }
 
     ghost_timing_table.add_value("cells", triangulation.n_global_active_cells());
     ghost_timing_table.add_value("dofs", dof_handler.n_dofs());
@@ -845,6 +948,8 @@ namespace multigrid
     ghost_timing_table.add_value("mv_compute_only", best_only_comp);
     ghost_timing_table.add_value("mv_ghost_only", best_only_ghost);
   }
+
+
 
   template <int dim, int fe_degree>
   void
@@ -1032,6 +1137,17 @@ namespace multigrid
             ghost_timing_table.set_precision("mv_ghost_only", 4);
 
             ghost_timing_table.write_text(std::cout);
+
+            std::cout << std::endl << std::endl;
+
+            ghost_timing_table_level.set_scientific("mv_ghost_and_compute", true);
+            ghost_timing_table_level.set_precision("mv_ghost_and_compute", 4);
+            ghost_timing_table_level.set_scientific("mv_compute_only", true);
+            ghost_timing_table_level.set_precision("mv_compute_only", 4);
+            ghost_timing_table_level.set_scientific("mv_ghost_only", true);
+            ghost_timing_table_level.set_precision("mv_ghost_only", 4);
+
+            ghost_timing_table_level.write_text(std::cout);
 
             std::cout << std::endl << std::endl;
           }
