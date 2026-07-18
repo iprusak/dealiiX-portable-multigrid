@@ -20,13 +20,31 @@ namespace Portable
 
     virtual void
     prolongate_and_add(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const = 0;
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const = 0;
 
     virtual void
     restrict_and_add(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const = 0;
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const = 0;
+
+    virtual void
+    prolongate_and_add_dummy(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                &src,
+      const bool ghost_exchange_on,
+      const bool computation_on) const = 0;
+
+    virtual void
+    restrict_and_add_dummy(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                &src,
+      const bool ghost_exchange_on,
+      const bool computation_on) const = 0;
 
     virtual void
     reinit(const MatrixFree<dim, number>   &mf_coarse,

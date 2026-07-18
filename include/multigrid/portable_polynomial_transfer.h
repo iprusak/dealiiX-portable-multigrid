@@ -20,13 +20,13 @@ namespace Portable
     template <int dim, typename number>
     struct TransferData
     {
-      using TeamHandle =
-        Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
+      using TeamHandle = Kokkos::TeamPolicy<
+        MemorySpace::Default::kokkos_space::execution_space>::member_type;
 
-      using SharedView =
-        Kokkos::View<number *,
-                     MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
-                     Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+      using SharedView = Kokkos::View<number *,
+                                      MemorySpace::Default::kokkos_space::
+                                        execution_space::scratch_memory_space,
+                                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
       TeamHandle team_member;
 
@@ -34,9 +34,11 @@ namespace Portable
 
       const SharedView &prolongation_matrix;
 
-      const Kokkos::View<number **, MemorySpace::Default::kokkos_space> &weights;
+      const Kokkos::View<number **, MemorySpace::Default::kokkos_space>
+        &weights;
 
-      const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> &dof_indices_coarse;
+      const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
+        &dof_indices_coarse;
 
       const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
         &plain_dof_indices_fine;
@@ -56,27 +58,35 @@ namespace Portable
     };
 
 
-    template <int dim, int p_coarse, int p_fine, typename number, typename Functor>
+    template <int dim,
+              int p_coarse,
+              int p_fine,
+              typename number,
+              typename Functor>
     struct ApplyCellKernel
     {
-      using TeamHandle =
-        Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
+      using TeamHandle = Kokkos::TeamPolicy<
+        MemorySpace::Default::kokkos_space::execution_space>::member_type;
       using SharedViewValues =
         Kokkos::View<number *,
-                     MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
+                     MemorySpace::Default::kokkos_space::execution_space::
+                       scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
       ApplyCellKernel(
         Functor func,
         const Kokkos::View<number *, MemorySpace::Default::kokkos_space>
           prolongation_matrix_shared_memory,
-        const Kokkos::View<number **, MemorySpace::Default::kokkos_space>       weights,
-        const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_coarse,
+        const Kokkos::View<number **, MemorySpace::Default::kokkos_space>
+          weights,
+        const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
+          dof_indices_coarse,
         const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
                    plain_dof_indices_fine,
         const bool use_coloring,
-        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
-        LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst)
+        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                                                                         &src,
+        LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst)
         : func(func)
         , prolongation_matrix_shared_memory(prolongation_matrix_shared_memory)
         , weights(weights)
@@ -94,7 +104,8 @@ namespace Portable
 
       const Kokkos::View<number **, MemorySpace::Default::kokkos_space> weights;
 
-      const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_coarse;
+      const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
+        dof_indices_coarse;
 
       const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
         plain_dof_indices_fine;
@@ -125,21 +136,25 @@ namespace Portable
       {
         const int cell_index = team_member.league_rank();
 
-        SharedViewValues values_coarse(team_member.team_shmem(), Functor::n_local_dofs_coarse);
+        SharedViewValues values_coarse(team_member.team_shmem(),
+                                       Functor::n_local_dofs_coarse);
 
-        SharedViewValues values_fine(team_member.team_shmem(), Functor::n_local_dofs_fine);
+        SharedViewValues values_fine(team_member.team_shmem(),
+                                     Functor::n_local_dofs_fine);
 
         SharedViewValues prolongation_matrix_device(team_member.team_shmem(),
-                                                    (p_coarse + 1) * (p_fine + 1));
+                                                    (p_coarse + 1) *
+                                                      (p_fine + 1));
 
-        SharedViewValues scratch_pad(team_member.team_shmem(), Functor::n_local_dofs_fine);
+        SharedViewValues scratch_pad(team_member.team_shmem(),
+                                     Functor::n_local_dofs_fine);
 
-        Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member, (p_coarse + 1) * (p_fine + 1)),
-                             [&](const int &i)
-                               {
-                                 prolongation_matrix_device(i) =
-                                   prolongation_matrix_shared_memory(i);
-                               });
+        Kokkos::parallel_for(
+          Kokkos::TeamThreadRange(team_member, (p_coarse + 1) * (p_fine + 1)),
+          [&](const int &i) {
+            prolongation_matrix_device(i) =
+              prolongation_matrix_shared_memory(i);
+          });
         team_member.team_barrier();
 
 
@@ -163,13 +178,13 @@ namespace Portable
     class CellProlongationKernel : public EnableObserverPointer
     {
     public:
-      using TeamHandle =
-        Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
+      using TeamHandle = Kokkos::TeamPolicy<
+        MemorySpace::Default::kokkos_space::execution_space>::member_type;
 
-      using SharedView =
-        Kokkos::View<number *,
-                     MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
-                     Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+      using SharedView = Kokkos::View<number *,
+                                      MemorySpace::Default::kokkos_space::
+                                        execution_space::scratch_memory_space,
+                                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
       CellProlongationKernel();
 
@@ -178,12 +193,15 @@ namespace Portable
                  const DeviceVector<number>      &src,
                  DeviceVector<number>            &dst) const;
 
-      static const unsigned int n_local_dofs_coarse = Utilities::pow(p_coarse + 1, dim);
-      static const unsigned int n_local_dofs_fine   = Utilities::pow(p_fine + 1, dim);
+      static const unsigned int n_local_dofs_coarse =
+        Utilities::pow(p_coarse + 1, dim);
+      static const unsigned int n_local_dofs_fine =
+        Utilities::pow(p_fine + 1, dim);
     };
 
     template <int dim, int p_coarse, int p_fine, typename number>
-    CellProlongationKernel<dim, p_coarse, p_fine, number>::CellProlongationKernel()
+    CellProlongationKernel<dim, p_coarse, p_fine, number>::
+      CellProlongationKernel()
     {}
 
     template <int dim, int p_coarse, int p_fine, typename number>
@@ -203,23 +221,24 @@ namespace Portable
       auto &scratch_pad   = transfer_data->scratch_pad;
 
       // read coarse dof values
-      Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member, n_local_dofs_coarse),
-                           [&](const int &i)
-                             {
-                               if (transfer_data->dof_indices_coarse(i, cell_id) ==
-                                   numbers::invalid_unsigned_int)
-                                 values_coarse(i) = 0.;
-                               else
-                                 values_coarse(i) =
-                                   src[transfer_data->dof_indices_coarse(i, cell_id)];
-                             });
+      Kokkos::parallel_for(
+        Kokkos::TeamThreadRange(team_member, n_local_dofs_coarse),
+        [&](const int &i) {
+          if (transfer_data->dof_indices_coarse(i, cell_id) ==
+              numbers::invalid_unsigned_int)
+            values_coarse(i) = 0.;
+          else
+            values_coarse(i) =
+              src[transfer_data->dof_indices_coarse(i, cell_id)];
+        });
       team_member.team_barrier();
 
       // apply kernel in each direction
       if constexpr (dim == 2)
         {
           constexpr int temp_size = (p_coarse + 1) * (p_fine + 1);
-          auto          tmp       = Kokkos::subview(scratch_pad, Kokkos::make_pair(0, temp_size));
+          auto          tmp =
+            Kokkos::subview(scratch_pad, Kokkos::make_pair(0, temp_size));
 
           {
             constexpr int Ni = p_coarse + 1;
@@ -227,27 +246,26 @@ namespace Portable
             constexpr int Nk = p_coarse + 1;
 
             auto thread_policy =
-              Kokkos::TeamThreadMDRange<Kokkos::Rank<2>, TeamHandle>(team_member, Ni, Nj);
-            Kokkos::parallel_for(thread_policy,
-                                 [&](const int i, const int j)
-                                   {
-                                     const int base_kernel   = j;
-                                     const int stride_kernel = p_fine + 1;
+              Kokkos::TeamThreadMDRange<Kokkos::Rank<2>, TeamHandle>(
+                team_member, Ni, Nj);
+            Kokkos::parallel_for(thread_policy, [&](const int i, const int j) {
+              const int base_kernel   = j;
+              const int stride_kernel = p_fine + 1;
 
-                                     const int base_coarse   = i * Nk;
-                                     const int stride_coarse = 1;
+              const int base_coarse   = i * Nk;
+              const int stride_coarse = 1;
 
-                                     number sum = prolongation_matrix(base_kernel) *
-                                                  values_coarse(base_coarse);
+              number sum =
+                prolongation_matrix(base_kernel) * values_coarse(base_coarse);
 
-                                     for (int k = 1; k < Nk; ++k)
-                                       sum += prolongation_matrix(base_kernel + k * stride_kernel) *
-                                              values_coarse(base_coarse + k * stride_coarse);
+              for (int k = 1; k < Nk; ++k)
+                sum += prolongation_matrix(base_kernel + k * stride_kernel) *
+                       values_coarse(base_coarse + k * stride_coarse);
 
-                                     const int index_tmp = i * Nj + j;
+              const int index_tmp = i * Nj + j;
 
-                                     tmp(index_tmp) = sum;
-                                   });
+              tmp(index_tmp) = sum;
+            });
           }
 
           team_member.team_barrier();
@@ -258,36 +276,40 @@ namespace Portable
             constexpr int Nk = p_coarse + 1;
 
             auto thread_policy =
-              Kokkos::TeamThreadMDRange<Kokkos::Rank<2>, TeamHandle>(team_member, Ni, Nj);
-            Kokkos::parallel_for(thread_policy,
-                                 [&](const int i, const int j)
-                                   {
-                                     const int base_kernel   = j;
-                                     const int stride_kernel = p_fine + 1;
+              Kokkos::TeamThreadMDRange<Kokkos::Rank<2>, TeamHandle>(
+                team_member, Ni, Nj);
+            Kokkos::parallel_for(thread_policy, [&](const int i, const int j) {
+              const int base_kernel   = j;
+              const int stride_kernel = p_fine + 1;
 
-                                     const int base_tmp   = i;
-                                     const int stride_tmp = p_fine + 1;
+              const int base_tmp   = i;
+              const int stride_tmp = p_fine + 1;
 
-                                     number sum = prolongation_matrix(base_kernel) * tmp(base_tmp);
+              number sum = prolongation_matrix(base_kernel) * tmp(base_tmp);
 
-                                     for (int k = 1; k < Nk; ++k)
-                                       sum += prolongation_matrix(base_kernel + k * stride_kernel) *
-                                              tmp(base_tmp + k * stride_tmp);
+              for (int k = 1; k < Nk; ++k)
+                sum += prolongation_matrix(base_kernel + k * stride_kernel) *
+                       tmp(base_tmp + k * stride_tmp);
 
-                                     const int index_fine    = i + j * Ni;
-                                     values_fine(index_fine) = sum;
-                                   });
+              const int index_fine    = i + j * Ni;
+              values_fine(index_fine) = sum;
+            });
           }
 
           team_member.team_barrier();
         }
       else if constexpr (dim == 3)
         {
-          constexpr int temp1_size = Utilities::pow(p_coarse + 1, 2) * (p_fine + 1),
-                        temp2_size = Utilities::pow(p_fine + 1, 2) * (p_coarse + 1);
-          auto          tmp1       = Kokkos::subview(scratch_pad, Kokkos::make_pair(0, temp1_size));
-          auto          tmp2 =
-            Kokkos::subview(scratch_pad, Kokkos::make_pair(temp1_size, temp1_size + temp2_size));
+          constexpr int temp1_size =
+                          Utilities::pow(p_coarse + 1, 2) * (p_fine + 1),
+                        temp2_size =
+                          Utilities::pow(p_fine + 1, 2) * (p_coarse + 1);
+          auto          tmp1 =
+            Kokkos::subview(scratch_pad, Kokkos::make_pair(0, temp1_size));
+          auto tmp2 =
+            Kokkos::subview(scratch_pad,
+                            Kokkos::make_pair(temp1_size,
+                                              temp1_size + temp2_size));
 
           {
             constexpr int Ni = p_coarse + 1;
@@ -296,29 +318,29 @@ namespace Portable
             constexpr int Nk = p_coarse + 1;
 
             auto thread_policy =
-              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(team_member, Ni, Nj, Nm);
-            Kokkos::parallel_for(thread_policy,
-                                 [&](const int i, const int j, const int m)
-                                   {
-                                     const int base_kernel   = m;
-                                     const int stride_kernel = p_fine + 1;
+              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(
+                team_member, Ni, Nj, Nm);
+            Kokkos::parallel_for(
+              thread_policy, [&](const int i, const int j, const int m) {
+                const int base_kernel   = m;
+                const int stride_kernel = p_fine + 1;
 
-                                     const int base_coarse   = (i * Nj + j) * Nk;
-                                     const int stride_coarse = 1;
+                const int base_coarse   = (i * Nj + j) * Nk;
+                const int stride_coarse = 1;
 
-                                     number sum = prolongation_matrix(base_kernel) *
-                                                  values_coarse(base_coarse);
+                number sum =
+                  prolongation_matrix(base_kernel) * values_coarse(base_coarse);
 
-                                     for (int k = 1; k < Nk; ++k)
-                                       {
-                                         sum +=
-                                           prolongation_matrix(base_kernel + k * stride_kernel) *
-                                           values_coarse(base_coarse + k * stride_coarse);
-                                       }
+                for (int k = 1; k < Nk; ++k)
+                  {
+                    sum +=
+                      prolongation_matrix(base_kernel + k * stride_kernel) *
+                      values_coarse(base_coarse + k * stride_coarse);
+                  }
 
-                                     const int index_tmp1 = (i * Nj + j) * Nm + m;
-                                     tmp1(index_tmp1)     = sum;
-                                   });
+                const int index_tmp1 = (i * Nj + j) * Nm + m;
+                tmp1(index_tmp1)     = sum;
+              });
           }
 
           team_member.team_barrier();
@@ -330,26 +352,25 @@ namespace Portable
             constexpr int Nk = p_coarse + 1;
 
             auto thread_policy =
-              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(team_member, Ni, Nj, Nm);
-            Kokkos::parallel_for(thread_policy,
-                                 [&](const int i, const int j, const int m)
-                                   {
-                                     const int base_kernel   = m;
-                                     const int stride_kernel = p_fine + 1;
+              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(
+                team_member, Ni, Nj, Nm);
+            Kokkos::parallel_for(
+              thread_policy, [&](const int i, const int j, const int m) {
+                const int base_kernel   = m;
+                const int stride_kernel = p_fine + 1;
 
-                                     const int base_tmp1   = i + j * Ni * Nk;
-                                     const int stride_tmp1 = p_fine + 1;
+                const int base_tmp1   = i + j * Ni * Nk;
+                const int stride_tmp1 = p_fine + 1;
 
-                                     number sum =
-                                       prolongation_matrix(base_kernel) * tmp1(base_tmp1);
+                number sum = prolongation_matrix(base_kernel) * tmp1(base_tmp1);
 
-                                     for (int k = 1; k < Nk; ++k)
-                                       sum += prolongation_matrix(base_kernel + k * stride_kernel) *
-                                              tmp1(base_tmp1 + k * stride_tmp1);
+                for (int k = 1; k < Nk; ++k)
+                  sum += prolongation_matrix(base_kernel + k * stride_kernel) *
+                         tmp1(base_tmp1 + k * stride_tmp1);
 
-                                     const int index_tmp2 = i + (j * Nm + m) * Ni;
-                                     tmp2(index_tmp2)     = sum;
-                                   });
+                const int index_tmp2 = i + (j * Nm + m) * Ni;
+                tmp2(index_tmp2)     = sum;
+              });
           }
 
           team_member.team_barrier();
@@ -361,52 +382,54 @@ namespace Portable
             constexpr int Nk = p_coarse + 1;
 
             auto thread_policy =
-              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(team_member, Ni, Nj, Nm);
-            Kokkos::parallel_for(thread_policy,
-                                 [&](const int i, const int j, const int m)
-                                   {
-                                     const int base_kernel   = m;
-                                     const int stride_kernel = p_fine + 1;
+              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(
+                team_member, Ni, Nj, Nm);
+            Kokkos::parallel_for(
+              thread_policy, [&](const int i, const int j, const int m) {
+                const int base_kernel   = m;
+                const int stride_kernel = p_fine + 1;
 
-                                     const int base_tmp2   = i * Nj + j;
-                                     const int stride_tmp2 = Utilities::pow(p_fine + 1, 2);
+                const int base_tmp2   = i * Nj + j;
+                const int stride_tmp2 = Utilities::pow(p_fine + 1, 2);
 
-                                     number sum =
-                                       prolongation_matrix(base_kernel) * tmp2(base_tmp2);
+                number sum = prolongation_matrix(base_kernel) * tmp2(base_tmp2);
 
-                                     for (int k = 1; k < Nk; ++k)
-                                       sum += prolongation_matrix(base_kernel + k * stride_kernel) *
-                                              tmp2(base_tmp2 + k * stride_tmp2);
+                for (int k = 1; k < Nk; ++k)
+                  sum += prolongation_matrix(base_kernel + k * stride_kernel) *
+                         tmp2(base_tmp2 + k * stride_tmp2);
 
-                                     const int index_fine    = (i + m * Ni) * Nj + j;
-                                     values_fine(index_fine) = sum;
-                                   });
+                const int index_fine    = (i + m * Ni) * Nj + j;
+                values_fine(index_fine) = sum;
+              });
           }
           team_member.team_barrier();
         }
 
       // apply weights
-      Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member, n_local_dofs_fine),
-                           [&](const int &i)
-                             { values_fine(i) *= transfer_data->weights(i, cell_id); });
+      Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member,
+                                                   n_local_dofs_fine),
+                           [&](const int &i) {
+                             values_fine(i) *=
+                               transfer_data->weights(i, cell_id);
+                           });
       team_member.team_barrier();
 
       // distribute fine dofs values
       if (transfer_data->use_coloring)
-        Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member, n_local_dofs_fine),
-                             [&](const int &i)
-                               {
-                                 dst[transfer_data->plain_dof_indices_fine(i, cell_id)] +=
-                                   values_fine(i);
-                               });
+        Kokkos::parallel_for(
+          Kokkos::TeamThreadRange(team_member, n_local_dofs_fine),
+          [&](const int &i) {
+            dst[transfer_data->plain_dof_indices_fine(i, cell_id)] +=
+              values_fine(i);
+          });
       else
-        Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member, n_local_dofs_fine),
-                             [&](const int &i)
-                               {
-                                 Kokkos::atomic_add(
-                                   &dst[transfer_data->plain_dof_indices_fine(i, cell_id)],
-                                   values_fine(i));
-                               });
+        Kokkos::parallel_for(
+          Kokkos::TeamThreadRange(team_member, n_local_dofs_fine),
+          [&](const int &i) {
+            Kokkos::atomic_add(
+              &dst[transfer_data->plain_dof_indices_fine(i, cell_id)],
+              values_fine(i));
+          });
       team_member.team_barrier();
     }
 
@@ -417,13 +440,13 @@ namespace Portable
       using DistributedVectorType =
         LinearAlgebra::distributed::Vector<number, MemorySpace::Default>;
 
-      using TeamHandle =
-        Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
+      using TeamHandle = Kokkos::TeamPolicy<
+        MemorySpace::Default::kokkos_space::execution_space>::member_type;
 
-      using SharedView =
-        Kokkos::View<number *,
-                     MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
-                     Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+      using SharedView = Kokkos::View<number *,
+                                      MemorySpace::Default::kokkos_space::
+                                        execution_space::scratch_memory_space,
+                                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
 
       CellRestrictionKernel();
@@ -433,12 +456,15 @@ namespace Portable
                  const DeviceVector<number>      &src,
                  DeviceVector<number>            &dst) const;
 
-      static const unsigned int n_local_dofs_coarse = Utilities::pow(p_coarse + 1, dim);
-      static const unsigned int n_local_dofs_fine   = Utilities::pow(p_fine + 1, dim);
+      static const unsigned int n_local_dofs_coarse =
+        Utilities::pow(p_coarse + 1, dim);
+      static const unsigned int n_local_dofs_fine =
+        Utilities::pow(p_fine + 1, dim);
     };
 
     template <int dim, int p_coarse, int p_fine, typename number>
-    CellRestrictionKernel<dim, p_coarse, p_fine, number>::CellRestrictionKernel()
+    CellRestrictionKernel<dim, p_coarse, p_fine, number>::
+      CellRestrictionKernel()
     {}
 
     template <int dim, int p_coarse, int p_fine, typename number>
@@ -458,25 +484,29 @@ namespace Portable
       auto &scratch_pad   = transfer_data->scratch_pad;
 
       // read fine dof values
-      Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member, n_local_dofs_fine),
-                           [&](const int &i)
-                             {
-                               values_fine(i) =
-                                 src[transfer_data->plain_dof_indices_fine(i, cell_id)];
-                             });
+      Kokkos::parallel_for(
+        Kokkos::TeamThreadRange(team_member, n_local_dofs_fine),
+        [&](const int &i) {
+          values_fine(i) =
+            src[transfer_data->plain_dof_indices_fine(i, cell_id)];
+        });
       team_member.team_barrier();
 
       // apply weights
-      Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member, n_local_dofs_fine),
-                           [&](const int &i)
-                             { values_fine(i) *= transfer_data->weights(i, cell_id); });
+      Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member,
+                                                   n_local_dofs_fine),
+                           [&](const int &i) {
+                             values_fine(i) *=
+                               transfer_data->weights(i, cell_id);
+                           });
       team_member.team_barrier();
 
       // apply kernel in each direction
       if constexpr (dim == 2)
         {
           constexpr int temp_size = (p_coarse + 1) * (p_fine + 1);
-          auto          tmp       = Kokkos::subview(scratch_pad, Kokkos::make_pair(0, temp_size));
+          auto          tmp =
+            Kokkos::subview(scratch_pad, Kokkos::make_pair(0, temp_size));
 
           {
             constexpr int Ni = p_fine + 1;
@@ -484,27 +514,26 @@ namespace Portable
             constexpr int Nk = p_fine + 1;
 
             auto thread_policy =
-              Kokkos::TeamThreadMDRange<Kokkos::Rank<2>, TeamHandle>(team_member, Ni, Nj);
-            Kokkos::parallel_for(thread_policy,
-                                 [&](const int i, const int j)
-                                   {
-                                     const int base_kernel   = j * (p_fine + 1);
-                                     const int stride_kernel = 1;
+              Kokkos::TeamThreadMDRange<Kokkos::Rank<2>, TeamHandle>(
+                team_member, Ni, Nj);
+            Kokkos::parallel_for(thread_policy, [&](const int i, const int j) {
+              const int base_kernel   = j * (p_fine + 1);
+              const int stride_kernel = 1;
 
-                                     const int base_fine   = i;
-                                     const int stride_fine = p_fine + 1;
+              const int base_fine   = i;
+              const int stride_fine = p_fine + 1;
 
-                                     number sum =
-                                       prolongation_matrix(base_kernel) * values_fine(base_fine);
+              number sum =
+                prolongation_matrix(base_kernel) * values_fine(base_fine);
 
-                                     for (int k = 1; k < Nk; ++k)
-                                       sum += prolongation_matrix(base_kernel + k * stride_kernel) *
-                                              values_fine(base_fine + k * stride_fine);
+              for (int k = 1; k < Nk; ++k)
+                sum += prolongation_matrix(base_kernel + k * stride_kernel) *
+                       values_fine(base_fine + k * stride_fine);
 
-                                     const int index_tmp = i + j * Ni;
+              const int index_tmp = i + j * Ni;
 
-                                     tmp(index_tmp) = sum;
-                                   });
+              tmp(index_tmp) = sum;
+            });
           }
 
           team_member.team_barrier();
@@ -515,36 +544,40 @@ namespace Portable
             constexpr int Nk = p_fine + 1;
 
             auto thread_policy =
-              Kokkos::TeamThreadMDRange<Kokkos::Rank<2>, TeamHandle>(team_member, Ni, Nj);
-            Kokkos::parallel_for(thread_policy,
-                                 [&](const int i, const int j)
-                                   {
-                                     const int base_kernel   = j * (p_fine + 1);
-                                     const int stride_kernel = 1;
+              Kokkos::TeamThreadMDRange<Kokkos::Rank<2>, TeamHandle>(
+                team_member, Ni, Nj);
+            Kokkos::parallel_for(thread_policy, [&](const int i, const int j) {
+              const int base_kernel   = j * (p_fine + 1);
+              const int stride_kernel = 1;
 
-                                     const int base_tmp   = i * Nk;
-                                     const int stride_tmp = 1;
+              const int base_tmp   = i * Nk;
+              const int stride_tmp = 1;
 
-                                     number sum = prolongation_matrix(base_kernel) * tmp(base_tmp);
+              number sum = prolongation_matrix(base_kernel) * tmp(base_tmp);
 
-                                     for (int k = 1; k < Nk; ++k)
-                                       sum += prolongation_matrix(base_kernel + k * stride_kernel) *
-                                              tmp(base_tmp + k * stride_tmp);
+              for (int k = 1; k < Nk; ++k)
+                sum += prolongation_matrix(base_kernel + k * stride_kernel) *
+                       tmp(base_tmp + k * stride_tmp);
 
-                                     const int index_coarse = i * Nj + j;
+              const int index_coarse = i * Nj + j;
 
-                                     values_coarse(index_coarse) = sum;
-                                   });
+              values_coarse(index_coarse) = sum;
+            });
           }
           team_member.team_barrier();
         }
       else if constexpr (dim == 3)
         {
-          constexpr int temp1_size = Utilities::pow(p_fine + 1, 2) * (p_coarse + 1),
-                        temp2_size = Utilities::pow(p_coarse + 1, 2) * (p_fine + 1);
-          auto          tmp1       = Kokkos::subview(scratch_pad, Kokkos::make_pair(0, temp1_size));
-          auto          tmp2 =
-            Kokkos::subview(scratch_pad, Kokkos::make_pair(temp1_size, temp1_size + temp2_size));
+          constexpr int temp1_size =
+                          Utilities::pow(p_fine + 1, 2) * (p_coarse + 1),
+                        temp2_size =
+                          Utilities::pow(p_coarse + 1, 2) * (p_fine + 1);
+          auto          tmp1 =
+            Kokkos::subview(scratch_pad, Kokkos::make_pair(0, temp1_size));
+          auto tmp2 =
+            Kokkos::subview(scratch_pad,
+                            Kokkos::make_pair(temp1_size,
+                                              temp1_size + temp2_size));
           {
             constexpr int Ni = p_fine + 1;
             constexpr int Nj = p_fine + 1;
@@ -552,26 +585,26 @@ namespace Portable
             constexpr int Nk = p_fine + 1;
 
             auto thread_policy =
-              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(team_member, Ni, Nj, Nm);
-            Kokkos::parallel_for(thread_policy,
-                                 [&](const int i, const int j, const int m)
-                                   {
-                                     const int base_kernel   = m * (p_fine + 1);
-                                     const int stride_kernel = 1;
+              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(
+                team_member, Ni, Nj, Nm);
+            Kokkos::parallel_for(
+              thread_policy, [&](const int i, const int j, const int m) {
+                const int base_kernel   = m * (p_fine + 1);
+                const int stride_kernel = 1;
 
-                                     const int base_fine   = i * Nj + j;
-                                     const int stride_fine = Utilities::pow(p_fine + 1, 2);
+                const int base_fine   = i * Nj + j;
+                const int stride_fine = Utilities::pow(p_fine + 1, 2);
 
-                                     number sum =
-                                       prolongation_matrix(base_kernel) * values_fine(base_fine);
+                number sum =
+                  prolongation_matrix(base_kernel) * values_fine(base_fine);
 
-                                     for (int k = 1; k < Nk; ++k)
-                                       sum += prolongation_matrix(base_kernel + k * stride_kernel) *
-                                              values_fine(base_fine + k * stride_fine);
+                for (int k = 1; k < Nk; ++k)
+                  sum += prolongation_matrix(base_kernel + k * stride_kernel) *
+                         values_fine(base_fine + k * stride_fine);
 
-                                     const int index_tmp1 = (i + m * Ni) * Nj + j;
-                                     tmp1(index_tmp1)     = sum;
-                                   });
+                const int index_tmp1 = (i + m * Ni) * Nj + j;
+                tmp1(index_tmp1)     = sum;
+              });
           }
 
           team_member.team_barrier();
@@ -583,26 +616,25 @@ namespace Portable
             constexpr int Nk = p_fine + 1;
 
             auto thread_policy =
-              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(team_member, Ni, Nj, Nm);
-            Kokkos::parallel_for(thread_policy,
-                                 [&](const int i, const int j, const int m)
-                                   {
-                                     const int base_kernel   = m * (p_fine + 1);
-                                     const int stride_kernel = 1;
+              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(
+                team_member, Ni, Nj, Nm);
+            Kokkos::parallel_for(
+              thread_policy, [&](const int i, const int j, const int m) {
+                const int base_kernel   = m * (p_fine + 1);
+                const int stride_kernel = 1;
 
-                                     const int base_tmp1   = i + j * Ni * Nk;
-                                     const int stride_tmp1 = p_fine + 1;
+                const int base_tmp1   = i + j * Ni * Nk;
+                const int stride_tmp1 = p_fine + 1;
 
-                                     number sum =
-                                       prolongation_matrix(base_kernel) * tmp1(base_tmp1);
+                number sum = prolongation_matrix(base_kernel) * tmp1(base_tmp1);
 
-                                     for (int k = 1; k < Nk; ++k)
-                                       sum += prolongation_matrix(base_kernel + k * stride_kernel) *
-                                              tmp1(base_tmp1 + k * stride_tmp1);
+                for (int k = 1; k < Nk; ++k)
+                  sum += prolongation_matrix(base_kernel + k * stride_kernel) *
+                         tmp1(base_tmp1 + k * stride_tmp1);
 
-                                     const int index_tmp2 = i + (j * Nm + m) * Ni;
-                                     tmp2(index_tmp2)     = sum;
-                                   });
+                const int index_tmp2 = i + (j * Nm + m) * Ni;
+                tmp2(index_tmp2)     = sum;
+              });
           }
 
           team_member.team_barrier();
@@ -614,27 +646,26 @@ namespace Portable
             constexpr int Nk = p_fine + 1;
 
             auto thread_policy =
-              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(team_member, Ni, Nj, Nm);
+              Kokkos::TeamThreadMDRange<Kokkos::Rank<3>, TeamHandle>(
+                team_member, Ni, Nj, Nm);
 
-            Kokkos::parallel_for(thread_policy,
-                                 [&](const int i, const int j, const int m)
-                                   {
-                                     const int base_kernel   = m * (p_fine + 1);
-                                     const int stride_kernel = 1;
+            Kokkos::parallel_for(
+              thread_policy, [&](const int i, const int j, const int m) {
+                const int base_kernel   = m * (p_fine + 1);
+                const int stride_kernel = 1;
 
-                                     const int base_tmp2   = (i * Nj + j) * Nk;
-                                     const int stride_tmp2 = 1;
+                const int base_tmp2   = (i * Nj + j) * Nk;
+                const int stride_tmp2 = 1;
 
-                                     number sum =
-                                       prolongation_matrix(base_kernel) * tmp2(base_tmp2);
+                number sum = prolongation_matrix(base_kernel) * tmp2(base_tmp2);
 
-                                     for (int k = 1; k < Nk; ++k)
-                                       sum += prolongation_matrix(base_kernel + k * stride_kernel) *
-                                              tmp2(base_tmp2 + k * stride_tmp2);
+                for (int k = 1; k < Nk; ++k)
+                  sum += prolongation_matrix(base_kernel + k * stride_kernel) *
+                         tmp2(base_tmp2 + k * stride_tmp2);
 
-                                     const int index_coarse      = (i * Nj + j) * Nm + m;
-                                     values_coarse(index_coarse) = sum;
-                                   });
+                const int index_coarse      = (i * Nj + j) * Nm + m;
+                values_coarse(index_coarse) = sum;
+              });
           }
 
           team_member.team_barrier();
@@ -642,23 +673,24 @@ namespace Portable
 
       // distribute coarse dofs values
       if (transfer_data->use_coloring)
-        Kokkos::parallel_for(Kokkos::TeamThreadRange(team_member, n_local_dofs_coarse),
-                             [&](const int &i)
-                               {
-                                 if (transfer_data->dof_indices_coarse(i, cell_id) !=
-                                     numbers::invalid_unsigned_int)
-                                   dst[transfer_data->dof_indices_coarse(i, cell_id)] +=
-                                     values_coarse(i);
-                               });
+        Kokkos::parallel_for(
+          Kokkos::TeamThreadRange(team_member, n_local_dofs_coarse),
+          [&](const int &i) {
+            if (transfer_data->dof_indices_coarse(i, cell_id) !=
+                numbers::invalid_unsigned_int)
+              dst[transfer_data->dof_indices_coarse(i, cell_id)] +=
+                values_coarse(i);
+          });
       else
         Kokkos::parallel_for(
           Kokkos::TeamThreadRange(team_member, n_local_dofs_coarse),
-          [&](const int &i)
-            {
-              if (transfer_data->dof_indices_coarse(i, cell_id) != numbers::invalid_unsigned_int)
-                Kokkos::atomic_add(&dst[transfer_data->dof_indices_coarse(i, cell_id)],
-                                   values_coarse(i));
-            });
+          [&](const int &i) {
+            if (transfer_data->dof_indices_coarse(i, cell_id) !=
+                numbers::invalid_unsigned_int)
+              Kokkos::atomic_add(
+                &dst[transfer_data->dof_indices_coarse(i, cell_id)],
+                values_coarse(i));
+          });
       team_member.team_barrier();
     }
   } // namespace p_mg_transfer
@@ -671,14 +703,33 @@ namespace Portable
 
     void
     prolongate_and_add(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const override;
 
     void
     restrict_and_add(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const override;
 
+
+    void
+    prolongate_and_add_dummy(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                &src,
+      const bool ghost_exchange_on,
+      const bool computation_on) const override;
+
+
+    void
+    restrict_and_add_dummy(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                &src,
+      const bool ghost_exchange_on,
+      const bool computation_on) const override;
     void
     reinit(const MatrixFree<dim, number>   &mf_coarse,
            const MatrixFree<dim, number>   &mf_fine,
@@ -688,13 +739,32 @@ namespace Portable
   private:
     void
     prolongate_and_add_internal(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const;
 
     void
     restrict_and_add_internal(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const;
+
+    void
+    prolongate_and_add_internal_dummy(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                &src,
+      const bool ghost_exchange_on,
+      const bool computation_on) const;
+
+    void
+    restrict_and_add_internal_dummy(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                &src,
+      const bool ghost_exchange_on,
+      const bool computation_on) const;
+
 
     void
     setup_weights_and_dof_indices();
@@ -705,17 +775,22 @@ namespace Portable
     ObserverPointer<const AffineConstraints<number>> constraints_fine;
     ObserverPointer<const AffineConstraints<number>> constraints_coarse;
 
-    Kokkos::View<number *, MemorySpace::Default::kokkos_space> prolongation_matrix_1d;
+    Kokkos::View<number *, MemorySpace::Default::kokkos_space>
+      prolongation_matrix_1d;
 
-    std::vector<Kokkos::View<int *, MemorySpace::Default::kokkos_space>> cell_lists_fine_to_coarse;
+    std::vector<Kokkos::View<int *, MemorySpace::Default::kokkos_space>>
+      cell_lists_fine_to_coarse;
 
-    std::vector<Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>>
+    std::vector<
+      Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>>
       dof_indices_coarse;
 
-    std::vector<Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>>
+    std::vector<
+      Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>>
       plain_dof_indices_fine;
 
-    std::vector<Kokkos::View<number **, MemorySpace::Default::kokkos_space>> weights_view_kokkos;
+    std::vector<Kokkos::View<number **, MemorySpace::Default::kokkos_space>>
+      weights_view_kokkos;
   };
 
   template <int dim, int p_coarse, int p_fine, typename number>
@@ -726,53 +801,64 @@ namespace Portable
   void
   PolynomialTransfer<dim, p_coarse, p_fine, number>::prolongate_and_add(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
+    const
   {
-    // Assert(dst.get_partitioner() == matrix_free_fine->get_vector_partitioner(),
-    //        ExcMessage("Fine vector is not initialized correctly."));
-    // Assert(src.get_partitioner() == matrix_free_coarse->get_vector_partitioner(),
-    //        ExcMessage("Coarse vector is not initialized correctly."));
-
-
     this->prolongate_and_add_internal(dst, src);
-
-    // Assert(dst.get_partitioner() == matrix_free_fine->get_vector_partitioner(),
-    //        ExcMessage("Fine vector is not handled correclty after prolongation."));
-
-    // Assert(src.get_partitioner() == matrix_free_coarse->get_vector_partitioner(),
-    //        ExcMessage("Coarse vector is not handled correclty after prolongation."));
   }
 
   template <int dim, int p_coarse, int p_fine, typename number>
   void
   PolynomialTransfer<dim, p_coarse, p_fine, number>::restrict_and_add(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
+    const
   {
-    // Assert(dst.get_partitioner() == matrix_free_coarse->get_vector_partitioner(),
-    //        ExcMessage("Coarse vector is not initialized correctly."));
-
-    // Assert(src.get_partitioner() == matrix_free_fine->get_vector_partitioner(),
-    //        ExcMessage("Fine vector is not initialized correctly."));
-
     this->restrict_and_add_internal(dst, src);
-
-    // Assert(dst.get_partitioner() == matrix_free_coarse->get_vector_partitioner(),
-    //        ExcMessage("Coarse vector is not handled correclty after restrtiction."));
-
-    // Assert(src.get_partitioner() == matrix_free_fine->get_vector_partitioner(),
-    //        ExcMessage("Fine vector is not handled correclty after restrtiction."));
   }
 
 
   template <int dim, int p_coarse, int p_fine, typename number>
   void
-  PolynomialTransfer<dim, p_coarse, p_fine, number>::prolongate_and_add_internal(
+  PolynomialTransfer<dim, p_coarse, p_fine, number>::prolongate_and_add_dummy(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
+    const bool ghost_exchange_on,
+    const bool computation_on) const
+  {
+    this->prolongate_and_add_internal_dummy(dst,
+                                            src,
+                                            ghost_exchange_on,
+                                            computation_on);
+  }
+
+
+  template <int dim, int p_coarse, int p_fine, typename number>
+  void
+  PolynomialTransfer<dim, p_coarse, p_fine, number>::restrict_and_add_dummy(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
+    const bool ghost_exchange_on,
+    const bool computation_on) const
+  {
+    this->restrict_and_add_internal_dummy(dst,
+                                          src,
+                                          ghost_exchange_on,
+                                          computation_on);
+  }
+
+
+  template <int dim, int p_coarse, int p_fine, typename number>
+  void
+  PolynomialTransfer<dim, p_coarse, p_fine, number>::
+    prolongate_and_add_internal(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        &src) const
   {
     MemorySpace::Default::kokkos_space::execution_space exec;
-    using Functor = p_mg_transfer::CellProlongationKernel<dim, p_coarse, p_fine, number>;
+    using Functor =
+      p_mg_transfer::CellProlongationKernel<dim, p_coarse, p_fine, number>;
 
     DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
@@ -782,7 +868,8 @@ namespace Portable
     const unsigned int n_colors = colored_graph.size();
 
     constexpr bool is_serial =
-      std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
+      std::is_same<Kokkos::DefaultExecutionSpace,
+                   Kokkos::DefaultHostExecutionSpace>::value;
 
     unsigned int numBlocks       = numbers::invalid_unsigned_int;
     unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
@@ -793,66 +880,69 @@ namespace Portable
       }
 
     // helper to process one color
-    auto do_color = [&](const unsigned int color)
-      {
-        const auto n_cells = colored_graph[color].size();
+    auto do_color = [&](const unsigned int color) {
+      const auto n_cells = colored_graph[color].size();
 
-        if (n_cells > 0)
-          {
-            // using TeamPolicy = Kokkos::TeamPolicy<
-            //   MemorySpace::Default::kokkos_space::execution_space>;
-
-
-            // const bool use_coloring =
-            //   (n_colors > 1) &&
-            //   !matrix_free_fine->use_overlap_communication_computation();
-
-            // Functor cell_prolongator;
-
-            // auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
-
-            // p_mg_transfer::
-            //   ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
-            //     apply_kernel(cell_prolongator,
-            //                  this->prolongation_matrix_1d,
-            //                  this->weights_view_kokkos[color],
-            //                  this->dof_indices_coarse[color],
-            //                  this->plain_dof_indices_fine[color],
-            //                  use_coloring,
-            //                  src,
-            //                  dst);
-
-            // Kokkos::parallel_for(
-            //   "dealii::MatrixFree::prolongate_and_add_color " +
-            //     std::to_string(color),
-            //   team_policy,
-            //   apply_kernel);
+      if (n_cells > 0)
+        {
+          // using TeamPolicy = Kokkos::TeamPolicy<
+          //   MemorySpace::Default::kokkos_space::execution_space>;
 
 
+          // const bool use_coloring =
+          //   (n_colors > 1) &&
+          //   !matrix_free_fine->use_overlap_communication_computation();
 
-            // BK1::Parallel::KokkosProlongationKernel<dim, p_coarse + 1, p_fine + 1, number>(
-            //   this->prolongation_matrix_1d,
-            //   src_device,
-            //   dst_device,
-            //   this->dof_indices_coarse[color],
-            //   this->plain_dof_indices_fine[color],
-            //   this->weights_view_kokkos[color],
-            //   n_cells,
-            //   numBlocks,
-            //   threadsPerBlock);
+          // Functor cell_prolongator;
 
-            BK1::Parallel::KokkosProlongationBatchedKernel<dim, p_coarse + 1, p_fine + 1, number>(
-              this->prolongation_matrix_1d,
-              src_device,
-              dst_device,
-              this->dof_indices_coarse[color],
-              this->plain_dof_indices_fine[color],
-              this->weights_view_kokkos[color],
-              n_cells,
-              numBlocks,
-              threadsPerBlock);
-          }
-      };
+          // auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
+
+          // p_mg_transfer::
+          //   ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
+          //     apply_kernel(cell_prolongator,
+          //                  this->prolongation_matrix_1d,
+          //                  this->weights_view_kokkos[color],
+          //                  this->dof_indices_coarse[color],
+          //                  this->plain_dof_indices_fine[color],
+          //                  use_coloring,
+          //                  src,
+          //                  dst);
+
+          // Kokkos::parallel_for(
+          //   "dealii::MatrixFree::prolongate_and_add_color " +
+          //     std::to_string(color),
+          //   team_policy,
+          //   apply_kernel);
+
+
+
+          // BK1::Parallel::KokkosProlongationKernel<dim, p_coarse + 1, p_fine
+          // + 1, number>(
+          //   this->prolongation_matrix_1d,
+          //   src_device,
+          //   dst_device,
+          //   this->dof_indices_coarse[color],
+          //   this->plain_dof_indices_fine[color],
+          //   this->weights_view_kokkos[color],
+          //   n_cells,
+          //   numBlocks,
+          //   threadsPerBlock);
+
+          BK1::Parallel::KokkosProlongationBatchedKernel<dim,
+                                                         p_coarse + 1,
+                                                         p_fine + 1,
+                                                         number>(
+            this->prolongation_matrix_1d,
+            src_device,
+            dst_device,
+            this->dof_indices_coarse[color],
+            this->plain_dof_indices_fine[color],
+            this->weights_view_kokkos[color],
+            n_cells,
+            numBlocks,
+            threadsPerBlock);
+        }
+    };
 
     if (matrix_free_fine->use_overlap_communication_computation())
       {
@@ -904,14 +994,18 @@ namespace Portable
     src.zero_out_ghost_values();
   }
 
+
+
   template <int dim, int p_coarse, int p_fine, typename number>
   void
   PolynomialTransfer<dim, p_coarse, p_fine, number>::restrict_and_add_internal(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
+    const
   {
     MemorySpace::Default::kokkos_space::execution_space exec;
-    using Functor = p_mg_transfer::CellRestrictionKernel<dim, p_coarse, p_fine, number>;
+    using Functor =
+      p_mg_transfer::CellRestrictionKernel<dim, p_coarse, p_fine, number>;
 
     const auto &colored_graph = matrix_free_fine->get_colored_graph();
 
@@ -921,7 +1015,8 @@ namespace Portable
       dst_device(dst.get_values(), dst.locally_owned_size());
 
     constexpr bool is_serial =
-      std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
+      std::is_same<Kokkos::DefaultExecutionSpace,
+                   Kokkos::DefaultHostExecutionSpace>::value;
 
     unsigned int numBlocks       = numbers::invalid_unsigned_int;
     unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
@@ -931,65 +1026,68 @@ namespace Portable
         threadsPerBlock = 1u;
       }
 
-    auto do_color = [&](const unsigned int color)
-      {
-        const auto n_cells = colored_graph[color].size();
+    auto do_color = [&](const unsigned int color) {
+      const auto n_cells = colored_graph[color].size();
 
-        if (n_cells > 0)
-          {
-            // const bool use_coloring =
-            //   (n_colors > 1) &&
-            //   !matrix_free_fine->use_overlap_communication_computation();
+      if (n_cells > 0)
+        {
+          // const bool use_coloring =
+          //   (n_colors > 1) &&
+          //   !matrix_free_fine->use_overlap_communication_computation();
 
-            // using TeamPolicy = Kokkos::TeamPolicy<
-            //   MemorySpace::Default::kokkos_space::execution_space>;
+          // using TeamPolicy = Kokkos::TeamPolicy<
+          //   MemorySpace::Default::kokkos_space::execution_space>;
 
-            // Functor cell_restrictor;
+          // Functor cell_restrictor;
 
-            // auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
+          // auto team_policy = TeamPolicy(exec, n_cells, Kokkos::AUTO);
 
-            // p_mg_transfer::
-            //   ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
-            //     apply_kernel(cell_restrictor,
-            //                  this->prolongation_matrix_1d,
-            //                  this->weights_view_kokkos[color],
-            //                  this->dof_indices_coarse[color],
-            //                  this->plain_dof_indices_fine[color],
-            //                  use_coloring,
-            //                  src,
-            //                  dst);
+          // p_mg_transfer::
+          //   ApplyCellKernel<dim, p_coarse, p_fine, number, Functor>
+          //     apply_kernel(cell_restrictor,
+          //                  this->prolongation_matrix_1d,
+          //                  this->weights_view_kokkos[color],
+          //                  this->dof_indices_coarse[color],
+          //                  this->plain_dof_indices_fine[color],
+          //                  use_coloring,
+          //                  src,
+          //                  dst);
 
-            // Kokkos::parallel_for(
-            //   "dealii::MatrixFree::prolongate_and_add_color " +
-            //     std::to_string(color),
-            //   team_policy,
-            //   apply_kernel);
-
+          // Kokkos::parallel_for(
+          //   "dealii::MatrixFree::prolongate_and_add_color " +
+          //     std::to_string(color),
+          //   team_policy,
+          //   apply_kernel);
 
 
-            // BK1::Parallel::KokkosRestrictionKernel<dim, p_coarse + 1, p_fine + 1, number>(
-            //   this->prolongation_matrix_1d,
-            //   src_device,
-            //   dst_device,
-            //   this->dof_indices_coarse[color],
-            //   this->plain_dof_indices_fine[color],
-            //   this->weights_view_kokkos[color],
-            //   n_cells,
-            //   numBlocks,
-            //   threadsPerBlock);
 
-            BK1::Parallel::KokkosRestrictionBatchedKernel<dim, p_coarse + 1, p_fine + 1, number>(
-              this->prolongation_matrix_1d,
-              src_device,
-              dst_device,
-              this->dof_indices_coarse[color],
-              this->plain_dof_indices_fine[color],
-              this->weights_view_kokkos[color],
-              n_cells,
-              numBlocks,
-              threadsPerBlock);
-          }
-      };
+          // BK1::Parallel::KokkosRestrictionKernel<dim, p_coarse + 1, p_fine
+          // + 1, number>(
+          //   this->prolongation_matrix_1d,
+          //   src_device,
+          //   dst_device,
+          //   this->dof_indices_coarse[color],
+          //   this->plain_dof_indices_fine[color],
+          //   this->weights_view_kokkos[color],
+          //   n_cells,
+          //   numBlocks,
+          //   threadsPerBlock);
+
+          BK1::Parallel::KokkosRestrictionBatchedKernel<dim,
+                                                        p_coarse + 1,
+                                                        p_fine + 1,
+                                                        number>(
+            this->prolongation_matrix_1d,
+            src_device,
+            dst_device,
+            this->dof_indices_coarse[color],
+            this->plain_dof_indices_fine[color],
+            this->weights_view_kokkos[color],
+            n_cells,
+            numBlocks,
+            threadsPerBlock);
+        }
+    };
 
 
     if (matrix_free_fine->use_overlap_communication_computation())
@@ -1040,6 +1138,238 @@ namespace Portable
     src.zero_out_ghost_values();
   }
 
+
+  template <int dim, int p_coarse, int p_fine, typename number>
+  void
+  PolynomialTransfer<dim, p_coarse, p_fine, number>::
+    prolongate_and_add_internal_dummy(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                &src,
+      const bool ghost_exchange_on,
+      const bool computation_on) const
+  {
+    MemorySpace::Default::kokkos_space::execution_space exec;
+    using Functor =
+      p_mg_transfer::CellProlongationKernel<dim, p_coarse, p_fine, number>;
+
+    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
+      dst_device(dst.get_values(), dst.locally_owned_size());
+
+    const auto &colored_graph = matrix_free_fine->get_colored_graph();
+
+    const unsigned int n_colors = colored_graph.size();
+
+    constexpr bool is_serial =
+      std::is_same<Kokkos::DefaultExecutionSpace,
+                   Kokkos::DefaultHostExecutionSpace>::value;
+
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+    if (is_serial)
+      {
+        numBlocks       = 1u;
+        threadsPerBlock = 1u;
+      }
+
+    // helper to process one color
+    auto do_color = [&](const unsigned int color) {
+      const auto n_cells = colored_graph[color].size();
+
+      if (n_cells > 0)
+        {
+          BK1::Parallel::KokkosProlongationBatchedKernel<dim,
+                                                         p_coarse + 1,
+                                                         p_fine + 1,
+                                                         number>(
+            this->prolongation_matrix_1d,
+            src_device,
+            dst_device,
+            this->dof_indices_coarse[color],
+            this->plain_dof_indices_fine[color],
+            this->weights_view_kokkos[color],
+            n_cells,
+            numBlocks,
+            threadsPerBlock);
+        }
+    };
+
+    if (matrix_free_fine->use_overlap_communication_computation())
+      {
+        if (ghost_exchange_on)
+          src.update_ghost_values_start(0);
+
+        // In parallel, it's possible that some processors do not own any
+        // cells.
+        if (computation_on)
+          if (colored_graph.size() > 0 && colored_graph[0].size() > 0)
+            do_color(0);
+
+
+        if (ghost_exchange_on)
+          src.update_ghost_values_finish();
+
+        // In serial this color does not exist because there are no ghost
+        // cells
+        if (computation_on)
+          if (colored_graph.size() > 1 && colored_graph[1].size() > 0)
+            {
+              do_color(1);
+
+              // We need a synchronization point because we don't want
+              // device-aware MPI to start the MPI communication until the
+              // kernel is done.
+              Kokkos::fence();
+            }
+
+        if (ghost_exchange_on)
+          dst.compress_start(0, VectorOperation::add);
+
+        // When the mesh is coarse it is possible that some processors do
+        // not own any cells
+        if (computation_on)
+          if (colored_graph.size() > 2 && colored_graph[2].size() > 0)
+            do_color(2);
+
+        if (ghost_exchange_on)
+          dst.compress_finish(VectorOperation::add);
+      }
+    else
+      {
+        if (ghost_exchange_on)
+          src.update_ghost_values();
+
+        // Execute the loop on the cells
+        if (computation_on)
+          for (unsigned int color = 0; color < n_colors; ++color)
+            {
+              if (colored_graph[color].size() > 0)
+                do_color(color);
+            }
+
+        if (ghost_exchange_on)
+          dst.compress(VectorOperation::add);
+      }
+      
+    if (ghost_exchange_on)
+      src.zero_out_ghost_values();
+  }
+
+
+  template <int dim, int p_coarse, int p_fine, typename number>
+  void
+  PolynomialTransfer<dim, p_coarse, p_fine, number>::
+    restrict_and_add_internal_dummy(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+                &src,
+      const bool ghost_exchange_on,
+      const bool computation_on) const
+  {
+    MemorySpace::Default::kokkos_space::execution_space exec;
+
+    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
+      dst_device(dst.get_values(), dst.locally_owned_size());
+
+    const auto &colored_graph = matrix_free_fine->get_colored_graph();
+
+    const unsigned int n_colors = colored_graph.size();
+
+    constexpr bool is_serial =
+      std::is_same<Kokkos::DefaultExecutionSpace,
+                   Kokkos::DefaultHostExecutionSpace>::value;
+
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+    if (is_serial)
+      {
+        numBlocks       = 1u;
+        threadsPerBlock = 1u;
+      }
+
+    // helper to process one color
+    auto do_color = [&](const unsigned int color) {
+      const auto n_cells = colored_graph[color].size();
+
+      if (n_cells > 0)
+        {
+          BK1::Parallel::KokkosRestrictionBatchedKernel<dim,
+                                                        p_coarse + 1,
+                                                        p_fine + 1,
+                                                        number>(
+            this->prolongation_matrix_1d,
+            src_device,
+            dst_device,
+            this->dof_indices_coarse[color],
+            this->plain_dof_indices_fine[color],
+            this->weights_view_kokkos[color],
+            n_cells,
+            numBlocks,
+            threadsPerBlock);
+        }
+    };
+
+    if (matrix_free_fine->use_overlap_communication_computation())
+      {
+        if (ghost_exchange_on)
+          src.update_ghost_values_start(0);
+
+        // In parallel, it's possible that some processors do not own any
+        // cells.
+        if (computation_on)
+          if (colored_graph.size() > 0 && colored_graph[0].size() > 0)
+            do_color(0);
+
+
+        if (ghost_exchange_on)
+          src.update_ghost_values_finish();
+
+        // In serial this color does not exist because there are no ghost
+        // cells
+        if (computation_on)
+          if (colored_graph.size() > 1 && colored_graph[1].size() > 0)
+            {
+              do_color(1);
+
+              // We need a synchronization point because we don't want
+              // device-aware MPI to start the MPI communication until the
+              // kernel is done.
+              Kokkos::fence();
+            }
+
+        if (ghost_exchange_on)
+          dst.compress_start(0, VectorOperation::add);
+
+        // When the mesh is coarse it is possible that some processors do
+        // not own any cells
+        if (computation_on)
+          if (colored_graph.size() > 2 && colored_graph[2].size() > 0)
+            do_color(2);
+
+        if (ghost_exchange_on)
+          dst.compress_finish(VectorOperation::add);
+      }
+    else
+      {
+        if (ghost_exchange_on)
+          src.update_ghost_values();
+
+        // Execute the loop on the cells
+        if (computation_on)
+          for (unsigned int color = 0; color < n_colors; ++color)
+            {
+              if (colored_graph[color].size() > 0)
+                do_color(color);
+            }
+
+        if (ghost_exchange_on)
+          dst.compress(VectorOperation::add);
+      }
+    if (ghost_exchange_on)
+
+      src.zero_out_ghost_values();
+  }
+
   template <int dim, int p_coarse, int p_fine, typename number>
   void
   PolynomialTransfer<dim, p_coarse, p_fine, number>::reinit(
@@ -1056,12 +1386,14 @@ namespace Portable
 
     auto &colored_graph_coarse = this->matrix_free_coarse->get_colored_graph();
 
-    const auto &colored_graph_fine = this->matrix_free_fine->get_colored_graph();
+    const auto &colored_graph_fine =
+      this->matrix_free_fine->get_colored_graph();
 
     const unsigned int n_colors = colored_graph_fine.size();
 
     Assert(n_colors == colored_graph_coarse.size(),
-           ExcMessage("Coarse and fine levels must have the same number of colors"));
+           ExcMessage(
+             "Coarse and fine levels must have the same number of colors"));
 
     FE_Q<1> fe_coarse_1d(p_coarse);
     FE_Q<1> fe_fine_1d(p_fine);
@@ -1075,38 +1407,48 @@ namespace Portable
         GeometryInfo<1>::vertices_per_cell * fe_fine_1d.n_dofs_per_vertex() + i;
 
     if (fe_fine_1d.n_dofs_per_vertex() > 0)
-      renumbering_fine[fe_fine_1d.n_dofs_per_cell() - fe_fine_1d.n_dofs_per_vertex()] =
+      renumbering_fine[fe_fine_1d.n_dofs_per_cell() -
+                       fe_fine_1d.n_dofs_per_vertex()] =
         fe_fine_1d.n_dofs_per_vertex();
 
-    std::vector<unsigned int> renumbering_coarse(fe_coarse_1d.n_dofs_per_cell());
+    std::vector<unsigned int> renumbering_coarse(
+      fe_coarse_1d.n_dofs_per_cell());
 
     renumbering_coarse[0] = 0;
     for (unsigned int i = 0; i < fe_coarse_1d.dofs_per_line; ++i)
       renumbering_coarse[i + fe_coarse_1d.n_dofs_per_vertex()] =
-        GeometryInfo<1>::vertices_per_cell * fe_coarse_1d.n_dofs_per_vertex() + i;
+        GeometryInfo<1>::vertices_per_cell * fe_coarse_1d.n_dofs_per_vertex() +
+        i;
 
     if (fe_coarse_1d.n_dofs_per_vertex() > 0)
-      renumbering_coarse[fe_coarse_1d.n_dofs_per_cell() - fe_coarse_1d.n_dofs_per_vertex()] =
+      renumbering_coarse[fe_coarse_1d.n_dofs_per_cell() -
+                         fe_coarse_1d.n_dofs_per_vertex()] =
         fe_coarse_1d.n_dofs_per_vertex();
 
-    FullMatrix<number> matrix(fe_fine_1d.n_dofs_per_cell(), fe_coarse_1d.n_dofs_per_cell());
+    FullMatrix<number> matrix(fe_fine_1d.n_dofs_per_cell(),
+                              fe_coarse_1d.n_dofs_per_cell());
 
     // 1d prolongation matrix
     FETools::get_projection_matrix(fe_coarse_1d, fe_fine_1d, matrix);
 
-    this->prolongation_matrix_1d = Kokkos::View<number *, MemorySpace::Default::kokkos_space>(
-      Kokkos::view_alloc("prolongation_matrix_1d_" + std::to_string(p_coarse) + "_to_" +
-                           std::to_string(p_fine),
-                         Kokkos::WithoutInitializing),
-      fe_coarse_1d.n_dofs_per_cell() * fe_fine_1d.n_dofs_per_cell());
+    this->prolongation_matrix_1d =
+      Kokkos::View<number *, MemorySpace::Default::kokkos_space>(
+        Kokkos::view_alloc("prolongation_matrix_1d_" +
+                             std::to_string(p_coarse) + "_to_" +
+                             std::to_string(p_fine),
+                           Kokkos::WithoutInitializing),
+        fe_coarse_1d.n_dofs_per_cell() * fe_fine_1d.n_dofs_per_cell());
 
-    auto prolongation_matrix_1d_view = Kokkos::create_mirror_view(this->prolongation_matrix_1d);
+    auto prolongation_matrix_1d_view =
+      Kokkos::create_mirror_view(this->prolongation_matrix_1d);
 
     for (unsigned int i = 0, k = 0; i < fe_coarse_1d.n_dofs_per_cell(); ++i)
       for (unsigned int j = 0; j < fe_fine_1d.n_dofs_per_cell(); ++j, ++k)
-        prolongation_matrix_1d_view[k] = matrix(renumbering_fine[j], renumbering_coarse[i]);
+        prolongation_matrix_1d_view[k] =
+          matrix(renumbering_fine[j], renumbering_coarse[i]);
 
-    Kokkos::deep_copy(this->prolongation_matrix_1d, prolongation_matrix_1d_view);
+    Kokkos::deep_copy(this->prolongation_matrix_1d,
+                      prolongation_matrix_1d_view);
     Kokkos::fence();
 
     setup_weights_and_dof_indices();
@@ -1114,7 +1456,8 @@ namespace Portable
 
   template <int dim, int p_coarse, int p_fine, typename number>
   void
-  PolynomialTransfer<dim, p_coarse, p_fine, number>::setup_weights_and_dof_indices()
+  PolynomialTransfer<dim, p_coarse, p_fine, number>::
+    setup_weights_and_dof_indices()
   {
     const auto &dof_handler_fine   = matrix_free_fine->get_dof_handler();
     const auto &dof_handler_coarse = matrix_free_coarse->get_dof_handler();
@@ -1126,8 +1469,10 @@ namespace Portable
 
     const unsigned int n_colors = colored_graph_fine.size();
 
-    Assert(n_colors == colored_graph_coarse.size(),
-           ExcMessage("Portable matrix free objects must have the same number of colors"));
+    Assert(
+      n_colors == colored_graph_coarse.size(),
+      ExcMessage(
+        "Portable matrix free objects must have the same number of colors"));
 
     const unsigned int n_dofs_per_cell_fine   = fe_fine.n_dofs_per_cell();
     const unsigned int n_dofs_per_cell_coarse = fe_coarse.n_dofs_per_cell();
@@ -1136,7 +1481,8 @@ namespace Portable
     std::vector<unsigned int> lex_numbering_coarse(n_dofs_per_cell_coarse);
 
     {
-      const Quadrature<1> dummy_quadrature(std::vector<Point<1>>(1, Point<1>()));
+      const Quadrature<1> dummy_quadrature(
+        std::vector<Point<1>>(1, Point<1>()));
       dealii::internal::MatrixFreeFunctions::ShapeInfo<double> shape_info;
 
       shape_info.reinit(dummy_quadrature, fe_fine, 0);
@@ -1144,7 +1490,8 @@ namespace Portable
     }
 
     {
-      const Quadrature<1> dummy_quadrature(std::vector<Point<1>>(1, Point<1>()));
+      const Quadrature<1> dummy_quadrature(
+        std::vector<Point<1>>(1, Point<1>()));
       dealii::internal::MatrixFreeFunctions::ShapeInfo<double> shape_info;
 
       shape_info.reinit(dummy_quadrature, fe_coarse, 0);
@@ -1165,10 +1512,13 @@ namespace Portable
 
       constraint_info_fine.reinit(dof_handler_fine, n_cells_fine);
 
-      constraint_info_fine.set_locally_owned_indices(dof_handler_fine.locally_owned_dofs());
+      constraint_info_fine.set_locally_owned_indices(
+        dof_handler_fine.locally_owned_dofs());
 
-      std::vector<types::global_dof_index> local_dof_indices_fine(n_dofs_per_cell_fine);
-      std::vector<types::global_dof_index> local_dof_indices_lex_fine(n_dofs_per_cell_fine);
+      std::vector<types::global_dof_index> local_dof_indices_fine(
+        n_dofs_per_cell_fine);
+      std::vector<types::global_dof_index> local_dof_indices_lex_fine(
+        n_dofs_per_cell_fine);
 
       int cell_counter = 0;
 
@@ -1178,9 +1528,12 @@ namespace Portable
             cell->get_dof_indices(local_dof_indices_fine);
 
             for (unsigned int i = 0; i < n_dofs_per_cell_fine; ++i)
-              local_dof_indices_lex_fine[i] = local_dof_indices_fine[lex_numbering_fine[i]];
+              local_dof_indices_lex_fine[i] =
+                local_dof_indices_fine[lex_numbering_fine[i]];
 
-            constraint_info_fine.read_dof_indices(cell_counter, local_dof_indices_lex_fine, {});
+            constraint_info_fine.read_dof_indices(cell_counter,
+                                                  local_dof_indices_lex_fine,
+                                                  {});
             ++cell_counter;
           }
 
@@ -1201,7 +1554,8 @@ namespace Portable
 
       // ... clear constrained indices
       for (const auto &constrained_dofs : constraints_fine->get_lines())
-        if (weight_vector.locally_owned_elements().is_element(constrained_dofs.index))
+        if (weight_vector.locally_owned_elements().is_element(
+              constrained_dofs.index))
           weight_vector[constrained_dofs.index] = 0.0;
 
       weight_vector.update_ghost_values();
@@ -1223,11 +1577,13 @@ namespace Portable
                   n_dofs_per_cell_fine,
                   mf_data_fine.n_cells);
 
-              auto weights_view_host = Kokkos::create_mirror_view(weights_view_kokkos[color]);
+              auto weights_view_host =
+                Kokkos::create_mirror_view(weights_view_kokkos[color]);
 
               auto cell = graph.cbegin(), end_cell = graph.cend();
 
-              for (unsigned int cell_id = 0; cell != end_cell; ++cell, ++cell_id)
+              for (unsigned int cell_id = 0; cell != end_cell;
+                   ++cell, ++cell_id)
                 {
                   (*cell)->get_dof_indices(local_dof_indices_fine);
 
@@ -1235,7 +1591,8 @@ namespace Portable
                     {
                       types::global_dof_index dof_index_lex =
                         local_dof_indices_fine[lex_numbering_fine[i]];
-                      weights_view_host(i, cell_id) = weight_vector[dof_index_lex];
+                      weights_view_host(i, cell_id) =
+                        weight_vector[dof_index_lex];
                     }
                 }
               Kokkos::deep_copy(weights_view_kokkos[color], weights_view_host);
@@ -1245,13 +1602,16 @@ namespace Portable
     }
     // setup coarse dof indices
     {
-      std::vector<types::global_dof_index> local_dof_indices_coarse(n_dofs_per_cell_coarse);
-      std::vector<types::global_dof_index> subdomain_dof_indices_coarse(n_dofs_per_cell_coarse);
+      std::vector<types::global_dof_index> local_dof_indices_coarse(
+        n_dofs_per_cell_coarse);
+      std::vector<types::global_dof_index> subdomain_dof_indices_coarse(
+        n_dofs_per_cell_coarse);
 
       this->dof_indices_coarse.clear();
       this->dof_indices_coarse.resize(n_colors);
 
-      const auto &partitioner_coarse = matrix_free_coarse->get_vector_partitioner();
+      const auto &partitioner_coarse =
+        matrix_free_coarse->get_vector_partitioner();
 
       for (unsigned int color = 0; color < n_colors; ++color)
         {
@@ -1262,8 +1622,10 @@ namespace Portable
               const auto &graph = colored_graph_coarse[color];
 
               this->dof_indices_coarse[color] =
-                Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>(
-                  Kokkos::view_alloc("dof_indices_coarse_" + std::to_string(color),
+                Kokkos::View<unsigned int **,
+                             MemorySpace::Default::kokkos_space>(
+                  Kokkos::view_alloc("dof_indices_coarse_" +
+                                       std::to_string(color),
                                      Kokkos::WithoutInitializing),
                   n_dofs_per_cell_coarse,
                   mf_data_coarse.n_cells);
@@ -1271,7 +1633,8 @@ namespace Portable
               auto dof_indices_coarse_host =
                 Kokkos::create_mirror_view(this->dof_indices_coarse[color]);
 
-              for (unsigned int cell_id = 0; cell_id < mf_data_coarse.n_cells; ++cell_id)
+              for (unsigned int cell_id = 0; cell_id < mf_data_coarse.n_cells;
+                   ++cell_id)
                 {
                   auto triacell = graph[cell_id];
 
@@ -1288,18 +1651,22 @@ namespace Portable
 
                   for (unsigned int i = 0; i < n_dofs_per_cell_coarse; ++i)
                     {
-                      const auto global_dof = local_dof_indices_coarse[lex_numbering_coarse[i]];
+                      const auto global_dof =
+                        local_dof_indices_coarse[lex_numbering_coarse[i]];
 
                       const auto subdomain_local_dof =
                         subdomain_dof_indices_coarse[lex_numbering_coarse[i]];
 
-                      if (constraints_coarse->is_constrained(subdomain_local_dof))
-                        dof_indices_coarse_host(i, cell_id) = numbers::invalid_unsigned_int;
+                      if (constraints_coarse->is_constrained(
+                            subdomain_local_dof))
+                        dof_indices_coarse_host(i, cell_id) =
+                          numbers::invalid_unsigned_int;
                       else
                         dof_indices_coarse_host(i, cell_id) = global_dof;
                     }
                 }
-              Kokkos::deep_copy(this->dof_indices_coarse[color], dof_indices_coarse_host);
+              Kokkos::deep_copy(this->dof_indices_coarse[color],
+                                dof_indices_coarse_host);
               Kokkos::fence();
             }
         }
@@ -1307,7 +1674,8 @@ namespace Portable
 
     // setup fine plain dof indices
     {
-      std::vector<types::global_dof_index> local_dof_indices_fine(n_dofs_per_cell_fine);
+      std::vector<types::global_dof_index> local_dof_indices_fine(
+        n_dofs_per_cell_fine);
 
       this->plain_dof_indices_fine.clear();
       this->plain_dof_indices_fine.resize(n_colors);
@@ -1323,8 +1691,10 @@ namespace Portable
               const auto &graph = colored_graph_fine[color];
 
               this->plain_dof_indices_fine[color] =
-                Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>(
-                  Kokkos::view_alloc("plain_dof_indices_fine_" + std::to_string(color),
+                Kokkos::View<unsigned int **,
+                             MemorySpace::Default::kokkos_space>(
+                  Kokkos::view_alloc("plain_dof_indices_fine_" +
+                                       std::to_string(color),
                                      Kokkos::WithoutInitializing),
                   n_dofs_per_cell_fine,
                   mf_data_fine.n_cells);
@@ -1332,7 +1702,8 @@ namespace Portable
               auto plain_dof_indices_fine_host =
                 Kokkos::create_mirror_view(this->plain_dof_indices_fine[color]);
 
-              for (unsigned int cell_id = 0; cell_id < mf_data_fine.n_cells; ++cell_id)
+              for (unsigned int cell_id = 0; cell_id < mf_data_fine.n_cells;
+                   ++cell_id)
                 {
                   auto triacell = graph[cell_id];
 
@@ -1347,12 +1718,14 @@ namespace Portable
 
                   for (unsigned int i = 0; i < n_dofs_per_cell_fine; ++i)
                     {
-                      const auto global_dof = local_dof_indices_fine[lex_numbering_fine[i]];
+                      const auto global_dof =
+                        local_dof_indices_fine[lex_numbering_fine[i]];
 
                       plain_dof_indices_fine_host(i, cell_id) = global_dof;
                     }
                 }
-              Kokkos::deep_copy(this->plain_dof_indices_fine[color], plain_dof_indices_fine_host);
+              Kokkos::deep_copy(this->plain_dof_indices_fine[color],
+                                plain_dof_indices_fine_host);
               Kokkos::fence();
             }
         }
@@ -1366,17 +1739,22 @@ namespace Portable
 
     template <typename Runner>
     static bool
-    dispatch(const int runtime_p_coarse, const int runtime_p_fine, Runner &runner)
+    dispatch(const int runtime_p_coarse,
+             const int runtime_p_fine,
+             Runner   &runner)
     {
-      return recursive_dispatch<Runner, max_degree, max_degree>(runtime_p_coarse,
-                                                                runtime_p_fine,
-                                                                runner);
+      return recursive_dispatch<Runner, max_degree, max_degree>(
+        runtime_p_coarse, runtime_p_fine, runner);
     }
 
   private:
-    template <typename Runner, unsigned int degree_coarse, unsigned int degree_fine>
+    template <typename Runner,
+              unsigned int degree_coarse,
+              unsigned int degree_fine>
     static bool
-    recursive_dispatch(const int runtime_p_coarse, const int runtime_p_fine, Runner &runner)
+    recursive_dispatch(const int runtime_p_coarse,
+                       const int runtime_p_fine,
+                       Runner   &runner)
     {
       if (runtime_p_fine == degree_fine)
         {
@@ -1387,9 +1765,8 @@ namespace Portable
             }
           else if constexpr (degree_coarse > 1)
             {
-              return recursive_dispatch<Runner, degree_coarse - 1, degree_fine>(runtime_p_coarse,
-                                                                                runtime_p_fine,
-                                                                                runner);
+              return recursive_dispatch<Runner, degree_coarse - 1, degree_fine>(
+                runtime_p_coarse, runtime_p_fine, runner);
             }
           else
             {
@@ -1398,9 +1775,8 @@ namespace Portable
         }
       else if constexpr (degree_fine > 1)
         {
-          return recursive_dispatch<Runner, degree_fine - 2, degree_fine - 1>(runtime_p_coarse,
-                                                                              runtime_p_fine,
-                                                                              runner);
+          return recursive_dispatch<Runner, degree_fine - 2, degree_fine - 1>(
+            runtime_p_coarse, runtime_p_fine, runner);
         }
       else
         {
