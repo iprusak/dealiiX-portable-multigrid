@@ -323,7 +323,7 @@ namespace Portable
     // SolverControl solver_control(temp_subdomain_vector_src.size(),
     //                              1e-12 * src.l2_norm());
 
-    ReductionControl solver_control(100, 1e-16, 1e-9);
+    // ReductionControl solver_control(100, 1e-16, 1e-9);
 
     if (physical_boundary_dof_indices_subdomain.size() == 0)
       {
@@ -331,17 +331,17 @@ namespace Portable
         temp_subdomain_vector_src.add(-mean_value_src);
       }
 
-    SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>
-      cg(solver_control);
+    // SolverCG<LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>
+    //   cg(solver_control);
 
     temp_subdomain_vector_dst = 0.;
-    cg.solve(this->subdomain_neumann_operator,
-             temp_subdomain_vector_dst,
-             temp_subdomain_vector_src,
-             *neumann_preconditioner);
+    // cg.solve(this->subdomain_neumann_operator,
+    //          temp_subdomain_vector_dst,
+    //          temp_subdomain_vector_src,
+    //          *neumann_preconditioner);
 
-    // neumann_preconditioner->vmult(temp_subdomain_vector_dst,
-    //                               temp_subdomain_vector_src);
+    neumann_preconditioner->vmult(temp_subdomain_vector_dst,
+                                  temp_subdomain_vector_src);
 
     if (physical_boundary_dof_indices_subdomain.size() == 0)
       {
@@ -355,10 +355,11 @@ namespace Portable
     //           << " iterations " << std::endl;
 
 
-    max_subdomain_mg_iterations.second =
-      std::max(max_subdomain_mg_iterations.second,
-               static_cast<unsigned int>(solver_control.last_step()));
+    // max_subdomain_mg_iterations.second =
+    //   std::max(max_subdomain_mg_iterations.second,
+    //            static_cast<unsigned int>(solver_control.last_step()));
 
+    max_subdomain_mg_iterations.second=1u;
     // apply weights and write dst interface values
     Kokkos::parallel_for(
       "write_dst_subdomain_neumann",
