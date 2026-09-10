@@ -71,7 +71,7 @@ namespace Portable
         this->shape_info[0].reinit(shape_info_cpu.data[0]);
         this->shape_info[1].reinit(shape_info_cpu.data[1]);
 
-        // calculate the number of cells
+        // calculate the Number of cells
         n_cells = 0;
         for (const auto &cell : dof_handler.active_cell_iterators())
           if (cell->is_locally_owned())
@@ -105,7 +105,7 @@ namespace Portable
           // respective processes even though we could query the DoF index owner
           // through the triangulation, so we need to perform a lookup anyway
           // and do that by a ghost exchange of all data. While there, also
-          // extract a compressed representation, taking the first number on
+          // extract a compressed representation, taking the first Number on
           // each entity (face, cell) in global index space, which we later
           // translate to local numbers
 

@@ -25,12 +25,12 @@ DEAL_II_NAMESPACE_OPEN
 namespace Portable
 {
 
-  template <int dim, typename number, typename TransferType>
-  class VCycleMultigrid : public VCycleMultigridBase<dim, number>
+  template <int dim, typename Number, typename TransferType>
+  class VCycleMultigrid : public VCycleMultigridBase<dim, Number>
   {
   public:
-    using VectorType      = LinearAlgebra::distributed::Vector<number, MemorySpace::Default>;
-    using LevelMatrixType = LaplaceOperatorBase<dim, number>;
+    using VectorType      = LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
+    using LevelMatrixType = LaplaceOperatorBase<dim, Number>;
     using SmootherType    = PreconditionChebyshev<LevelMatrixType, VectorType>;
 
     VCycleMultigrid(
@@ -102,8 +102,8 @@ namespace Portable
     mutable MGLevelObject<VectorType> t;
   };
 
-  template <int dim, typename number, typename TransferType>
-  VCycleMultigrid<dim, number, TransferType>::VCycleMultigrid(
+  template <int dim, typename Number, typename TransferType>
+  VCycleMultigrid<dim, Number, TransferType>::VCycleMultigrid(
     const MGLevelObject<std::unique_ptr<LevelMatrixType>> &mg_matrices,
     const MGLevelObject<std::unique_ptr<TransferType>>    &mg_transfers,
     const MGLevelObject<SmootherType>                     &mg_smoothers,
@@ -127,9 +127,9 @@ namespace Portable
       }
   }
 
-  template <int dim, typename number, typename TransferType>
+  template <int dim, typename Number, typename TransferType>
   void
-  VCycleMultigrid<dim, number, TransferType>::vmult(VectorType &dst, const VectorType &src) const
+  VCycleMultigrid<dim, Number, TransferType>::vmult(VectorType &dst, const VectorType &src) const
   {
     defect[maxlevel] = src;
 
@@ -138,15 +138,15 @@ namespace Portable
     dst = solution[maxlevel];
   }
 
-  template <int dim, typename number, typename TransferType>
+  template <int dim, typename Number, typename TransferType>
   void
-  VCycleMultigrid<dim, number, TransferType>::v_cycle(const unsigned int level) const
+  VCycleMultigrid<dim, Number, TransferType>::v_cycle(const unsigned int level) const
   {
     if (level == minlevel)
       {
         if (impose_zero_mean)
           {
-            number mean_value = defect[level].mean_value();
+            Number mean_value = defect[level].mean_value();
             defect[level].add(-mean_value);
           }
         // Accuracy on coarsest level should be comparable to overall level
@@ -155,7 +155,7 @@ namespace Portable
 
         if (impose_zero_mean)
           {
-            number mean_value = solution[level].mean_value();
+            Number mean_value = solution[level].mean_value();
             solution[level].add(-mean_value);
           }
 

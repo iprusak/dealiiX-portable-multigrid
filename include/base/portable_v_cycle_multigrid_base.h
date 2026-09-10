@@ -14,15 +14,15 @@ namespace Portable
 {
 
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   class VCycleMultigridBase : public EnableObserverPointer
   {
   public:
     ~VCycleMultigridBase() = default;
 
     virtual void
-    vmult(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-          const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+    vmult(LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+          const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
             &src) const = 0;
   };
 

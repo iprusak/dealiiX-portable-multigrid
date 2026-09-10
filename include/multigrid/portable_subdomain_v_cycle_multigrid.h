@@ -25,15 +25,15 @@ namespace Portable
 {
 
   template <int dim,
-            typename number,
+            typename Number,
             typename LevelMatrixType,
             typename TransferType,
             typename SmootherType>
-  class SubdomainVCycleMultigrid : public VCycleMultigridBase<dim, number>
+  class SubdomainVCycleMultigrid : public VCycleMultigridBase<dim, Number>
   {
   public:
     using VectorType =
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
 
     SubdomainVCycleMultigrid(
       const MGLevelObject<std::unique_ptr<LevelMatrixType>> &mg_matrices,
@@ -109,12 +109,12 @@ namespace Portable
   };
 
   template <int dim,
-            typename number,
+            typename Number,
             typename LevelMatrixType,
             typename TransferType,
             typename SmootherType>
   SubdomainVCycleMultigrid<dim,
-                           number,
+                           Number,
                            LevelMatrixType,
                            TransferType,
                            SmootherType>::
@@ -143,13 +143,13 @@ namespace Portable
   }
 
   template <int dim,
-            typename number,
+            typename Number,
             typename LevelMatrixType,
             typename TransferType,
             typename SmootherType>
   void
   SubdomainVCycleMultigrid<dim,
-                           number,
+                           Number,
                            LevelMatrixType,
                            TransferType,
                            SmootherType>::vmult(VectorType       &dst,
@@ -163,13 +163,13 @@ namespace Portable
   }
 
   template <int dim,
-            typename number,
+            typename Number,
             typename LevelMatrixType,
             typename TransferType,
             typename SmootherType>
   void
   SubdomainVCycleMultigrid<dim,
-                           number,
+                           Number,
                            LevelMatrixType,
                            TransferType,
                            SmootherType>::v_cycle(const unsigned int level)
@@ -179,7 +179,7 @@ namespace Portable
       {
         if (impose_zero_mean)
           {
-            number mean_value = defect[level].mean_value();
+            Number mean_value = defect[level].mean_value();
             defect[level].add(-mean_value);
           }
 
@@ -189,7 +189,7 @@ namespace Portable
 
         if (impose_zero_mean)
           {
-            number mean_value = solution[level].mean_value();
+            Number mean_value = solution[level].mean_value();
             solution[level].add(-mean_value);
           }
 

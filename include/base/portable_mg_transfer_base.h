@@ -12,7 +12,7 @@ DEAL_II_NAMESPACE_OPEN
 
 namespace Portable
 {
-  template <int dim, typename number>
+  template <int dim, typename Number>
   class MGTransferBase : public EnableObserverPointer
   {
   public:
@@ -20,19 +20,19 @@ namespace Portable
 
     virtual void
     prolongate_and_add(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const = 0;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const = 0;
 
     virtual void
     restrict_and_add(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const = 0;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const = 0;
 
     virtual void
-    reinit(const MatrixFree<dim, number>   &mf_coarse,
-           const MatrixFree<dim, number>   &mf_fine,
-           const AffineConstraints<number> &constraints_coarse,
-           const AffineConstraints<number> &constraints_fine) = 0;
+    reinit(const MatrixFree<dim, Number>   &mf_coarse,
+           const MatrixFree<dim, Number>   &mf_fine,
+           const AffineConstraints<Number> &constraints_coarse,
+           const AffineConstraints<Number> &constraints_fine) = 0;
   };
 
   class PolynomialTransferDispatchFactory

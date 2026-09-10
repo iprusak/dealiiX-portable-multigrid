@@ -17,14 +17,14 @@ namespace Portable
 {
   namespace p_mg_transfer
   {
-    template <int dim, typename number>
+    template <int dim, typename Number>
     struct TransferData
     {
       using TeamHandle =
         Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
 
       using SharedView =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
@@ -34,7 +34,7 @@ namespace Portable
 
       const SharedView &prolongation_matrix;
 
-      const Kokkos::View<number **, MemorySpace::Default::kokkos_space> &weights;
+      const Kokkos::View<Number **, MemorySpace::Default::kokkos_space> &weights;
 
       const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> &dof_indices_coarse;
 
@@ -56,27 +56,27 @@ namespace Portable
     };
 
 
-    template <int dim, int p_coarse, int p_fine, typename number, typename Functor>
+    template <int dim, int p_coarse, int p_fine, typename Number, typename Functor>
     struct ApplyCellKernel
     {
       using TeamHandle =
         Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
       using SharedViewValues =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
       ApplyCellKernel(
         Functor func,
-        const Kokkos::View<number *, MemorySpace::Default::kokkos_space>
+        const Kokkos::View<Number *, MemorySpace::Default::kokkos_space>
           prolongation_matrix_shared_memory,
-        const Kokkos::View<number **, MemorySpace::Default::kokkos_space>       weights,
+        const Kokkos::View<Number **, MemorySpace::Default::kokkos_space>       weights,
         const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_coarse,
         const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>
                    plain_dof_indices_fine,
         const bool use_coloring,
-        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
-        LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst)
+        const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src,
+        LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst)
         : func(func)
         , prolongation_matrix_shared_memory(prolongation_matrix_shared_memory)
         , weights(weights)
@@ -89,10 +89,10 @@ namespace Portable
 
       Functor func;
 
-      const Kokkos::View<number *, MemorySpace::Default::kokkos_space>
+      const Kokkos::View<Number *, MemorySpace::Default::kokkos_space>
         prolongation_matrix_shared_memory;
 
-      const Kokkos::View<number **, MemorySpace::Default::kokkos_space> weights;
+      const Kokkos::View<Number **, MemorySpace::Default::kokkos_space> weights;
 
       const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_coarse;
 
@@ -101,8 +101,8 @@ namespace Portable
 
       const bool use_coloring;
 
-      const DeviceVector<number> src;
-      DeviceVector<number>       dst;
+      const DeviceVector<Number> src;
+      DeviceVector<Number>       dst;
 
       // Provide the shared memory capacity. This function takes the team_size
       // as an argument, which allows team_size dependent allocations.
@@ -143,7 +143,7 @@ namespace Portable
         team_member.team_barrier();
 
 
-        TransferData<dim, number> data{team_member,
+        TransferData<dim, Number> data{team_member,
                                        cell_index,
                                        prolongation_matrix_device,
                                        weights,
@@ -154,12 +154,12 @@ namespace Portable
                                        values_fine,
                                        scratch_pad};
 
-        DeviceVector<number> nonconstdst = dst;
+        DeviceVector<Number> nonconstdst = dst;
         func(&data, src, nonconstdst);
       }
     };
 
-    template <int dim, int p_coarse, int p_fine, typename number>
+    template <int dim, int p_coarse, int p_fine, typename Number>
     class CellProlongationKernel : public EnableObserverPointer
     {
     public:
@@ -167,31 +167,31 @@ namespace Portable
         Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
 
       using SharedView =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
       CellProlongationKernel();
 
       DEAL_II_HOST_DEVICE void
-      operator()(const TransferData<dim, number> *transfer_data,
-                 const DeviceVector<number>      &src,
-                 DeviceVector<number>            &dst) const;
+      operator()(const TransferData<dim, Number> *transfer_data,
+                 const DeviceVector<Number>      &src,
+                 DeviceVector<Number>            &dst) const;
 
       static const unsigned int n_local_dofs_coarse = Utilities::pow(p_coarse + 1, dim);
       static const unsigned int n_local_dofs_fine   = Utilities::pow(p_fine + 1, dim);
     };
 
-    template <int dim, int p_coarse, int p_fine, typename number>
-    CellProlongationKernel<dim, p_coarse, p_fine, number>::CellProlongationKernel()
+    template <int dim, int p_coarse, int p_fine, typename Number>
+    CellProlongationKernel<dim, p_coarse, p_fine, Number>::CellProlongationKernel()
     {}
 
-    template <int dim, int p_coarse, int p_fine, typename number>
+    template <int dim, int p_coarse, int p_fine, typename Number>
     DEAL_II_HOST_DEVICE void
-    CellProlongationKernel<dim, p_coarse, p_fine, number>::operator()(
-      const TransferData<dim, number> *transfer_data,
-      const DeviceVector<number>      &src,
-      DeviceVector<number>            &dst) const
+    CellProlongationKernel<dim, p_coarse, p_fine, Number>::operator()(
+      const TransferData<dim, Number> *transfer_data,
+      const DeviceVector<Number>      &src,
+      DeviceVector<Number>            &dst) const
     {
       const int   cell_id     = transfer_data->cell_index;
       const auto &team_member = transfer_data->team_member;
@@ -237,7 +237,7 @@ namespace Portable
                                      const int base_coarse   = i * Nk;
                                      const int stride_coarse = 1;
 
-                                     number sum = prolongation_matrix(base_kernel) *
+                                     Number sum = prolongation_matrix(base_kernel) *
                                                   values_coarse(base_coarse);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -268,7 +268,7 @@ namespace Portable
                                      const int base_tmp   = i;
                                      const int stride_tmp = p_fine + 1;
 
-                                     number sum = prolongation_matrix(base_kernel) * tmp(base_tmp);
+                                     Number sum = prolongation_matrix(base_kernel) * tmp(base_tmp);
 
                                      for (int k = 1; k < Nk; ++k)
                                        sum += prolongation_matrix(base_kernel + k * stride_kernel) *
@@ -306,7 +306,7 @@ namespace Portable
                                      const int base_coarse   = (i * Nj + j) * Nk;
                                      const int stride_coarse = 1;
 
-                                     number sum = prolongation_matrix(base_kernel) *
+                                     Number sum = prolongation_matrix(base_kernel) *
                                                   values_coarse(base_coarse);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -340,7 +340,7 @@ namespace Portable
                                      const int base_tmp1   = i + j * Ni * Nk;
                                      const int stride_tmp1 = p_fine + 1;
 
-                                     number sum =
+                                     Number sum =
                                        prolongation_matrix(base_kernel) * tmp1(base_tmp1);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -371,7 +371,7 @@ namespace Portable
                                      const int base_tmp2   = i * Nj + j;
                                      const int stride_tmp2 = Utilities::pow(p_fine + 1, 2);
 
-                                     number sum =
+                                     Number sum =
                                        prolongation_matrix(base_kernel) * tmp2(base_tmp2);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -410,18 +410,18 @@ namespace Portable
       team_member.team_barrier();
     }
 
-    template <int dim, int p_coarse, int p_fine, typename number>
+    template <int dim, int p_coarse, int p_fine, typename Number>
     class CellRestrictionKernel : public EnableObserverPointer
     {
     public:
       using DistributedVectorType =
-        LinearAlgebra::distributed::Vector<number, MemorySpace::Default>;
+        LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
 
       using TeamHandle =
         Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
 
       using SharedView =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
@@ -429,24 +429,24 @@ namespace Portable
       CellRestrictionKernel();
 
       DEAL_II_HOST_DEVICE void
-      operator()(const TransferData<dim, number> *transfer_data,
-                 const DeviceVector<number>      &src,
-                 DeviceVector<number>            &dst) const;
+      operator()(const TransferData<dim, Number> *transfer_data,
+                 const DeviceVector<Number>      &src,
+                 DeviceVector<Number>            &dst) const;
 
       static const unsigned int n_local_dofs_coarse = Utilities::pow(p_coarse + 1, dim);
       static const unsigned int n_local_dofs_fine   = Utilities::pow(p_fine + 1, dim);
     };
 
-    template <int dim, int p_coarse, int p_fine, typename number>
-    CellRestrictionKernel<dim, p_coarse, p_fine, number>::CellRestrictionKernel()
+    template <int dim, int p_coarse, int p_fine, typename Number>
+    CellRestrictionKernel<dim, p_coarse, p_fine, Number>::CellRestrictionKernel()
     {}
 
-    template <int dim, int p_coarse, int p_fine, typename number>
+    template <int dim, int p_coarse, int p_fine, typename Number>
     DEAL_II_HOST_DEVICE void
-    CellRestrictionKernel<dim, p_coarse, p_fine, number>::operator()(
-      const TransferData<dim, number> *transfer_data,
-      const DeviceVector<number>      &src,
-      DeviceVector<number>            &dst) const
+    CellRestrictionKernel<dim, p_coarse, p_fine, Number>::operator()(
+      const TransferData<dim, Number> *transfer_data,
+      const DeviceVector<Number>      &src,
+      DeviceVector<Number>            &dst) const
     {
       const int   cell_id     = transfer_data->cell_index;
       const auto &team_member = transfer_data->team_member;
@@ -494,7 +494,7 @@ namespace Portable
                                      const int base_fine   = i;
                                      const int stride_fine = p_fine + 1;
 
-                                     number sum =
+                                     Number sum =
                                        prolongation_matrix(base_kernel) * values_fine(base_fine);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -525,7 +525,7 @@ namespace Portable
                                      const int base_tmp   = i * Nk;
                                      const int stride_tmp = 1;
 
-                                     number sum = prolongation_matrix(base_kernel) * tmp(base_tmp);
+                                     Number sum = prolongation_matrix(base_kernel) * tmp(base_tmp);
 
                                      for (int k = 1; k < Nk; ++k)
                                        sum += prolongation_matrix(base_kernel + k * stride_kernel) *
@@ -562,7 +562,7 @@ namespace Portable
                                      const int base_fine   = i * Nj + j;
                                      const int stride_fine = Utilities::pow(p_fine + 1, 2);
 
-                                     number sum =
+                                     Number sum =
                                        prolongation_matrix(base_kernel) * values_fine(base_fine);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -593,7 +593,7 @@ namespace Portable
                                      const int base_tmp1   = i + j * Ni * Nk;
                                      const int stride_tmp1 = p_fine + 1;
 
-                                     number sum =
+                                     Number sum =
                                        prolongation_matrix(base_kernel) * tmp1(base_tmp1);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -625,7 +625,7 @@ namespace Portable
                                      const int base_tmp2   = (i * Nj + j) * Nk;
                                      const int stride_tmp2 = 1;
 
-                                     number sum =
+                                     Number sum =
                                        prolongation_matrix(base_kernel) * tmp2(base_tmp2);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -663,49 +663,49 @@ namespace Portable
     }
   } // namespace p_mg_transfer
 
-  template <int dim, int p_coarse, int p_fine, typename number>
-  class PolynomialTransfer : public MGTransferBase<dim, number>
+  template <int dim, int p_coarse, int p_fine, typename Number>
+  class PolynomialTransfer : public MGTransferBase<dim, Number>
   {
   public:
     PolynomialTransfer();
 
     void
     prolongate_and_add(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const override;
 
     void
     restrict_and_add(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const override;
 
     void
-    reinit(const MatrixFree<dim, number>   &mf_coarse,
-           const MatrixFree<dim, number>   &mf_fine,
-           const AffineConstraints<number> &constraints_coarse,
-           const AffineConstraints<number> &constraints_fine) override;
+    reinit(const MatrixFree<dim, Number>   &mf_coarse,
+           const MatrixFree<dim, Number>   &mf_fine,
+           const AffineConstraints<Number> &constraints_coarse,
+           const AffineConstraints<Number> &constraints_fine) override;
 
   private:
     void
     prolongate_and_add_internal(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const;
 
     void
     restrict_and_add_internal(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const;
 
     void
     setup_weights_and_dof_indices();
 
-    ObserverPointer<const MatrixFree<dim, number>> matrix_free_coarse;
-    ObserverPointer<const MatrixFree<dim, number>> matrix_free_fine;
+    ObserverPointer<const MatrixFree<dim, Number>> matrix_free_coarse;
+    ObserverPointer<const MatrixFree<dim, Number>> matrix_free_fine;
 
-    ObserverPointer<const AffineConstraints<number>> constraints_fine;
-    ObserverPointer<const AffineConstraints<number>> constraints_coarse;
+    ObserverPointer<const AffineConstraints<Number>> constraints_fine;
+    ObserverPointer<const AffineConstraints<Number>> constraints_coarse;
 
-    Kokkos::View<number *, MemorySpace::Default::kokkos_space> prolongation_matrix_1d;
+    Kokkos::View<Number *, MemorySpace::Default::kokkos_space> prolongation_matrix_1d;
 
     std::vector<Kokkos::View<int *, MemorySpace::Default::kokkos_space>> cell_lists_fine_to_coarse;
 
@@ -715,41 +715,41 @@ namespace Portable
     std::vector<Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>>
       plain_dof_indices_fine;
 
-    std::vector<Kokkos::View<number **, MemorySpace::Default::kokkos_space>> weights_view_kokkos;
+    std::vector<Kokkos::View<Number **, MemorySpace::Default::kokkos_space>> weights_view_kokkos;
   };
 
-  template <int dim, int p_coarse, int p_fine, typename number>
-  PolynomialTransfer<dim, p_coarse, p_fine, number>::PolynomialTransfer()
+  template <int dim, int p_coarse, int p_fine, typename Number>
+  PolynomialTransfer<dim, p_coarse, p_fine, Number>::PolynomialTransfer()
   {}
 
-  template <int dim, int p_coarse, int p_fine, typename number>
+  template <int dim, int p_coarse, int p_fine, typename Number>
   void
-  PolynomialTransfer<dim, p_coarse, p_fine, number>::prolongate_and_add(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  PolynomialTransfer<dim, p_coarse, p_fine, Number>::prolongate_and_add(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
   {
     this->prolongate_and_add_internal(dst, src);
   }
 
-  template <int dim, int p_coarse, int p_fine, typename number>
+  template <int dim, int p_coarse, int p_fine, typename Number>
   void
-  PolynomialTransfer<dim, p_coarse, p_fine, number>::restrict_and_add(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  PolynomialTransfer<dim, p_coarse, p_fine, Number>::restrict_and_add(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
   {
     this->restrict_and_add_internal(dst, src);
   }
 
-  template <int dim, int p_coarse, int p_fine, typename number>
+  template <int dim, int p_coarse, int p_fine, typename Number>
   void
-  PolynomialTransfer<dim, p_coarse, p_fine, number>::prolongate_and_add_internal(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  PolynomialTransfer<dim, p_coarse, p_fine, Number>::prolongate_and_add_internal(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
   {
     MemorySpace::Default::kokkos_space::execution_space exec;
-    using Functor = p_mg_transfer::CellProlongationKernel<dim, p_coarse, p_fine, number>;
+    using Functor = p_mg_transfer::CellProlongationKernel<dim, p_coarse, p_fine, Number>;
 
-    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
+    DeviceVector<Number> src_device(src.get_values(), src.locally_owned_size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
 
     const auto &colored_graph = matrix_free_fine->get_colored_graph();
@@ -774,7 +774,7 @@ namespace Portable
 
         if (n_cells > 0)
           {
-            BK1::Parallel::KokkosProlongationBatchedKernelAbstracted<dim, p_coarse + 1, p_fine + 1, number>(
+            BK1::Parallel::KokkosProlongationBatchedKernelAbstracted<dim, p_coarse + 1, p_fine + 1, Number>(
               this->prolongation_matrix_1d,
               src_device,
               dst_device,
@@ -823,7 +823,7 @@ namespace Portable
       {
         src.update_ghost_values();
 
-        DeviceVector<number> src_device(src.get_values(), src.size()),
+        DeviceVector<Number> src_device(src.get_values(), src.size()),
           dst_device(dst.get_values(), dst.locally_owned_size());
 
         // Execute the loop on the cells
@@ -837,20 +837,20 @@ namespace Portable
     src.zero_out_ghost_values();
   }
 
-  template <int dim, int p_coarse, int p_fine, typename number>
+  template <int dim, int p_coarse, int p_fine, typename Number>
   void
-  PolynomialTransfer<dim, p_coarse, p_fine, number>::restrict_and_add_internal(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  PolynomialTransfer<dim, p_coarse, p_fine, Number>::restrict_and_add_internal(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
   {
     MemorySpace::Default::kokkos_space::execution_space exec;
-    using Functor = p_mg_transfer::CellRestrictionKernel<dim, p_coarse, p_fine, number>;
+    using Functor = p_mg_transfer::CellRestrictionKernel<dim, p_coarse, p_fine, Number>;
 
     const auto &colored_graph = matrix_free_fine->get_colored_graph();
 
     const unsigned int n_colors = colored_graph.size();
 
-    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
+    DeviceVector<Number> src_device(src.get_values(), src.locally_owned_size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
 
     constexpr bool is_serial =
@@ -870,7 +870,7 @@ namespace Portable
 
         if (n_cells > 0)
           {
-            BK1::Parallel::KokkosRestrictionBatchedKernelAbstracted<dim, p_coarse + 1, p_fine + 1, number>(
+            BK1::Parallel::KokkosRestrictionBatchedKernelAbstracted<dim, p_coarse + 1, p_fine + 1, Number>(
               this->prolongation_matrix_1d,
               src_device,
               dst_device,
@@ -932,13 +932,13 @@ namespace Portable
     src.zero_out_ghost_values();
   }
 
-  template <int dim, int p_coarse, int p_fine, typename number>
+  template <int dim, int p_coarse, int p_fine, typename Number>
   void
-  PolynomialTransfer<dim, p_coarse, p_fine, number>::reinit(
-    const MatrixFree<dim, number>   &mf_coarse,
-    const MatrixFree<dim, number>   &mf_fine,
-    const AffineConstraints<number> &constraints_coarse,
-    const AffineConstraints<number> &constraints_fine)
+  PolynomialTransfer<dim, p_coarse, p_fine, Number>::reinit(
+    const MatrixFree<dim, Number>   &mf_coarse,
+    const MatrixFree<dim, Number>   &mf_fine,
+    const AffineConstraints<Number> &constraints_coarse,
+    const AffineConstraints<Number> &constraints_fine)
   {
     this->matrix_free_coarse = &mf_coarse;
     this->matrix_free_fine   = &mf_fine;
@@ -953,7 +953,7 @@ namespace Portable
     const unsigned int n_colors = colored_graph_fine.size();
 
     Assert(n_colors == colored_graph_coarse.size(),
-           ExcMessage("Coarse and fine levels must have the same number of colors"));
+           ExcMessage("Coarse and fine levels must have the same Number of colors"));
 
     FE_Q<1> fe_coarse_1d(p_coarse);
     FE_Q<1> fe_fine_1d(p_fine);
@@ -981,12 +981,12 @@ namespace Portable
       renumbering_coarse[fe_coarse_1d.n_dofs_per_cell() - fe_coarse_1d.n_dofs_per_vertex()] =
         fe_coarse_1d.n_dofs_per_vertex();
 
-    FullMatrix<number> matrix(fe_fine_1d.n_dofs_per_cell(), fe_coarse_1d.n_dofs_per_cell());
+    FullMatrix<Number> matrix(fe_fine_1d.n_dofs_per_cell(), fe_coarse_1d.n_dofs_per_cell());
 
     // 1d prolongation matrix
     FETools::get_projection_matrix(fe_coarse_1d, fe_fine_1d, matrix);
 
-    this->prolongation_matrix_1d = Kokkos::View<number *, MemorySpace::Default::kokkos_space>(
+    this->prolongation_matrix_1d = Kokkos::View<Number *, MemorySpace::Default::kokkos_space>(
       Kokkos::view_alloc("prolongation_matrix_1d_" + std::to_string(p_coarse) + "_to_" +
                            std::to_string(p_fine),
                          Kokkos::WithoutInitializing),
@@ -1004,9 +1004,9 @@ namespace Portable
     setup_weights_and_dof_indices();
   }
 
-  template <int dim, int p_coarse, int p_fine, typename number>
+  template <int dim, int p_coarse, int p_fine, typename Number>
   void
-  PolynomialTransfer<dim, p_coarse, p_fine, number>::setup_weights_and_dof_indices()
+  PolynomialTransfer<dim, p_coarse, p_fine, Number>::setup_weights_and_dof_indices()
   {
     const auto &dof_handler_fine   = matrix_free_fine->get_dof_handler();
     const auto &dof_handler_coarse = matrix_free_coarse->get_dof_handler();
@@ -1019,7 +1019,7 @@ namespace Portable
     const unsigned int n_colors = colored_graph_fine.size();
 
     Assert(n_colors == colored_graph_coarse.size(),
-           ExcMessage("Portable matrix free objects must have the same number of colors"));
+           ExcMessage("Portable matrix free objects must have the same Number of colors"));
 
     const unsigned int n_dofs_per_cell_fine   = fe_fine.n_dofs_per_cell();
     const unsigned int n_dofs_per_cell_coarse = fe_coarse.n_dofs_per_cell();
@@ -1051,7 +1051,7 @@ namespace Portable
           ++n_cells_fine;
 
       dealii::internal::MatrixFreeFunctions::
-        ConstraintInfo<dim, VectorizedArray<number>, types::global_dof_index>
+        ConstraintInfo<dim, VectorizedArray<Number>, types::global_dof_index>
           constraint_info_fine;
 
 
@@ -1079,7 +1079,7 @@ namespace Portable
       std::shared_ptr<const Utilities::MPI::Partitioner> partitioner_fine =
         constraint_info_fine.finalize(dof_handler_fine.get_mpi_communicator());
 
-      LinearAlgebra::distributed::Vector<number> weight_vector;
+      LinearAlgebra::distributed::Vector<Number> weight_vector;
       weight_vector.reinit(partitioner_fine);
 
       for (const auto i : constraint_info_fine.dof_indices)
@@ -1109,7 +1109,7 @@ namespace Portable
               const auto &graph        = colored_graph_fine[color];
 
               weights_view_kokkos[color] =
-                Kokkos::View<number **, MemorySpace::Default::kokkos_space>(
+                Kokkos::View<Number **, MemorySpace::Default::kokkos_space>(
                   Kokkos::view_alloc("weights_" + std::to_string(color),
                                      Kokkos::WithoutInitializing),
                   n_dofs_per_cell_fine,

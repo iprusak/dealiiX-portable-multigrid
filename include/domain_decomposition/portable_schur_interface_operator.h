@@ -16,36 +16,36 @@ DEAL_II_NAMESPACE_OPEN
 namespace Portable
 {
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   class SchurInterfaceOperator : public EnableObserverPointer
   {
   public:
-    using MGMatrixType            = SubdomainLaplaceOperatorBase<dim, number>;
-    using MGTransferType          = MGTransferBase<dim, number>;
-    using SubdomainPreconditioner = VCycleMultigridBase<dim, number>;
+    using MGMatrixType            = SubdomainLaplaceOperatorBase<dim, Number>;
+    using MGTransferType          = MGTransferBase<dim, Number>;
+    using SubdomainPreconditioner = VCycleMultigridBase<dim, Number>;
 
     SchurInterfaceOperator(
-      const SubdomainLaplaceOperatorBase<dim, number> &subdomain_operator,
+      const SubdomainLaplaceOperatorBase<dim, Number> &subdomain_operator,
       const SubdomainPreconditioner                   &dirichlet_preconditioner,
       const SubdomainPreconditioner                   &neumann_preconditioner);
 
     void
-    vmult(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-          const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+    vmult(LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+          const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
             &src) const;
 
     void
     vmult_dummy(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
                 &src,
       const bool computation_on,
       const bool communication_on) const;
 
     void
     Tvmult(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const;
 
     types::global_dof_index
@@ -55,9 +55,9 @@ namespace Portable
 
     void
     assemble_rhs_schur(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &rhs_schur,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &rhs_subdomain) const;
 
     bool
@@ -65,26 +65,26 @@ namespace Portable
 
     void
     dirichlet_solve_subdomain(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const;
 
     void
     neumann_solve_subdomain(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const;
 
     void
     reconstruct_subdomain_solution_from_interface(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &subdomain_solution,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &interface_solution,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &rhs_subdomain) const;
 
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &
     get_interface_weights() const;
 
 
@@ -94,46 +94,46 @@ namespace Portable
     struct NeumannSubdomainOperator
     {
       NeumannSubdomainOperator(
-        const SubdomainLaplaceOperatorBase<dim, number> &op)
+        const SubdomainLaplaceOperatorBase<dim, Number> &op)
         : op(op)
       {}
 
       void
       vmult(
-        LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+        const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
           &src) const
       {
         op.vmult_neumann(dst, src);
       }
 
-      const SubdomainLaplaceOperatorBase<dim, number> &op;
+      const SubdomainLaplaceOperatorBase<dim, Number> &op;
     };
 
     struct DirichletSubdomainOperator
     {
       DirichletSubdomainOperator(
-        const SubdomainLaplaceOperatorBase<dim, number> &op)
+        const SubdomainLaplaceOperatorBase<dim, Number> &op)
         : op(op)
       {}
 
       void
       vmult(
-        LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+        LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+        const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
           &src) const
       {
         op.vmult(dst, src);
       }
 
-      const SubdomainLaplaceOperatorBase<dim, number> &op;
+      const SubdomainLaplaceOperatorBase<dim, Number> &op;
     };
 
   private:
     void
     compute_interface_weights();
 
-    ObserverPointer<const SubdomainLaplaceOperatorBase<dim, number>>
+    ObserverPointer<const SubdomainLaplaceOperatorBase<dim, Number>>
       subdomain_operator;
 
     ObserverPointer<const SubdomainDoFHandler<dim>> subdomain_dof_handler;
@@ -148,10 +148,10 @@ namespace Portable
     const Kokkos::View<const unsigned int *, MemorySpace::Default::kokkos_space>
       physical_boundary_dof_indices_subdomain;
 
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
       interface_weights;
 
-    mutable LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+    mutable LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
       temp_subdomain_vector_src, temp_subdomain_vector_dst,
       temp_subdomain_vector_work;
 
@@ -161,9 +161,9 @@ namespace Portable
     mutable std::pair<unsigned int, unsigned int> max_subdomain_mg_iterations;
   };
 
-  template <int dim, typename number>
-  SchurInterfaceOperator<dim, number>::SchurInterfaceOperator(
-    const SubdomainLaplaceOperatorBase<dim, number> &subdomain_operator,
+  template <int dim, typename Number>
+  SchurInterfaceOperator<dim, Number>::SchurInterfaceOperator(
+    const SubdomainLaplaceOperatorBase<dim, Number> &subdomain_operator,
     const SubdomainPreconditioner                   &dirichlet_preconditioner,
     const SubdomainPreconditioner                   &neumann_preconditioner)
     : subdomain_operator(&subdomain_operator)
@@ -196,14 +196,14 @@ namespace Portable
     max_subdomain_mg_iterations.second = 0;
   }
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   void
-  SchurInterfaceOperator<dim, number>::compute_interface_weights()
+  SchurInterfaceOperator<dim, Number>::compute_interface_weights()
   {
     this->interface_weights.reinit(
       this->subdomain_dof_handler->get_interface_vector_partitioner());
 
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Host>
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Host>
       interface_weights_host(
         this->subdomain_dof_handler->get_interface_vector_partitioner());
 
@@ -223,7 +223,7 @@ namespace Portable
 
     interface_weights_host.update_ghost_values();
 
-    LinearAlgebra::ReadWriteVector<number> rw_vector(
+    LinearAlgebra::ReadWriteVector<Number> rw_vector(
       interface_weights_host.locally_owned_elements());
     rw_vector.import_elements(interface_weights_host, VectorOperation::insert);
     interface_weights.import_elements(rw_vector, VectorOperation::insert);
@@ -231,27 +231,27 @@ namespace Portable
     interface_weights.update_ghost_values();
   }
 
-  template <int dim, typename number>
-  const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &
-  SchurInterfaceOperator<dim, number>::get_interface_weights() const
+  template <int dim, typename Number>
+  const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &
+  SchurInterfaceOperator<dim, Number>::get_interface_weights() const
   {
     return interface_weights;
   }
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   const std::pair<unsigned int, unsigned int>
-  SchurInterfaceOperator<dim, number>::get_maximum_subdomain_mg_iterations()
+  SchurInterfaceOperator<dim, Number>::get_maximum_subdomain_mg_iterations()
     const
   {
     return max_subdomain_mg_iterations;
   }
 
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   void
-  SchurInterfaceOperator<dim, number>::dirichlet_solve_subdomain(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
+  SchurInterfaceOperator<dim, Number>::dirichlet_solve_subdomain(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src)
     const
   {
     dst = 0.;
@@ -286,24 +286,24 @@ namespace Portable
    * compatible for Neumann solve, but it is still good to keep it for numerical
    * stability.
    */
-  template <int dim, typename number>
+  template <int dim, typename Number>
   void
-  SchurInterfaceOperator<dim, number>::neumann_solve_subdomain(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
+  SchurInterfaceOperator<dim, Number>::neumann_solve_subdomain(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src)
     const
   {
     src.update_ghost_values();
 
     dst = 0.;
 
-    DeviceVector<number> src_view(src.get_values(), src.size()),
+    DeviceVector<Number> src_view(src.get_values(), src.size()),
       dst_view(dst.get_values(), dst.size());
 
-    DeviceVector<number> weights_view(interface_weights.get_values(),
+    DeviceVector<Number> weights_view(interface_weights.get_values(),
                                       interface_weights.size());
 
-    DeviceVector<number> t_subdomain_src_view(
+    DeviceVector<Number> t_subdomain_src_view(
       temp_subdomain_vector_src.get_values(), temp_subdomain_vector_src.size()),
       t_subdomain_dst_view(temp_subdomain_vector_dst.get_values(),
                            temp_subdomain_vector_dst.size());
@@ -327,7 +327,7 @@ namespace Portable
 
     if (physical_boundary_dof_indices_subdomain.size() == 0)
       {
-        number mean_value_src = temp_subdomain_vector_src.mean_value();
+        Number mean_value_src = temp_subdomain_vector_src.mean_value();
         temp_subdomain_vector_src.add(-mean_value_src);
       }
 
@@ -345,7 +345,7 @@ namespace Portable
 
     if (physical_boundary_dof_indices_subdomain.size() == 0)
       {
-        number mean_value_dst = temp_subdomain_vector_dst.mean_value();
+        Number mean_value_dst = temp_subdomain_vector_dst.mean_value();
         temp_subdomain_vector_dst.add(-mean_value_dst);
       }
 
@@ -378,11 +378,11 @@ namespace Portable
    * 3. vv =  A_GI*z
    * Result y = w - vv
    */
-  template <int dim, typename number>
+  template <int dim, typename Number>
   void
-  SchurInterfaceOperator<dim, number>::vmult(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
+  SchurInterfaceOperator<dim, Number>::vmult(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src)
     const
   {
     Assert(
@@ -402,10 +402,10 @@ namespace Portable
 
     src.update_ghost_values();
 
-    DeviceVector<number> src_view(src.get_values(), src.size()),
+    DeviceVector<Number> src_view(src.get_values(), src.size()),
       dst_view(dst.get_values(), dst.size());
 
-    DeviceVector<number> t_subdomain_src_view(
+    DeviceVector<Number> t_subdomain_src_view(
       temp_subdomain_vector_src.get_values(), temp_subdomain_vector_src.size()),
       t_subdomain_dst_view(temp_subdomain_vector_dst.get_values(),
                            temp_subdomain_vector_dst.size()),
@@ -448,7 +448,7 @@ namespace Portable
       interface_dofs.size(),
       KOKKOS_LAMBDA(const int i) {
         const auto idx = interface_dofs(i);
-        number     output_value =
+        Number     output_value =
           t_subdomain_dst_view(idx) - t_subdomain_src_view(idx);
         Kokkos::atomic_add(&dst_view(i), output_value);
         // dst_view(i) += output_value;
@@ -459,11 +459,11 @@ namespace Portable
   }
 
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   void
-  SchurInterfaceOperator<dim, number>::vmult_dummy(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
+  SchurInterfaceOperator<dim, Number>::vmult_dummy(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src,
     const bool computation_on,
     const bool communication_on) const
   {
@@ -485,10 +485,10 @@ namespace Portable
     if (communication_on)
       src.update_ghost_values();
 
-    DeviceVector<number> src_view(src.get_values(), src.size()),
+    DeviceVector<Number> src_view(src.get_values(), src.size()),
       dst_view(dst.get_values(), dst.size());
 
-    DeviceVector<number> t_subdomain_src_view(
+    DeviceVector<Number> t_subdomain_src_view(
       temp_subdomain_vector_src.get_values(), temp_subdomain_vector_src.size()),
       t_subdomain_dst_view(temp_subdomain_vector_dst.get_values(),
                            temp_subdomain_vector_dst.size()),
@@ -535,7 +535,7 @@ namespace Portable
           interface_dofs.size(),
           KOKKOS_LAMBDA(const int i) {
             const auto idx = interface_dofs(i);
-            number     output_value =
+            Number     output_value =
               t_subdomain_dst_view(idx) - t_subdomain_src_view(idx);
             Kokkos::atomic_add(&dst_view(i), output_value);
             // dst_view(i) += output_value;
@@ -550,11 +550,11 @@ namespace Portable
   }
 
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   void
-  SchurInterfaceOperator<dim, number>::assemble_rhs_schur(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs_schur,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+  SchurInterfaceOperator<dim, Number>::assemble_rhs_schur(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &rhs_schur,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
       &rhs_subdomain) const
   {
     Assert(
@@ -568,11 +568,11 @@ namespace Portable
 
     const auto interface_dofs = this->interface_dof_indices_subdomain;
 
-    DeviceVector<number> rhs_subdomain_view(rhs_subdomain.get_values(),
+    DeviceVector<Number> rhs_subdomain_view(rhs_subdomain.get_values(),
                                             rhs_subdomain.size());
-    DeviceVector<number> rhs_schur_view(rhs_schur.get_values(),
+    DeviceVector<Number> rhs_schur_view(rhs_schur.get_values(),
                                         rhs_schur.size());
-    DeviceVector<number> t_subdomain_dst_view(
+    DeviceVector<Number> t_subdomain_dst_view(
       temp_subdomain_vector_dst.get_values(), temp_subdomain_vector_dst.size());
 
     // solve for interior, A_II^{-1} * F_I
@@ -589,7 +589,7 @@ namespace Portable
       interface_dofs.size(),
       KOKKOS_LAMBDA(const int i) {
         const auto idx_subdomain = interface_dofs(i);
-        number     output_value  = rhs_subdomain_view(idx_subdomain) -
+        Number     output_value  = rhs_subdomain_view(idx_subdomain) -
                                    t_subdomain_dst_view(idx_subdomain);
         Kokkos::atomic_add(&rhs_schur_view(i), output_value);
         // rhs_schur_view(i) += output_value;
@@ -600,15 +600,15 @@ namespace Portable
     rhs_schur.update_ghost_values();
   }
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   void
-  SchurInterfaceOperator<dim, number>::
+  SchurInterfaceOperator<dim, Number>::
     reconstruct_subdomain_solution_from_interface(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &subdomain_solution,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &interface_solution,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &rhs_subdomain) const
   {
     Assert(
@@ -622,14 +622,14 @@ namespace Portable
 
     const auto interface_dofs = this->interface_dof_indices_subdomain;
 
-    DeviceVector<number> rhs_subdomain_view(rhs_subdomain.get_values(),
+    DeviceVector<Number> rhs_subdomain_view(rhs_subdomain.get_values(),
                                             rhs_subdomain.size()),
       interface_solution_view(interface_solution.get_values(),
                               interface_solution.size()),
       subdomain_solution_view(subdomain_solution.get_values(),
                               subdomain_solution.size());
 
-    DeviceVector<number> t_subdomain_src_view(
+    DeviceVector<Number> t_subdomain_src_view(
       temp_subdomain_vector_src.get_values(), temp_subdomain_vector_src.size()),
       t_subdomain_dst_view(temp_subdomain_vector_dst.get_values(),
                            temp_subdomain_vector_dst.size()),
@@ -669,35 +669,35 @@ namespace Portable
   }
 
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   void
-  SchurInterfaceOperator<dim, number>::Tvmult(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src)
+  SchurInterfaceOperator<dim, Number>::Tvmult(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src)
     const
   {
     this->vmult(dst, src);
   }
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   types::global_dof_index
-  SchurInterfaceOperator<dim, number>::m() const
+  SchurInterfaceOperator<dim, Number>::m() const
   {
     return this->subdomain_dof_handler->get_interface_vector_partitioner()
       ->size();
   }
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   types::global_dof_index
-  SchurInterfaceOperator<dim, number>::n() const
+  SchurInterfaceOperator<dim, Number>::n() const
   {
     return this->subdomain_dof_handler->get_interface_vector_partitioner()
       ->size();
   }
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   bool
-  SchurInterfaceOperator<dim, number>::enable_printing() const
+  SchurInterfaceOperator<dim, Number>::enable_printing() const
   {
     return (this->subdomain_dof_handler->get_subdomain_id() == 0);
   }

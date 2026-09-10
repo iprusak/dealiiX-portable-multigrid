@@ -159,13 +159,13 @@ namespace Portable
     /**
      * Base class for Portable::GeometricTrasnfer.
      */
-    template <int dim, typename number>
-    class GeometricTransferCore : public MGTransferBase<dim, number>
+    template <int dim, typename Number>
+    class GeometricTransferCore : public MGTransferBase<dim, Number>
     {
     public:
       GeometricTransferCore();
 
-      using VectorType = LinearAlgebra::distributed::Vector<number, MemorySpace::Default>;
+      using VectorType = LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
 
 
       void
@@ -221,7 +221,7 @@ namespace Portable
         const std::shared_ptr<const Utilities::MPI::Partitioner> &partitioner_fine,
         bool                                                     &vec_fine_needs_ghost_update,
         dealii::internal::MatrixFreeFunctions::
-          ConstraintInfo<dim, VectorizedArray<number, width>, IndexType> &constraint_info_coarse,
+          ConstraintInfo<dim, VectorizedArray<Number, width>, IndexType> &constraint_info_coarse,
         std::vector<unsigned int>                                        &dof_indices_fine);
 
       /**
@@ -279,24 +279,24 @@ namespace Portable
        * Buffer for efficient communication if locally relevant DoFs
        * are a subset of an external Partitioner object.
        */
-      mutable AlignedVector<number> buffer_coarse_embedded;
+      mutable AlignedVector<Number> buffer_coarse_embedded;
 
       /**
        * Buffer for efficient communication if locally relevant DoFs
        * are a subset of an external Partitioner object.
        */
-      mutable AlignedVector<number> buffer_fine_embedded;
+      mutable AlignedVector<Number> buffer_fine_embedded;
     };
 
 
-    template <int dim, typename number>
-    GeometricTransferCore<dim, number>::GeometricTransferCore()
+    template <int dim, typename Number>
+    GeometricTransferCore<dim, Number>::GeometricTransferCore()
       : vec_fine_needs_ghost_update(true)
     {}
 
-    template <int dim, typename number>
+    template <int dim, typename Number>
     void
-    GeometricTransferCore<dim, number>::prolongate_and_add(VectorType       &dst,
+    GeometricTransferCore<dim, Number>::prolongate_and_add(VectorType       &dst,
                                                            const VectorType &src) const
     {
       const bool  use_dst_inplace = this->vec_fine.size() == 0;
@@ -318,7 +318,7 @@ namespace Portable
         this->update_ghost_values(*vec_coarse_ptr);
 
       if (use_dst_inplace == false)
-        *vec_fine_ptr = number(0.);
+        *vec_fine_ptr = Number(0.);
 
       this->prolongate_and_add_internal(*vec_fine_ptr, *vec_coarse_ptr);
 
@@ -332,9 +332,9 @@ namespace Portable
         this->zero_out_ghost_values(*vec_coarse_ptr);
     }
 
-    template <int dim, typename number>
+    template <int dim, typename Number>
     void
-    GeometricTransferCore<dim, number>::restrict_and_add(VectorType       &dst,
+    GeometricTransferCore<dim, Number>::restrict_and_add(VectorType       &dst,
                                                          const VectorType &src) const
     {
       const bool        use_src_inplace = this->vec_fine.size() == 0;
@@ -357,7 +357,7 @@ namespace Portable
         this->update_ghost_values(*vec_fine_ptr);
 
       if (use_dst_inplace == false)
-        *vec_coarse_ptr = number(0.0);
+        *vec_coarse_ptr = Number(0.0);
 
       // since we might add into the ghost values and call compress
       this->zero_out_ghost_values(*vec_coarse_ptr);
@@ -420,15 +420,15 @@ namespace Portable
 
 
 
-    template <int dim, typename number>
+    template <int dim, typename Number>
     template <std::size_t width, typename IndexType>
     std::pair<bool, bool>
-    GeometricTransferCore<dim, number>::internal_enable_inplace_operations_if_possible(
+    GeometricTransferCore<dim, Number>::internal_enable_inplace_operations_if_possible(
       const std::shared_ptr<const Utilities::MPI::Partitioner> &external_partitioner_coarse,
       const std::shared_ptr<const Utilities::MPI::Partitioner> &external_partitioner_fine,
       bool                                                     &vec_fine_needs_ghost_update,
       dealii::internal::MatrixFreeFunctions::
-        ConstraintInfo<dim, VectorizedArray<number, width>, IndexType> &constraint_info_coarse,
+        ConstraintInfo<dim, VectorizedArray<Number, width>, IndexType> &constraint_info_coarse,
       std::vector<unsigned int>                                        &dof_indices_fine)
     {
       std::pair<bool, bool> success_flags = {false, false};
@@ -490,18 +490,18 @@ namespace Portable
       return success_flags;
     }
 
-    template <int dim, typename number>
+    template <int dim, typename Number>
     void
-    GeometricTransferCore<dim, number>::update_ghost_values(const VectorType &vec) const
+    GeometricTransferCore<dim, Number>::update_ghost_values(const VectorType &vec) const
     {
       if ((vec.get_partitioner().get() == this->partitioner_coarse.get()) &&
           (this->partitioner_coarse_embedded != nullptr))
-        internal::SimpleVectorDataExchange<number>(this->partitioner_coarse_embedded,
+        internal::SimpleVectorDataExchange<Number>(this->partitioner_coarse_embedded,
                                                    this->buffer_coarse_embedded)
           .update_ghost_values(vec);
       else if ((vec.get_partitioner().get() == this->partitioner_fine.get()) &&
                (this->partitioner_fine_embedded != nullptr))
-        internal::SimpleVectorDataExchange<number>(this->partitioner_fine_embedded,
+        internal::SimpleVectorDataExchange<Number>(this->partitioner_fine_embedded,
                                                    this->buffer_fine_embedded)
           .update_ghost_values(vec);
       else
@@ -510,21 +510,21 @@ namespace Portable
 
 
 
-    template <int dim, typename number>
+    template <int dim, typename Number>
     void
-    GeometricTransferCore<dim, number>::compress(VectorType                   &vec,
+    GeometricTransferCore<dim, Number>::compress(VectorType                   &vec,
                                                  const VectorOperation::values op) const
     {
       Assert(op == VectorOperation::add, ExcNotImplemented());
 
       if ((vec.get_partitioner().get() == this->partitioner_coarse.get()) &&
           (this->partitioner_coarse_embedded != nullptr))
-        internal::SimpleVectorDataExchange<number>(this->partitioner_coarse_embedded,
+        internal::SimpleVectorDataExchange<Number>(this->partitioner_coarse_embedded,
                                                    this->buffer_coarse_embedded)
           .compress(vec);
       else if ((vec.get_partitioner().get() == this->partitioner_fine.get()) &&
                (this->partitioner_fine_embedded != nullptr))
-        internal::SimpleVectorDataExchange<number>(this->partitioner_fine_embedded,
+        internal::SimpleVectorDataExchange<Number>(this->partitioner_fine_embedded,
                                                    this->buffer_fine_embedded)
           .compress(vec);
       else
@@ -533,18 +533,18 @@ namespace Portable
 
 
 
-    template <int dim, typename number>
+    template <int dim, typename Number>
     void
-    GeometricTransferCore<dim, number>::zero_out_ghost_values(const VectorType &vec) const
+    GeometricTransferCore<dim, Number>::zero_out_ghost_values(const VectorType &vec) const
     {
       if ((vec.get_partitioner().get() == this->partitioner_coarse.get()) &&
           (this->partitioner_coarse_embedded != nullptr))
-        internal::SimpleVectorDataExchange<number>(this->partitioner_coarse_embedded,
+        internal::SimpleVectorDataExchange<Number>(this->partitioner_coarse_embedded,
                                                    this->buffer_coarse_embedded)
           .zero_out_ghost_values(vec);
       else if ((vec.get_partitioner().get() == (this->partitioner_fine.get()) &&
                 this->partitioner_fine_embedded != nullptr))
-        internal::SimpleVectorDataExchange<number>(this->partitioner_fine_embedded,
+        internal::SimpleVectorDataExchange<Number>(this->partitioner_fine_embedded,
                                                    this->buffer_fine_embedded)
           .zero_out_ghost_values(vec);
       else

@@ -79,7 +79,7 @@ namespace Portable
                                        const VectorType         &b,
                                        const PreconditionerType &preconditioner)
   {
-    using number                      = typename VectorType::value_type;
+    using Number                      = typename VectorType::value_type;
     SolverControl::State solver_state = SolverControl::iterate;
 
     // Memory allocation
@@ -107,9 +107,9 @@ namespace Portable
 
     int it = 0;
 
-    number r_dot_preconditioner_dot_r = number();
-    number beta                       = number();
-    number alpha                      = number();
+    Number r_dot_preconditioner_dot_r = Number();
+    Number beta                       = Number();
+    Number alpha                      = Number();
 
 
     if (std::is_same<PreconditionerType, PreconditionIdentity>::value == false)
@@ -139,7 +139,7 @@ namespace Portable
       {
         it++;
 
-        const number old_r_dot_preconditioner_dot_r =
+        const Number old_r_dot_preconditioner_dot_r =
           r_dot_preconditioner_dot_r;
 
         if (std::is_same<PreconditionerType, PreconditionIdentity>::value ==
@@ -180,7 +180,7 @@ namespace Portable
         // A.vmult(v, p);
         preconditioner.vmult_interface(v, p);
 
-        const number p_dot_A_dot_p = p * v;
+        const Number p_dot_A_dot_p = p * v;
         Assert(std::abs(p_dot_A_dot_p) != 0., ExcDivideByZero());
         alpha = r_dot_preconditioner_dot_r / p_dot_A_dot_p;
 
@@ -207,7 +207,7 @@ namespace Portable
     const VectorType         &b,
     const PreconditionerType &preconditioner)
   {
-    using number                      = typename VectorType::value_type;
+    using Number                      = typename VectorType::value_type;
     SolverControl::State solver_state = SolverControl::iterate;
 
     // Memory allocation
@@ -235,9 +235,9 @@ namespace Portable
 
     int it = 0;
 
-    number r_dot_preconditioner_dot_r = number();
-    number beta                       = number();
-    number alpha                      = number();
+    Number r_dot_preconditioner_dot_r = Number();
+    Number beta                       = Number();
+    Number alpha                      = Number();
 
 
     if (std::is_same<PreconditionerType, PreconditionIdentity>::value == false)
@@ -267,7 +267,7 @@ namespace Portable
       {
         it++;
 
-        const number old_r_dot_preconditioner_dot_r =
+        const Number old_r_dot_preconditioner_dot_r =
           r_dot_preconditioner_dot_r;
 
         if (std::is_same<PreconditionerType, PreconditionIdentity>::value ==
@@ -313,7 +313,7 @@ namespace Portable
         v.sadd(beta, 1., s_tilde);
 
 
-        const number p_dot_A_dot_p = p * v;
+        const Number p_dot_A_dot_p = p * v;
         Assert(std::abs(p_dot_A_dot_p) != 0., ExcDivideByZero());
         alpha = r_dot_preconditioner_dot_r / p_dot_A_dot_p;
 

@@ -43,8 +43,8 @@ namespace Portable
 
     void
     vmult_cell_only(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const override;
 
 
     void
@@ -371,9 +371,7 @@ namespace Portable
         threads_per_block = 1u;
       }
 
-    const unsigned int n_cells          = cell_local_info.size();
-    const unsigned int n_inner_faces    = face_info_cpu[0].size();
-    const unsigned int n_boundary_faces = face_info_cpu[1].size();
+    const unsigned int n_cells = cell_local_info.size();
 
     if (n_cells > 0)
       {

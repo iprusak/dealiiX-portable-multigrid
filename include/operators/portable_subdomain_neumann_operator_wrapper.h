@@ -23,19 +23,19 @@ DEAL_II_NAMESPACE_OPEN
 namespace Portable
 {
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   class SubdomainNeumannOperatorWrapper
-    : public SubdomainLaplaceOperatorBase<dim, number>
+    : public SubdomainLaplaceOperatorBase<dim, Number>
   {
   public:
     SubdomainNeumannOperatorWrapper(
-      const SubdomainLaplaceOperatorBase<dim, number> &dirichlet_operator)
+      const SubdomainLaplaceOperatorBase<dim, Number> &dirichlet_operator)
       : dirichlet_operator(&dirichlet_operator)
     {}
 
     void
-    vmult(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-          const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+    vmult(LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+          const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
             &src) const override
     {
       dirichlet_operator->vmult_neumann(dst, src);
@@ -43,8 +43,8 @@ namespace Portable
 
     void
     vmult_bk3(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const override
     {
       (void)dst;
@@ -54,8 +54,8 @@ namespace Portable
 
     void
     vmult_dummy(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
                 &src,
       const bool ghost_exchange_on,
       const bool computation_on) const override
@@ -68,8 +68,8 @@ namespace Portable
 
     void
     vmult_interface_cell_range(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const override
     {
       dirichlet_operator->vmult_interface_cell_range(dst, src);
@@ -77,8 +77,8 @@ namespace Portable
 
     void
     vmult_neumann(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const override
     {
       dirichlet_operator->vmult_neumann(dst, src);
@@ -86,8 +86,8 @@ namespace Portable
 
     void
     Tvmult(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const override
     {
       this->vmult(dst, src);
@@ -95,7 +95,7 @@ namespace Portable
 
     void
     initialize_dof_vector(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &vec)
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &vec)
       const override
     {
       dirichlet_operator->initialize_dof_vector(vec);
@@ -108,14 +108,14 @@ namespace Portable
     }
 
     std::shared_ptr<DiagonalMatrix<
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>>>
     get_matrix_diagonal_inverse() const override
     {
       return dirichlet_operator->get_matrix_diagonal_inverse_neumann();
     }
 
     std::shared_ptr<DiagonalMatrix<
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>>>
     get_matrix_diagonal_inverse_neumann() const override
     {
       return dirichlet_operator->get_matrix_diagonal_inverse_neumann();
@@ -133,7 +133,7 @@ namespace Portable
       return dirichlet_operator->n();
     }
 
-    number
+    Number
     el(const types::global_dof_index row,
        const types::global_dof_index col) const override
     {
@@ -149,7 +149,7 @@ namespace Portable
       return 1.0 / (*inverse_diagonal_neumann)(row, row);
     }
 
-    const MatrixFree<dim, number> &
+    const MatrixFree<dim, Number> &
     get_matrix_free() const override
     {
       return dirichlet_operator->get_matrix_free();
@@ -181,7 +181,7 @@ namespace Portable
 
 
   private:
-    ObserverPointer<const SubdomainLaplaceOperatorBase<dim, number>>
+    ObserverPointer<const SubdomainLaplaceOperatorBase<dim, Number>>
       dirichlet_operator;
   };
 } // namespace Portable

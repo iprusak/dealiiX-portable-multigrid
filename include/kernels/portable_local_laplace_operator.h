@@ -11,17 +11,17 @@ DEAL_II_NAMESPACE_OPEN
 
 namespace Portable
 {
-  template <int dim, typename number>
+  template <int dim, typename Number>
   struct CellData
   {
     using TeamHandle =
       Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
     using ViewValues =
-      Kokkos::View<number *,
+      Kokkos::View<Number *,
                    MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                    Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
     using ViewGradients =
-      Kokkos::View<number **,
+      Kokkos::View<Number **,
                    MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                    Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
@@ -30,7 +30,7 @@ namespace Portable
     const unsigned int n_q_points;
     const unsigned int cell_index;
 
-    const typename MatrixFree<dim, number>::PrecomputedData &precomputed_data;
+    const typename MatrixFree<dim, Number>::PrecomputedData &precomputed_data;
 
     const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> &dof_indices;
 
@@ -52,30 +52,30 @@ namespace Portable
 
   namespace internal
   {
-    template <int dim, typename number, typename Functor>
+    template <int dim, typename Number, typename Functor>
     struct ApplyCellKernel
     {
       using TeamHandle =
         Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
       using SharedViewValues =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
       using SharedViewGradients =
-        Kokkos::View<number **,
+        Kokkos::View<Number **,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
       using SharedViewScratchPad =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
       ApplyCellKernel(
         Functor                                                                 func,
-        const typename MatrixFree<dim, number>::PrecomputedData                 precomputed_data,
+        const typename MatrixFree<dim, Number>::PrecomputedData                 precomputed_data,
         const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices,
-        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
-        LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst)
+        const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src,
+        LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst)
         : func(func)
         , precomputed_data(precomputed_data)
         , dof_indices(dof_indices)
@@ -85,12 +85,12 @@ namespace Portable
 
       Functor func;
 
-      const typename MatrixFree<dim, number>::PrecomputedData precomputed_data;
+      const typename MatrixFree<dim, Number>::PrecomputedData precomputed_data;
 
       const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices;
 
-      const DeviceVector<number> src;
-      DeviceVector<number>       dst;
+      const DeviceVector<Number> src;
+      DeviceVector<Number>       dst;
 
       // Provide the shared memory capacity. This function takes the team_size
       // as an argument, which allows team_size dependent allocations.
@@ -116,7 +116,7 @@ namespace Portable
         SharedViewScratchPad scratch_pad(team_member.team_shmem(),
                                          precomputed_data.scratch_pad_size);
 
-        CellData<dim, number> data{team_member,
+        CellData<dim, Number> data{team_member,
                                    Functor::n_q_points,
                                    cell_index,
                                    precomputed_data,
@@ -125,36 +125,36 @@ namespace Portable
                                    gradients,
                                    scratch_pad};
 
-        DeviceVector<number> nonconstdst = dst;
+        DeviceVector<Number> nonconstdst = dst;
         func(&data, src, nonconstdst);
       }
     };
 
-    template <int dim, typename number, typename Functor>
+    template <int dim, typename Number, typename Functor>
     struct ApplyCellKernelRange
     {
       using TeamHandle =
         Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
       using SharedViewValues =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
       using SharedViewGradients =
-        Kokkos::View<number **,
+        Kokkos::View<Number **,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
       using SharedViewScratchPad =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
       ApplyCellKernelRange(
         Functor                                                                 func,
-        const typename MatrixFree<dim, number>::PrecomputedData                 precomputed_data,
+        const typename MatrixFree<dim, Number>::PrecomputedData                 precomputed_data,
         const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices,
         const Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space>  cell_range_ids,
-        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
-        LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst)
+        const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src,
+        LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst)
         : func(func)
         , precomputed_data(precomputed_data)
         , dof_indices(dof_indices)
@@ -165,14 +165,14 @@ namespace Portable
 
       Functor func;
 
-      const typename MatrixFree<dim, number>::PrecomputedData precomputed_data;
+      const typename MatrixFree<dim, Number>::PrecomputedData precomputed_data;
 
       const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices;
 
       const Kokkos::View<unsigned int *, MemorySpace::Default::kokkos_space> cell_range_ids;
 
-      const DeviceVector<number> src;
-      DeviceVector<number>       dst;
+      const DeviceVector<Number> src;
+      DeviceVector<Number>       dst;
 
       // Provide the shared memory capacity. This function takes the team_size
       // as an argument, which allows team_size dependent allocations.
@@ -200,7 +200,7 @@ namespace Portable
         SharedViewScratchPad scratch_pad(team_member.team_shmem(),
                                          precomputed_data.scratch_pad_size);
 
-        CellData<dim, number> data{team_member,
+        CellData<dim, Number> data{team_member,
                                    Functor::n_q_points,
                                    cell_index,
                                    precomputed_data,
@@ -209,7 +209,7 @@ namespace Portable
                                    gradients,
                                    scratch_pad};
 
-        DeviceVector<number> nonconstdst = dst;
+        DeviceVector<Number> nonconstdst = dst;
         func(&data, src, nonconstdst);
       }
     };
@@ -221,10 +221,10 @@ namespace Portable
   // driven through real Portable::MatrixFree::cell_loop() (called directly
   // from LaplaceOperator::vmult_dealii() now, not this file's own
   // cell_loop()/ApplyCellKernel/CellData machinery below) -- so operator()
-  // must take real deal.II's own MatrixFree<dim, number>::Data, not this
+  // must take real deal.II's own MatrixFree<dim, Number>::Data, not this
   // project's CellData (that mismatch, plus a few copy-paste typos, is what
   // made the first draft of this class not compile).
-  template <int dim, int fe_degree, int n_q_points_1d, typename number>
+  template <int dim, int fe_degree, int n_q_points_1d, typename Number>
   class LocalLaplaceOperatorStep64
   {
   public:
@@ -234,11 +234,11 @@ namespace Portable
     LocalLaplaceOperatorStep64() = default;
 
     DEAL_II_HOST_DEVICE void
-    operator()(const typename MatrixFree<dim, number>::Data *data,
-               const DeviceVector<number>                    &src,
-               DeviceVector<number>                          &dst) const
+    operator()(const typename MatrixFree<dim, Number>::Data *data,
+               const DeviceVector<Number>                    &src,
+               DeviceVector<Number>                          &dst) const
     {
-      FEEvaluation<dim, fe_degree, n_q_points_1d, 1, number> fe_eval(data);
+      FEEvaluation<dim, fe_degree, n_q_points_1d, 1, Number> fe_eval(data);
 
       fe_eval.read_dof_values(src);
       fe_eval.evaluate(EvaluationFlags::gradients);
@@ -253,7 +253,7 @@ namespace Portable
   };
 
 
-template <int dim, int fe_degree, int n_q_points_1d, typename number>
+template <int dim, int fe_degree, int n_q_points_1d, typename Number>
 class LocalLaplaceOperator
 {
 public:
@@ -264,17 +264,17 @@ public:
   {}
 
   DEAL_II_HOST_DEVICE void
-  operator()(const CellData<dim, number> *data,
-             const DeviceVector<number>  &src,
-             DeviceVector<number>        &dst) const;
+  operator()(const CellData<dim, Number> *data,
+             const DeviceVector<Number>  &src,
+             DeviceVector<Number>        &dst) const;
 };
 
-template <int dim, int fe_degree, int n_q_points_1d, typename number>
+template <int dim, int fe_degree, int n_q_points_1d, typename Number>
 DEAL_II_HOST_DEVICE void
-LocalLaplaceOperator<dim, fe_degree, n_q_points_1d, number>::operator()(
-  const CellData<dim, number> *data,
-  const DeviceVector<number>  &src,
-  DeviceVector<number>        &dst) const
+LocalLaplaceOperator<dim, fe_degree, n_q_points_1d, Number>::operator()(
+  const CellData<dim, Number> *data,
+  const DeviceVector<Number>  &src,
+  DeviceVector<Number>        &dst) const
 {
   const auto &precomputed_data = data->precomputed_data;
   const int   cell_id          = data->cell_index;
@@ -312,7 +312,7 @@ LocalLaplaceOperator<dim, fe_degree, n_q_points_1d, number>::operator()(
                                    dim,
                                    fe_degree + 1,
                                    n_q_points_1d,
-                                   number>
+                                   Number>
     eval(team_member,
          precomputed_data.shape_values,
          precomputed_data.shape_gradients,
@@ -366,10 +366,10 @@ LocalLaplaceOperator<dim, fe_degree, n_q_points_1d, number>::operator()(
       [&](const int &q_point)
         {
           // 5a. get gradient
-          Tensor<1, dim, number> grad;
+          Tensor<1, dim, Number> grad;
           for (unsigned int d_1 = 0; d_1 < dim; ++d_1)
             {
-              number tmp = 0.;
+              Number tmp = 0.;
               for (unsigned int d_2 = 0; d_2 < dim; ++d_2)
                 tmp += precomputed_data.inv_jacobian(q_point, cell_id, d_2, d_1) *
                        gradients(q_point, d_2);
@@ -379,7 +379,7 @@ LocalLaplaceOperator<dim, fe_degree, n_q_points_1d, number>::operator()(
           // 5b. submit gradient
           for (unsigned int d_1 = 0; d_1 < dim; ++d_1)
             {
-              number tmp = 0.;
+              Number tmp = 0.;
               for (unsigned int d_2 = 0; d_2 < dim; ++d_2)
                 tmp += precomputed_data.inv_jacobian(q_point, cell_id, d_1, d_2) * grad[d_2];
               gradients(q_point, d_1) = tmp * precomputed_data.JxW(q_point, cell_id);

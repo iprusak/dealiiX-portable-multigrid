@@ -19,61 +19,61 @@ DEAL_II_NAMESPACE_OPEN
 namespace Portable
 {
 
-  template <int dim, typename number>
+  template <int dim, typename Number>
   class SubdomainLaplaceOperatorBase : public EnableObserverPointer
   {
   public:
     virtual void
-    vmult(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-          const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+    vmult(LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+          const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
             &src) const = 0;
 
     virtual void
     vmult_bk3(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const = 0;
 
     virtual void
     vmult_dummy(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
                 &src,
       const bool ghost_exchange_on,
       const bool computation_on) const = 0;
 
     virtual void
     vmult_interface_cell_range(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const = 0;
 
     virtual void
     vmult_neumann(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const = 0;
 
     virtual void
     Tvmult(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>
         &src) const = 0;
 
     virtual void
     initialize_dof_vector(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &vec)
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &vec)
       const = 0;
 
     virtual void
     compute_diagonal() = 0;
 
     virtual std::shared_ptr<DiagonalMatrix<
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>>>
     get_matrix_diagonal_inverse() const = 0;
 
     virtual std::shared_ptr<DiagonalMatrix<
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>>
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>>>
     get_matrix_diagonal_inverse_neumann() const = 0;
 
     virtual types::global_dof_index
@@ -82,11 +82,11 @@ namespace Portable
     virtual types::global_dof_index
     n() const = 0;
 
-    virtual number
+    virtual Number
     el(const types::global_dof_index row,
        const types::global_dof_index col) const = 0;
 
-    virtual const MatrixFree<dim, number> &
+    virtual const MatrixFree<dim, Number> &
     get_matrix_free() const = 0;
 
     virtual const std::shared_ptr<const Utilities::MPI::Partitioner> &

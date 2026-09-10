@@ -15,47 +15,47 @@ DEAL_II_NAMESPACE_OPEN
 
 namespace Portable
 {
-  template <int dim, int fe_degree, typename number>
-  class ContinuousTransfer : public MGTransferBase<dim, number>
+  template <int dim, int fe_degree, typename Number>
+  class ContinuousTransfer : public MGTransferBase<dim, Number>
   {
   public:
     ContinuousTransfer() = default;
 
     void
     prolongate_and_add(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const override;
 
     void
     restrict_and_add(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const override;
 
     void
-    reinit(const MatrixFree<dim, number>   &mf_coarse,
-           const MatrixFree<dim, number>   &mf_fine,
-           const AffineConstraints<number> &constraints_coarse,
-           const AffineConstraints<number> &constraints_fine) override;
+    reinit(const MatrixFree<dim, Number>   &mf_coarse,
+           const MatrixFree<dim, Number>   &mf_fine,
+           const AffineConstraints<Number> &constraints_coarse,
+           const AffineConstraints<Number> &constraints_fine) override;
 
     void
     prolongate_and_add_internal(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const;
 
     void
     restrict_and_add_internal(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const;
 
   private:
     void
     setup_dof_indices();
 
-    ObserverPointer<const MatrixFree<dim, number>> matrix_free_coarse;
-    ObserverPointer<const MatrixFree<dim, number>> matrix_free_fine;
+    ObserverPointer<const MatrixFree<dim, Number>> matrix_free_coarse;
+    ObserverPointer<const MatrixFree<dim, Number>> matrix_free_fine;
 
-    ObserverPointer<const AffineConstraints<number>> constraints_fine;
-    ObserverPointer<const AffineConstraints<number>> constraints_coarse;
+    ObserverPointer<const AffineConstraints<Number>> constraints_fine;
+    ObserverPointer<const AffineConstraints<Number>> constraints_coarse;
 
     std::vector<Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space>>
       dof_indices_coarse_cg;
@@ -64,11 +64,11 @@ namespace Portable
       dof_indices_fine_dg;
   };
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  ContinuousTransfer<dim, fe_degree, number>::prolongate_and_add(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  ContinuousTransfer<dim, fe_degree, Number>::prolongate_and_add(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
   {
     Assert(dst.get_partitioner() == matrix_free_fine->get_vector_partitioner(),
            ExcMessage("Fine vector is not initialized correctly."));
@@ -85,11 +85,11 @@ namespace Portable
            ExcMessage("Coarse vector is not handled correclty after prolongation."));
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  ContinuousTransfer<dim, fe_degree, number>::restrict_and_add(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  ContinuousTransfer<dim, fe_degree, Number>::restrict_and_add(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
   {
     Assert(dst.get_partitioner() == matrix_free_coarse->get_vector_partitioner(),
            ExcMessage("Coarse vector is not initialized correctly."));
@@ -107,15 +107,15 @@ namespace Portable
   }
 
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  ContinuousTransfer<dim, fe_degree, number>::prolongate_and_add_internal(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  ContinuousTransfer<dim, fe_degree, Number>::prolongate_and_add_internal(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
   {
     MemorySpace::Default::kokkos_space::execution_space exec;
 
-    DeviceVector<number> src_device(src.get_values(), src.size()),
+    DeviceVector<Number> src_device(src.get_values(), src.size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
 
     const auto &colored_graph = matrix_free_fine->get_colored_graph();
@@ -198,7 +198,7 @@ namespace Portable
       {
         src.update_ghost_values();
 
-        DeviceVector<number> src_device(src.get_values(), src.size()),
+        DeviceVector<Number> src_device(src.get_values(), src.size()),
           dst_device(dst.get_values(), dst.locally_owned_size());
 
         // Execute the loop on the cells
@@ -213,11 +213,11 @@ namespace Portable
     src.zero_out_ghost_values();
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  ContinuousTransfer<dim, fe_degree, number>::restrict_and_add_internal(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  ContinuousTransfer<dim, fe_degree, Number>::restrict_and_add_internal(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
   {
     MemorySpace::Default::kokkos_space::execution_space exec;
 
@@ -225,7 +225,7 @@ namespace Portable
 
     const unsigned int n_colors = colored_graph.size();
 
-    DeviceVector<number> src_device(src.get_values(), src.size()),
+    DeviceVector<Number> src_device(src.get_values(), src.size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
 
     auto do_color = [&](const unsigned int color)
@@ -310,13 +310,13 @@ namespace Portable
       }
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  ContinuousTransfer<dim, fe_degree, number>::reinit(
-    const MatrixFree<dim, number>   &mf_coarse,
-    const MatrixFree<dim, number>   &mf_fine,
-    const AffineConstraints<number> &constraints_coarse,
-    const AffineConstraints<number> &constraints_fine)
+  ContinuousTransfer<dim, fe_degree, Number>::reinit(
+    const MatrixFree<dim, Number>   &mf_coarse,
+    const MatrixFree<dim, Number>   &mf_fine,
+    const AffineConstraints<Number> &constraints_coarse,
+    const AffineConstraints<Number> &constraints_fine)
   {
     this->matrix_free_coarse = &mf_coarse;
     this->matrix_free_fine   = &mf_fine;
@@ -327,9 +327,9 @@ namespace Portable
     setup_dof_indices();
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  ContinuousTransfer<dim, fe_degree, number>::setup_dof_indices()
+  ContinuousTransfer<dim, fe_degree, Number>::setup_dof_indices()
   {
     const auto &dof_handler_fine   = matrix_free_fine->get_dof_handler();
     const auto &dof_handler_coarse = matrix_free_coarse->get_dof_handler();
@@ -342,7 +342,7 @@ namespace Portable
     const unsigned int n_colors = colored_graph_fine.size();
 
     Assert(n_colors == colored_graph_coarse.size(),
-           ExcMessage("Portable matrix free objects must have the same number of colors"));
+           ExcMessage("Portable matrix free objects must have the same Number of colors"));
 
     const unsigned int n_dofs_per_cell_fine   = fe_fine.n_dofs_per_cell();
     const unsigned int n_dofs_per_cell_coarse = fe_coarse.n_dofs_per_cell();

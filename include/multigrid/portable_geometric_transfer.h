@@ -32,7 +32,7 @@ namespace Portable
      * transfer scheme for transfer between children and parent cells, as well
      * as, one transfer scheme for cells that are not refined).
      */
-    template <int dim, int fe_degree, typename number>
+    template <int dim, int fe_degree, typename Number>
     struct MGTransferScheme
     {
       /**
@@ -73,23 +73,23 @@ namespace Portable
        * restrict_and_add() functions.
        */
 
-      Kokkos::View<number *, MemorySpace::Default::kokkos_space> prolongation_matrix_shared_memory;
+      Kokkos::View<Number *, MemorySpace::Default::kokkos_space> prolongation_matrix_shared_memory;
 
-      Kokkos::View<number **, MemorySpace::Default::kokkos_space> weights;
+      Kokkos::View<Number **, MemorySpace::Default::kokkos_space> weights;
 
       Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_coarse;
 
       Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_fine;
     };
 
-    template <int dim, typename number>
+    template <int dim, typename Number>
     struct TransferCellData
     {
       using TeamHandle =
         Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
 
       using SharedView =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
@@ -99,7 +99,7 @@ namespace Portable
 
       const SharedView &prolongation_matrix;
 
-      const Kokkos::View<number **, MemorySpace::Default::kokkos_space> &weights;
+      const Kokkos::View<Number **, MemorySpace::Default::kokkos_space> &weights;
 
       const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> &dof_indices_coarse;
 
@@ -119,25 +119,25 @@ namespace Portable
       SharedView &scratch_pad;
     };
 
-    template <int dim, int fe_degree, typename number, typename Functor>
+    template <int dim, int fe_degree, typename Number, typename Functor>
     struct ApplyCellKernel
     {
       using TeamHandle =
         Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
       using SharedViewValues =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
       ApplyCellKernel(
         Functor func,
-        const Kokkos::View<number *, MemorySpace::Default::kokkos_space>
+        const Kokkos::View<Number *, MemorySpace::Default::kokkos_space>
           prolongation_matrix_shared_memory,
-        const Kokkos::View<number **, MemorySpace::Default::kokkos_space>       weights,
+        const Kokkos::View<Number **, MemorySpace::Default::kokkos_space>       weights,
         const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_coarse,
         const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_fine,
-        const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
-        LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst)
+        const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src,
+        LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst)
         : func(func)
         , prolongation_matrix_shared_memory(prolongation_matrix_shared_memory)
         , weights(weights)
@@ -149,17 +149,17 @@ namespace Portable
 
       Functor func;
 
-      const Kokkos::View<number *, MemorySpace::Default::kokkos_space>
+      const Kokkos::View<Number *, MemorySpace::Default::kokkos_space>
         prolongation_matrix_shared_memory;
 
-      const Kokkos::View<number **, MemorySpace::Default::kokkos_space> weights;
+      const Kokkos::View<Number **, MemorySpace::Default::kokkos_space> weights;
 
       const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_coarse;
 
       const Kokkos::View<unsigned int **, MemorySpace::Default::kokkos_space> dof_indices_fine;
 
-      const DeviceVector<number> src;
-      DeviceVector<number>       dst;
+      const DeviceVector<Number> src;
+      DeviceVector<Number>       dst;
 
       // Provide the shared memory capacity. This function takes the team_size
       // as an argument, which allows team_size dependent allocations.
@@ -200,7 +200,7 @@ namespace Portable
         team_member.team_barrier();
 
 
-        TransferCellData<dim, number> data{team_member,
+        TransferCellData<dim, Number> data{team_member,
                                            cell_index,
                                            prolongation_matrix_device,
                                            weights,
@@ -210,12 +210,12 @@ namespace Portable
                                            values_fine,
                                            scratch_pad};
 
-        DeviceVector<number> nonconstdst = dst;
+        DeviceVector<Number> nonconstdst = dst;
         func(&data, src, nonconstdst);
       }
     };
 
-    template <int dim, int fe_degree, typename number>
+    template <int dim, int fe_degree, typename Number>
     class CellProlongationKernel : public EnableObserverPointer
     {
     public:
@@ -223,7 +223,7 @@ namespace Portable
         Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
 
       using SharedView =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
@@ -231,32 +231,32 @@ namespace Portable
 
 
       DEAL_II_HOST_DEVICE void
-      operator()(const TransferCellData<dim, number> *cell_data,
-                 const DeviceVector<number>          &src,
-                 DeviceVector<number>                &dst) const;
+      operator()(const TransferCellData<dim, Number> *cell_data,
+                 const DeviceVector<Number>          &src,
+                 DeviceVector<Number>                &dst) const;
 
       static const unsigned int degree_coarse =
-        MGTransferScheme<dim, fe_degree, number>::degree_coarse;
-      static const unsigned int degree_fine = MGTransferScheme<dim, fe_degree, number>::degree_fine;
+        MGTransferScheme<dim, fe_degree, Number>::degree_coarse;
+      static const unsigned int degree_fine = MGTransferScheme<dim, fe_degree, Number>::degree_fine;
 
       static const unsigned int n_dofs_per_cell_coarse =
-        MGTransferScheme<dim, fe_degree, number>::n_dofs_per_cell_coarse;
+        MGTransferScheme<dim, fe_degree, Number>::n_dofs_per_cell_coarse;
 
       static const unsigned int n_dofs_per_cell_fine =
-        MGTransferScheme<dim, fe_degree, number>::n_dofs_per_cell_fine;
+        MGTransferScheme<dim, fe_degree, Number>::n_dofs_per_cell_fine;
     };
 
-    template <int dim, int fe_degree, typename number>
-    CellProlongationKernel<dim, fe_degree, number>::CellProlongationKernel()
+    template <int dim, int fe_degree, typename Number>
+    CellProlongationKernel<dim, fe_degree, Number>::CellProlongationKernel()
     {}
 
 
-    template <int dim, int fe_degree, typename number>
+    template <int dim, int fe_degree, typename Number>
     DEAL_II_HOST_DEVICE void
-    CellProlongationKernel<dim, fe_degree, number>::operator()(
-      const TransferCellData<dim, number> *cell_data,
-      const DeviceVector<number>          &src,
-      DeviceVector<number>                &dst) const
+    CellProlongationKernel<dim, fe_degree, Number>::operator()(
+      const TransferCellData<dim, Number> *cell_data,
+      const DeviceVector<Number>          &src,
+      DeviceVector<Number>                &dst) const
     {
       const int   cell_index  = cell_data->cell_index;
       const auto &team_member = cell_data->team_member;
@@ -304,7 +304,7 @@ namespace Portable
                                      const int base_coarse   = i * Nk;
                                      const int stride_coarse = 1;
 
-                                     number sum = prolongation_matrix_scratch(base_kernel) *
+                                     Number sum = prolongation_matrix_scratch(base_kernel) *
                                                   values_coarse(base_coarse);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -336,7 +336,7 @@ namespace Portable
                                      const int base_tmp   = i;
                                      const int stride_tmp = degree_fine + 1;
 
-                                     number sum =
+                                     Number sum =
                                        prolongation_matrix_scratch(base_kernel) * tmp(base_tmp);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -376,7 +376,7 @@ namespace Portable
                                      const int base_coarse   = (i * Nj + j) * Nk;
                                      const int stride_coarse = 1;
 
-                                     number sum = prolongation_matrix_scratch(base_kernel) *
+                                     Number sum = prolongation_matrix_scratch(base_kernel) *
                                                   values_coarse(base_coarse);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -408,7 +408,7 @@ namespace Portable
                                      const int base_tmp1   = i + j * Ni * Nk;
                                      const int stride_tmp1 = degree_fine + 1;
 
-                                     number sum =
+                                     Number sum =
                                        prolongation_matrix_scratch(base_kernel) * tmp1(base_tmp1);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -439,7 +439,7 @@ namespace Portable
 
                                      const int base_tmp2   = i * Nj + j;
                                      const int stride_tmp2 = Utilities::pow(degree_fine + 1, 2);
-                                     number    sum =
+                                     Number    sum =
                                        prolongation_matrix_scratch(base_kernel) * tmp2(base_tmp2);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -470,7 +470,7 @@ namespace Portable
       team_member.team_barrier();
     }
 
-    template <int dim, int fe_degree, typename number>
+    template <int dim, int fe_degree, typename Number>
     class CellRestrictionKernel : public EnableObserverPointer
     {
     public:
@@ -478,7 +478,7 @@ namespace Portable
         Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>::member_type;
 
       using SharedView =
-        Kokkos::View<number *,
+        Kokkos::View<Number *,
                      MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                      Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
@@ -487,30 +487,30 @@ namespace Portable
 
 
       DEAL_II_HOST_DEVICE void
-      operator()(const TransferCellData<dim, number> *cell_data,
-                 const DeviceVector<number>          &src,
-                 DeviceVector<number>                &dst) const;
+      operator()(const TransferCellData<dim, Number> *cell_data,
+                 const DeviceVector<Number>          &src,
+                 DeviceVector<Number>                &dst) const;
 
       static const unsigned int degree_coarse =
-        MGTransferScheme<dim, fe_degree, number>::degree_coarse;
-      static const unsigned int degree_fine = MGTransferScheme<dim, fe_degree, number>::degree_fine;
+        MGTransferScheme<dim, fe_degree, Number>::degree_coarse;
+      static const unsigned int degree_fine = MGTransferScheme<dim, fe_degree, Number>::degree_fine;
 
       static const unsigned int n_dofs_per_cell_coarse =
-        MGTransferScheme<dim, fe_degree, number>::n_dofs_per_cell_coarse;
+        MGTransferScheme<dim, fe_degree, Number>::n_dofs_per_cell_coarse;
       static const unsigned int n_dofs_per_cell_fine =
-        MGTransferScheme<dim, fe_degree, number>::n_dofs_per_cell_fine;
+        MGTransferScheme<dim, fe_degree, Number>::n_dofs_per_cell_fine;
     };
 
-    template <int dim, int fe_degree, typename number>
-    CellRestrictionKernel<dim, fe_degree, number>::CellRestrictionKernel()
+    template <int dim, int fe_degree, typename Number>
+    CellRestrictionKernel<dim, fe_degree, Number>::CellRestrictionKernel()
     {}
 
-    template <int dim, int fe_degree, typename number>
+    template <int dim, int fe_degree, typename Number>
     DEAL_II_HOST_DEVICE void
-    CellRestrictionKernel<dim, fe_degree, number>::operator()(
-      const TransferCellData<dim, number> *cell_data,
-      const DeviceVector<number>          &src,
-      DeviceVector<number>                &dst) const
+    CellRestrictionKernel<dim, fe_degree, Number>::operator()(
+      const TransferCellData<dim, Number> *cell_data,
+      const DeviceVector<Number>          &src,
+      DeviceVector<Number>                &dst) const
     {
       const int   cell_index  = cell_data->cell_index;
       const auto &team_member = cell_data->team_member;
@@ -558,7 +558,7 @@ namespace Portable
                                      const int base_fine   = i;
                                      const int stride_fine = degree_fine + 1;
 
-                                     number sum = prolongation_matrix_scratch(base_kernel) *
+                                     Number sum = prolongation_matrix_scratch(base_kernel) *
                                                   values_fine(base_fine);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -590,7 +590,7 @@ namespace Portable
                                      const int base_tmp   = i * Nk;
                                      const int stride_tmp = 1;
 
-                                     number sum =
+                                     Number sum =
                                        prolongation_matrix_scratch(base_kernel) * tmp(base_tmp);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -631,7 +631,7 @@ namespace Portable
                                      const int base_fine   = i * Nj + j;
                                      const int stride_fine = Utilities::pow(degree_fine + 1, 2);
 
-                                     number sum = prolongation_matrix_scratch(base_kernel) *
+                                     Number sum = prolongation_matrix_scratch(base_kernel) *
                                                   values_fine(base_fine);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -662,7 +662,7 @@ namespace Portable
 
                                      const int base_tmp1   = i + j * Ni * Nk;
                                      const int stride_tmp1 = degree_fine + 1;
-                                     number    sum =
+                                     Number    sum =
                                        prolongation_matrix_scratch(base_kernel) * tmp1(base_tmp1);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -695,7 +695,7 @@ namespace Portable
                                      const int base_tmp2   = (i * Nj + j) * Nk;
                                      const int stride_tmp2 = 1;
 
-                                     number sum =
+                                     Number sum =
                                        prolongation_matrix_scratch(base_kernel) * tmp2(base_tmp2);
 
                                      for (int k = 1; k < Nk; ++k)
@@ -723,28 +723,28 @@ namespace Portable
     }
   } // namespace h_mg_transfer
 
-  template <int dim, int fe_degree, typename number>
-  class GeometricTransfer : public internal::GeometricTransferCore<dim, number>
+  template <int dim, int fe_degree, typename Number>
+  class GeometricTransfer : public internal::GeometricTransferCore<dim, Number>
   {
   public:
     GeometricTransfer();
 
     void
-    reinit(const MatrixFree<dim, number>   &mf_coarse,
-           const MatrixFree<dim, number>   &mf_fine,
-           const AffineConstraints<number> &constraints_coarse,
-           const AffineConstraints<number> &constraints_fine) override;
+    reinit(const MatrixFree<dim, Number>   &mf_coarse,
+           const MatrixFree<dim, Number>   &mf_fine,
+           const AffineConstraints<Number> &constraints_coarse,
+           const AffineConstraints<Number> &constraints_fine) override;
 
   private:
     void
     prolongate_and_add_internal(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const override;
 
     void
     restrict_and_add_internal(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const override;
 
     void
     setup_weights();
@@ -752,14 +752,14 @@ namespace Portable
     void
     setup_dof_indices();
 
-    std::vector<h_mg_transfer::MGTransferScheme<dim, fe_degree, number>> transfer_schemes;
+    std::vector<h_mg_transfer::MGTransferScheme<dim, fe_degree, Number>> transfer_schemes;
 
-    ObserverPointer<const MatrixFree<dim, number>> matrix_free_coarse;
-    ObserverPointer<const MatrixFree<dim, number>> matrix_free_fine;
+    ObserverPointer<const MatrixFree<dim, Number>> matrix_free_coarse;
+    ObserverPointer<const MatrixFree<dim, Number>> matrix_free_fine;
 
 
-    ObserverPointer<const AffineConstraints<number>> constraints_fine;
-    ObserverPointer<const AffineConstraints<number>> constraints_coarse;
+    ObserverPointer<const AffineConstraints<Number>> constraints_fine;
+    ObserverPointer<const AffineConstraints<Number>> constraints_coarse;
 
     ObserverPointer<const DoFHandler<dim>> dof_handler_fine;
     ObserverPointer<const DoFHandler<dim>> dof_handler_coarse;
@@ -768,32 +768,32 @@ namespace Portable
     const unsigned int mg_level_fine   = numbers::invalid_unsigned_int;
 
     dealii::internal::MatrixFreeFunctions::
-      ConstraintInfo<dim, VectorizedArray<number, 1>, types::global_dof_index>
+      ConstraintInfo<dim, VectorizedArray<Number, 1>, types::global_dof_index>
         constraint_info_fine;
 
     dealii::internal::MatrixFreeFunctions::
-      ConstraintInfo<dim, VectorizedArray<number, 1>, types::global_dof_index>
+      ConstraintInfo<dim, VectorizedArray<Number, 1>, types::global_dof_index>
         constraint_info_coarse;
   };
 
 
-  template <int dim, int fe_degree, typename number>
-  GeometricTransfer<dim, fe_degree, number>::GeometricTransfer()
+  template <int dim, int fe_degree, typename Number>
+  GeometricTransfer<dim, fe_degree, Number>::GeometricTransfer()
   {}
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  GeometricTransfer<dim, fe_degree, number>::prolongate_and_add_internal(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  GeometricTransfer<dim, fe_degree, Number>::prolongate_and_add_internal(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
   {
     using TeamPolicy = Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>;
 
-    using Functor = h_mg_transfer::CellProlongationKernel<dim, fe_degree, number>;
+    using Functor = h_mg_transfer::CellProlongationKernel<dim, fe_degree, Number>;
 
     MemorySpace::Default::kokkos_space::execution_space exec;
 
-    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
+    DeviceVector<Number> src_device(src.get_values(), src.locally_owned_size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
 
     unsigned int scheme_index = 0;
@@ -814,7 +814,7 @@ namespace Portable
           }
 
         BK1::Parallel::
-          KokkosProlongationBatchedKernelAbstracted<dim, fe_degree + 1, 2 * fe_degree + 1, number>(
+          KokkosProlongationBatchedKernelAbstracted<dim, fe_degree + 1, 2 * fe_degree + 1, Number>(
             scheme.prolongation_matrix_shared_memory,
             src_device,
             dst_device,
@@ -829,18 +829,18 @@ namespace Portable
       }
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  GeometricTransfer<dim, fe_degree, number>::restrict_and_add_internal(
-    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  GeometricTransfer<dim, fe_degree, Number>::restrict_and_add_internal(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
   {
     using TeamPolicy = Kokkos::TeamPolicy<MemorySpace::Default::kokkos_space::execution_space>;
-    using Functor    = h_mg_transfer::CellRestrictionKernel<dim, fe_degree, number>;
+    using Functor    = h_mg_transfer::CellRestrictionKernel<dim, fe_degree, Number>;
 
     MemorySpace::Default::kokkos_space::execution_space exec;
 
-    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
+    DeviceVector<Number> src_device(src.get_values(), src.locally_owned_size()),
       dst_device(dst.get_values(), dst.locally_owned_size());
 
 
@@ -863,7 +863,7 @@ namespace Portable
           }
 
         BK1::Parallel::
-          KokkosRestrictionBatchedKernelAbstracted<dim, fe_degree + 1, 2 * fe_degree + 1, number>(
+          KokkosRestrictionBatchedKernelAbstracted<dim, fe_degree + 1, 2 * fe_degree + 1, Number>(
             scheme.prolongation_matrix_shared_memory,
             src_device,
             dst_device,
@@ -878,13 +878,13 @@ namespace Portable
       }
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  GeometricTransfer<dim, fe_degree, number>::reinit(
-    const MatrixFree<dim, number>   &mf_coarse,
-    const MatrixFree<dim, number>   &mf_fine,
-    const AffineConstraints<number> &constraints_coarse,
-    const AffineConstraints<number> &constraints_fine)
+  GeometricTransfer<dim, fe_degree, Number>::reinit(
+    const MatrixFree<dim, Number>   &mf_coarse,
+    const MatrixFree<dim, Number>   &mf_fine,
+    const AffineConstraints<Number> &constraints_coarse,
+    const AffineConstraints<Number> &constraints_fine)
   {
     Assert((this->mg_level_fine == numbers::invalid_unsigned_int &&
             this->mg_level_coarse == numbers::invalid_unsigned_int) ||
@@ -969,7 +969,7 @@ namespace Portable
       {
         /**  FIXME: MGTransferScheme for the moment assumes only global
          * refinement, not local. */
-        // number of dofs on coarse and fine cells
+        // Number of dofs on coarse and fine cells
         // scheme.n_dofs_per_cell_coarse = fe_coarse.n_dofs_per_cell();
         // scheme.n_dofs_per_cell_fine =
         //   Utilities::pow(2 * fe_fine.degree + 1, dim);
@@ -989,7 +989,7 @@ namespace Portable
         Assert(scheme.n_dofs_per_cell_fine == Utilities::pow(2 * fe_fine.degree + 1, dim),
                ExcMessage("Scheme n_dofs_per_cell_fine is not set correctly."));
 
-        // reset number of coarse cells
+        // reset Number of coarse cells
         scheme.n_coarse_cells = 0;
       }
 
@@ -1063,7 +1063,7 @@ namespace Portable
       {
         const Quadrature<1> dummy_quadrature(std::vector<Point<1>>(1, Point<1>()));
 
-        dealii::internal::MatrixFreeFunctions::ShapeInfo<number> shape_info;
+        dealii::internal::MatrixFreeFunctions::ShapeInfo<Number> shape_info;
 
         shape_info.reinit(dummy_quadrature, fe_fine, 0);
         lexicographic_numbering_fine = shape_info.lexicographic_numbering;
@@ -1250,7 +1250,7 @@ namespace Portable
             //                               n_child_dofs_1d);
 
             transfer_schemes[transfer_scheme_index].prolongation_matrix_shared_memory =
-              Kokkos::View<number *, MemorySpace::Default::kokkos_space>(
+              Kokkos::View<Number *, MemorySpace::Default::kokkos_space>(
                 Kokkos::view_alloc("prolongation_matrix_h_transfer_scheme_" +
                                      std::to_string(transfer_scheme_index),
                                    Kokkos::WithoutInitializing),
@@ -1278,11 +1278,11 @@ namespace Portable
     setup_weights();
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  GeometricTransfer<dim, fe_degree, number>::setup_weights()
+  GeometricTransfer<dim, fe_degree, Number>::setup_weights()
   {
-    LinearAlgebra::distributed::Vector<number> weight_vector;
+    LinearAlgebra::distributed::Vector<Number> weight_vector;
     weight_vector.reinit(this->partitioner_fine);
 
     for (const auto i : constraint_info_fine.dof_indices)
@@ -1305,7 +1305,7 @@ namespace Portable
     unsigned int scheme_index = 0;
     for (auto &scheme : transfer_schemes)
       {
-        scheme.weights = Kokkos::View<number **, MemorySpace::Default::kokkos_space>(
+        scheme.weights = Kokkos::View<Number **, MemorySpace::Default::kokkos_space>(
           Kokkos::view_alloc("weights_h_transer_scheme_" + std::to_string(scheme_index),
                              Kokkos::WithoutInitializing),
           scheme.n_dofs_per_cell_fine,
@@ -1333,9 +1333,9 @@ namespace Portable
       }
   }
 
-  template <int dim, int fe_degree, typename number>
+  template <int dim, int fe_degree, typename Number>
   void
-  GeometricTransfer<dim, fe_degree, number>::setup_dof_indices()
+  GeometricTransfer<dim, fe_degree, Number>::setup_dof_indices()
   {
     unsigned int scheme_counter = 0;
     unsigned int cell_counter   = 0;
