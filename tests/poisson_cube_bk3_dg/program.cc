@@ -683,6 +683,60 @@ namespace multigrid
         best_mvs = std::min(best_mvs, stat.max);
       }
 
+    double best_mv_cell_full   = 1e10;
+    double best_mv_cell_vcycle = 1e10;
+
+    {
+      LinearAlgebra::distributed::Vector<full_number, MemorySpace::Default>   dst_full, src_full;
+      LinearAlgebra::distributed::Vector<vcycle_number, MemorySpace::Default> dst_vcycle,
+        src_vcycle;
+
+      dst_full.reinit(system_rhs_device);
+      src_full.reinit(system_rhs_device);
+
+      level_matrices.back()->initialize_dof_vector(dst_vcycle);
+      src_vcycle.reinit(dst_vcycle);
+
+
+      for (unsigned int i = 0; i < 5; ++i)
+        {
+          const unsigned int n_mv = dof_handler.n_dofs() < 10000000 ? 200 : 50;
+
+          Kokkos::fence();
+          time.restart();
+
+          for (unsigned int i = 0; i < n_mv; ++i)
+            level_matrices.back()->vmult_cell_only(dst_vcycle, src_vcycle);
+
+          Kokkos::fence();
+
+          Utilities::MPI::MinMaxAvg stat =
+            Utilities::MPI::min_max_avg(time.wall_time() / n_mv, MPI_COMM_WORLD);
+
+          best_mv_cell_vcycle = std::min(best_mv_cell_vcycle, stat.max);
+        }
+
+
+
+      for (unsigned int i = 0; i < 5; ++i)
+        {
+          const unsigned int n_mv = dof_handler.n_dofs() < 10000000 ? 200 : 50;
+
+          Kokkos::fence();
+          time.restart();
+
+          for (unsigned int i = 0; i < n_mv; ++i)
+            fine_level_matrix->vmult_cell_only(dst_full, src_full);
+
+          Kokkos::fence();
+
+          Utilities::MPI::MinMaxAvg stat =
+            Utilities::MPI::min_max_avg(time.wall_time() / n_mv, MPI_COMM_WORLD);
+
+          best_mv_cell_full = std::min(best_mv_cell_full, stat.max);
+        }
+    }
+
     std::vector<double> prolongate_per_level(level_matrices.max_level());
     std::vector<double> restrict_per_level(level_matrices.max_level());
 
@@ -748,6 +802,8 @@ namespace multigrid
     convergence_table.add_value("cg_time", time_cg);
     convergence_table.add_value("cg_its", cg_details.first);
     convergence_table.add_value("cg_reduction", cg_details.second);
+    convergence_table.add_value("mv_cell_full", best_mv_cell_full);
+    convergence_table.add_value("mv_cell_vcycle", best_mv_cell_vcycle);
 
     if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
       for (unsigned int level = 1; level <= level_matrices.max_level(); level++)
@@ -970,6 +1026,10 @@ namespace multigrid
             convergence_table.set_precision("cg_reduction", 3);
             convergence_table.set_scientific("cg_time", true);
             convergence_table.set_precision("cg_time", 3);
+            convergence_table.set_scientific("mv_cell_full", true);
+            convergence_table.set_precision("mv_cell_full", 3);
+            convergence_table.set_scientific("mv_cell_vcycle", true);
+            convergence_table.set_precision("mv_cell_vcycle", 3);
 
             convergence_table.write_text(std::cout);
 
