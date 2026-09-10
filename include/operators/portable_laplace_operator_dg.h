@@ -31,14 +31,6 @@ namespace Portable
                       bool                             overlap_communication_computation);
 
     void
-    vmult_new(
-      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
-      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override
-    {
-      DEAL_II_NOT_IMPLEMENTED();
-    }
-
-    void
     reinit(const Mapping<dim>              &mapping,
            const DoFHandler<dim>           &dof_handler,
            const AffineConstraints<Number> &constraints,
@@ -48,6 +40,12 @@ namespace Portable
     vmult(
       LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
       const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const override;
+
+    void
+    vmult_cell_only(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+
 
     void
     vmult_dummy(LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
@@ -278,11 +276,8 @@ namespace Portable
 
     if (is_serial)
       {
-        n_blocks          = 1u;
         threads_per_block = 1u;
       }
-
-    // n_cells_per_batch = 1u;
 
     const unsigned int n_cells          = cell_local_info.size();
     const unsigned int n_inner_faces    = face_info_cpu[0].size();
@@ -350,6 +345,53 @@ namespace Portable
     src.zero_out_ghost_values();
     dst.zero_out_ghost_values();
 
+
+    matrix_free.copy_constrained_values(src, dst);
+  }
+
+
+  template <int dim, int fe_degree, int n_q_points_1d, typename Number>
+  void
+  LaplaceOperatorDG<dim, fe_degree, n_q_points_1d, Number>::vmult_cell_only(
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &src) const
+  {
+    DeviceVector<Number> src_device(src.get_values(), src.locally_owned_size()),
+      dst_device(dst.get_values(), dst.locally_owned_size());
+
+    constexpr bool is_serial =
+      std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
+
+    unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
+    unsigned int n_blocks          = numbers::invalid_unsigned_int;
+    unsigned int threads_per_block = numbers::invalid_unsigned_int;
+
+    if (is_serial)
+      {
+        threads_per_block = 1u;
+      }
+
+    const unsigned int n_cells          = cell_local_info.size();
+    const unsigned int n_inner_faces    = face_info_cpu[0].size();
+    const unsigned int n_boundary_faces = face_info_cpu[1].size();
+
+    if (n_cells > 0)
+      {
+        BK3::DG::compute_cell<dim, fe_degree + 1, n_q_points_1d, Number>(
+          shape_data.shape_values,
+          shape_data.shape_gradients_collocation,
+          geometric_transformation_symmetric_cell,
+          src_device,
+          dst_device,
+          interpolate_quad_to_boundary,
+          face_values_at_quads,
+          face_normal_derivatives_at_quads,
+          dof_indices,
+          n_cells,
+          n_cells_per_batch,
+          n_blocks,
+          threads_per_block);
+      }
 
     matrix_free.copy_constrained_values(src, dst);
   }

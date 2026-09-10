@@ -120,9 +120,13 @@ namespace multigrid
 
     parallel::distributed::Triangulation<dim> triangulation;
 
-    MappingQ<dim>   mapping;
-    FE_DGQ<dim>     fe;
+    MappingQ<dim> mapping;
+    FE_DGQ<dim>   fe;
+    FE_Q<dim>     fe_q;
+
     DoFHandler<dim> dof_handler;
+    DoFHandler<dim> dof_handler_fe_q;
+
 
     IndexSet locally_owned_dofs;
     IndexSet locally_relevant_dofs;
@@ -216,7 +220,9 @@ namespace multigrid
     , triangulation(mpi_communicator)
     , mapping(fe_degree)
     , fe(fe_degree)
+    , fe_q(fe_degree)
     , dof_handler(triangulation)
+    , dof_handler_fe_q(triangulation)
     , setup_time(0.)
     , pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
     , time_details(std::cout, true && Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
@@ -280,6 +286,9 @@ namespace multigrid
 
     dof_handler.reinit(triangulation);
     dof_handler.distribute_dofs(fe);
+
+    dof_handler_fe_q.reinit(triangulation);
+    dof_handler_fe_q.distribute_dofs(fe_q);
 
     pcout << "Number of degrees of freedom: " << dof_handler.n_dofs() << " = ("
           << ((int)std::pow(dof_handler.n_dofs() * 1.0000001, 1. / dim) - 1) / fe.degree << " x "
@@ -733,6 +742,7 @@ namespace multigrid
 
     convergence_table.add_value("cells", triangulation.n_global_active_cells());
     convergence_table.add_value("dofs", dof_handler.n_dofs());
+    convergence_table.add_value("dofs_FEQ", dof_handler_fe_q.n_dofs());
     convergence_table.add_value("mv_outer", best_mv);
     convergence_table.add_value("mv_inner", best_mvs);
     convergence_table.add_value("cg_time", time_cg);
@@ -842,6 +852,7 @@ namespace multigrid
 
     ghost_timing_table.add_value("cells", triangulation.n_global_active_cells());
     ghost_timing_table.add_value("dofs", dof_handler.n_dofs());
+    ghost_timing_table.add_value("dofs_FEQ", dof_handler_fe_q.n_dofs());
     ghost_timing_table.add_value("mv_ghost_and_compute", best_mv_both);
     ghost_timing_table.add_value("mv_compute_only", best_only_comp);
     ghost_timing_table.add_value("mv_ghost_only", best_only_ghost);

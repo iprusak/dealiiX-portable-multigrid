@@ -31,6 +31,11 @@ namespace Portable
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
 
     void
+    vmult_cell_only(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+
+    void
     vmult_dummy(LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
                 const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
                 const bool ghost_exchange_on,
@@ -219,6 +224,16 @@ namespace Portable
     src.zero_out_ghost_values();
     matrix_free.copy_constrained_values(src, dst);
   }
+
+  template <int dim, int fe_degree, typename number>
+  void
+  LaplaceOperatorBK3<dim, fe_degree, number>::vmult_cell_only(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  {
+    this->vmult(dst, src);
+  }
+
 
   template <int dim, int fe_degree, typename number>
   void

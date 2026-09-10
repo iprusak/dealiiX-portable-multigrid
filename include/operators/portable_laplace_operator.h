@@ -36,7 +36,7 @@ namespace Portable
     static constexpr unsigned int n_local_dofs  = Utilities::pow(fe_degree_ + 1, dim);
     static constexpr unsigned int n_q_points    = Utilities::pow(n_q_points_1d_, dim);
     static constexpr unsigned int n_q_points_1d = n_q_points_1d_;
-    static constexpr unsigned int fe_degree = fe_degree_;
+    static constexpr unsigned int fe_degree     = fe_degree_;
 
     LocalLaplaceOperatorNew() = default;
 
@@ -73,6 +73,11 @@ namespace Portable
 
     void
     vmult(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+
+    void
+    vmult_cell_only(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
 
@@ -272,6 +277,16 @@ namespace Portable
 
   template <int dim, int fe_degree, typename number>
   void
+  LaplaceOperator<dim, fe_degree, number>::vmult_cell_only(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  {
+    this->vmult(dst, src);
+  }
+
+
+  template <int dim, int fe_degree, typename number>
+  void
   LaplaceOperator<dim, fe_degree, number>::vmult_dealii(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
@@ -318,8 +333,8 @@ namespace Portable
     constexpr bool is_serial =
       std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
 
-    unsigned int numBlocks         = numbers::invalid_unsigned_int;
-    unsigned int threadsPerBlock   = numbers::invalid_unsigned_int;
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
     // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
     unsigned int n_cells_per_batch = 1;
 
@@ -416,8 +431,8 @@ namespace Portable
     constexpr bool is_serial =
       std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
 
-    unsigned int numBlocks         = numbers::invalid_unsigned_int;
-    unsigned int threadsPerBlock   = numbers::invalid_unsigned_int;
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
     // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
     unsigned int n_cells_per_batch = 1;
 
@@ -658,8 +673,8 @@ namespace Portable
     constexpr bool is_serial =
       std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
 
-    unsigned int numBlocks         = numbers::invalid_unsigned_int;
-    unsigned int threadsPerBlock   = numbers::invalid_unsigned_int;
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
     // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
     unsigned int n_cells_per_batch = 1;
 
@@ -744,8 +759,8 @@ namespace Portable
     constexpr bool is_serial =
       std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
 
-    unsigned int numBlocks         = numbers::invalid_unsigned_int;
-    unsigned int threadsPerBlock   = numbers::invalid_unsigned_int;
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
     // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
     unsigned int n_cells_per_batch = 1;
 
