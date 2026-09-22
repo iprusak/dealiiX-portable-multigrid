@@ -7,9 +7,7 @@
 
 #include <memory>
 
-#ifdef __CUDACC__
-#  include <nvtx3/nvToolsExt.h>
-#endif
+#include "base/nvtx_profiling.h"
 
 #include "base/portable_laplace_operator_base.h"
 #include "kernels/bk3_kokkos_kernels.h"
@@ -270,6 +268,7 @@ namespace Portable
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
   {
+    NVTX_RANGE("Laplace vmult", dealiiX::nvtx::color::matvec);
     this->vmult_dealii(dst, src);
   }
 

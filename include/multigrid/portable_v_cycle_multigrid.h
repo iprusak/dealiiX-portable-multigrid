@@ -16,6 +16,7 @@
 
 #include <Kokkos_Core.hpp>
 
+#include "base/nvtx_profiling.h"
 #include "base/portable_laplace_operator_base.h"
 #include "base/portable_v_cycle_multigrid_base.h"
 
@@ -131,6 +132,8 @@ namespace Portable
   void
   VCycleMultigrid<dim, number, TransferType>::vmult(VectorType &dst, const VectorType &src) const
   {
+    NVTX_RANGE("mg v-cycle", dealiiX::nvtx::color::solver);
+
     defect[maxlevel] = src;
 
     v_cycle(maxlevel);
@@ -142,8 +145,12 @@ namespace Portable
   void
   VCycleMultigrid<dim, number, TransferType>::v_cycle(const unsigned int level) const
   {
+    NVTX_RANGE_LEVEL("mg level", dealiiX::nvtx::color::level, level);
+
     if (level == minlevel)
       {
+        NVTX_RANGE_LEVEL("mg coarse solve", dealiiX::nvtx::color::coarse, level);
+
         if (impose_zero_mean)
           {
             number mean_value = defect[level].mean_value();
@@ -163,24 +170,39 @@ namespace Portable
       }
 
     // Pre-smoothing
-    mg_smoothers[level].vmult(solution[level], defect[level]);
+    {
+      NVTX_RANGE_LEVEL("mg pre-smooth", dealiiX::nvtx::color::smoother, level);
+      mg_smoothers[level].vmult(solution[level], defect[level]);
+    }
 
     // Compute residual
-    mg_matrices[level]->vmult(t[level], solution[level]);
-    t[level].sadd(-1.0, 1.0, defect[level]);
+    {
+      NVTX_RANGE_LEVEL("mg residual", dealiiX::nvtx::color::matvec, level);
+      mg_matrices[level]->vmult(t[level], solution[level]);
+      t[level].sadd(-1.0, 1.0, defect[level]);
+    }
 
     // Restrict residual to the next coarser level
-    defect[level - 1] = 0;
-    mg_transfers[level]->restrict_and_add(defect[level - 1], t[level]);
+    {
+      NVTX_RANGE_LEVEL("mg restrict", dealiiX::nvtx::color::restrict_, level);
+      defect[level - 1] = 0;
+      mg_transfers[level]->restrict_and_add(defect[level - 1], t[level]);
+    }
 
     // Recursive call to v_cycle on the coarser level
     v_cycle(level - 1);
 
     // Prolongate coarse correction and add to current solution
-    mg_transfers[level]->prolongate_and_add(solution[level], solution[level - 1]);
+    {
+      NVTX_RANGE_LEVEL("mg prolongate", dealiiX::nvtx::color::prolongate, level);
+      mg_transfers[level]->prolongate_and_add(solution[level], solution[level - 1]);
+    }
 
     // Post-smoothing
-    mg_smoothers[level].step(solution[level], defect[level]);
+    {
+      NVTX_RANGE_LEVEL("mg post-smooth", dealiiX::nvtx::color::smoother, level);
+      mg_smoothers[level].step(solution[level], defect[level]);
+    }
   }
 
 

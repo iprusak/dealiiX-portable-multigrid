@@ -8,6 +8,7 @@
 
 #include <Kokkos_Core.hpp>
 
+#include "base/nvtx_profiling.h"
 #include "base/portable_mg_transfer_base.h"
 #include "kernels/bk1_kokkos_kernels.h"
 
@@ -728,6 +729,7 @@ namespace Portable
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
   {
+    NVTX_RANGE("p-transfer prolongate", dealiiX::nvtx::color::prolongate);
     this->prolongate_and_add_internal(dst, src);
   }
 
@@ -737,6 +739,7 @@ namespace Portable
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
   {
+    NVTX_RANGE("p-transfer restrict", dealiiX::nvtx::color::restrict_);
     this->restrict_and_add_internal(dst, src);
   }
 
@@ -746,6 +749,8 @@ namespace Portable
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
   {
+    NVTX_RANGE("p-transfer prolongate kernels", dealiiX::nvtx::color::prolongate);
+
     MemorySpace::Default::kokkos_space::execution_space exec;
     using Functor = p_mg_transfer::CellProlongationKernel<dim, p_coarse, p_fine, number>;
 
@@ -843,6 +848,8 @@ namespace Portable
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
   {
+    NVTX_RANGE("p-transfer restrict kernels", dealiiX::nvtx::color::restrict_);
+
     MemorySpace::Default::kokkos_space::execution_space exec;
     using Functor = p_mg_transfer::CellRestrictionKernel<dim, p_coarse, p_fine, number>;
 

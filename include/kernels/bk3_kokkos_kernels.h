@@ -9,9 +9,7 @@
 #include <vector>
 
 
-#ifdef __CUDACC__
-#  include <nvtx3/nvToolsExt.h>
-#endif
+#include "base/nvtx_profiling.h"
 
 #include "matrix_free/portable_evaluation_kernels.h"
 

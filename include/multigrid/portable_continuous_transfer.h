@@ -8,6 +8,7 @@
 
 #include <Kokkos_Core.hpp>
 
+#include "base/nvtx_profiling.h"
 #include "base/portable_mg_transfer_base.h"
 #include "kernels/bk1_kokkos_kernels.h"
 
@@ -70,6 +71,8 @@ namespace Portable
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
   {
+    NVTX_RANGE("cg-transfer prolongate", dealiiX::nvtx::color::prolongate);
+
     Assert(dst.get_partitioner() == matrix_free_fine->get_vector_partitioner(),
            ExcMessage("Fine vector is not initialized correctly."));
     Assert(src.get_partitioner() == matrix_free_coarse->get_vector_partitioner(),
@@ -91,6 +94,8 @@ namespace Portable
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
   {
+    NVTX_RANGE("cg-transfer restrict", dealiiX::nvtx::color::restrict_);
+
     Assert(dst.get_partitioner() == matrix_free_coarse->get_vector_partitioner(),
            ExcMessage("Coarse vector is not initialized correctly."));
 

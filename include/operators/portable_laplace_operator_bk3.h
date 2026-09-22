@@ -9,9 +9,7 @@
 
 #include <memory>
 
-#ifdef __CUDACC__
-#  include <nvtx3/nvToolsExt.h>
-#endif
+#include "base/nvtx_profiling.h"
 
 #include "base/portable_laplace_operator_base.h"
 #include "kernels/bk3_kokkos_kernels.h"
@@ -137,6 +135,8 @@ namespace Portable
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
   {
+    NVTX_RANGE("BK3 vmult", dealiiX::nvtx::color::matvec);
+
     dst = 0.;
 
     DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
@@ -180,19 +180,25 @@ namespace Portable
 
     if (matrix_free.use_overlap_communication_computation())
       {
+        NVTX_PUSH("ghost exchange (overlapped)", dealiiX::nvtx::color::comm);
         src.update_ghost_values_start(0);
 
         // In parallel, it's possible that some processors do not own any
         // cells.
         if (colored_graph.size() > 0 && colored_graph[0].size() > 0)
-          do_color(0);
+          {
+            NVTX_RANGE("cell kernel interior", dealiiX::nvtx::color::matvec);
+            do_color(0);
+          }
 
         src.update_ghost_values_finish();
+        NVTX_POP();
 
         // In serial this color does not exist because there are no ghost
         // cells
         if (colored_graph.size() > 1 && colored_graph[1].size() > 0)
           {
+            NVTX_RANGE("cell kernel ghost", dealiiX::nvtx::color::matvec);
             do_color(1);
 
             // We need a synchronization point because we don't want
@@ -201,23 +207,38 @@ namespace Portable
             Kokkos::fence();
           }
 
+        NVTX_PUSH("compress (overlapped)", dealiiX::nvtx::color::comm);
         dst.compress_start(0, VectorOperation::add);
         // When the mesh is coarse it is possible that some processors do
         // not own any cells
         if (colored_graph.size() > 2 && colored_graph[2].size() > 0)
-          do_color(2);
+          {
+            NVTX_RANGE("cell kernel boundary", dealiiX::nvtx::color::matvec);
+            do_color(2);
+          }
         dst.compress_finish(VectorOperation::add);
+        NVTX_POP();
       }
     else
       {
-        src.update_ghost_values();
+        {
+          NVTX_RANGE("ghost exchange", dealiiX::nvtx::color::comm);
+          src.update_ghost_values();
+        }
 
-        for (unsigned int color = 0; color < n_colors; ++color)
-          {
-            if (colored_graph[color].size() > color)
-              do_color(color);
-          }
-        dst.compress(VectorOperation::add);
+        {
+          NVTX_RANGE("cell kernels", dealiiX::nvtx::color::matvec);
+          for (unsigned int color = 0; color < n_colors; ++color)
+            {
+              if (colored_graph[color].size() > color)
+                do_color(color);
+            }
+        }
+
+        {
+          NVTX_RANGE("compress", dealiiX::nvtx::color::comm);
+          dst.compress(VectorOperation::add);
+        }
       }
 
     src.zero_out_ghost_values();

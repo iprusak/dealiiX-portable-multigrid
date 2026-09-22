@@ -35,3 +35,10 @@ target_include_directories(${TARGET} PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../common
 )
+
+# 8. NVTX ranges (see include/base/nvtx_profiling.h). On by default when
+# compiling with nvcc/nvc++; NVTX3 is header-only, nothing to link.
+option(DEALIIX_NVTX "Emit NVTX ranges for Nsight Systems" ON)
+if(NOT DEALIIX_NVTX)
+  target_compile_definitions(${TARGET} PUBLIC DEALIIX_DISABLE_NVTX)
+endif()

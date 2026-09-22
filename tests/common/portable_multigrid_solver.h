@@ -12,6 +12,7 @@
 
 #include <deal.II/multigrid/mg_base.h>
 
+#include "base/nvtx_profiling.h"
 #include "multigrid/portable_geometric_transfer.h"
 #include "multigrid/portable_polynomial_transfer.h"
 #include "operators/portable_laplace_operator.h"
@@ -147,6 +148,8 @@ namespace multigrid
     std::pair<unsigned int, double>
     solve_cg()
     {
+      NVTX_RANGE("CG solve", dealiiX::nvtx::color::solver);
+
       reset_timings();
 
 
@@ -158,7 +161,10 @@ namespace multigrid
 
 
       solution_fine = 0;
-      solver_cg.solve(*fine_matrix, solution_fine, rhs, *this);
+      {
+        NVTX_RANGE("CG iterations", dealiiX::nvtx::color::solver);
+        solver_cg.solve(*fine_matrix, solution_fine, rhs, *this);
+      }
 
       solution[maxlevel].copy_locally_owned_data_from(solution_fine);
 
@@ -174,6 +180,8 @@ namespace multigrid
       const LinearAlgebra::distributed::Vector<number2, MemorySpace::Default>
         &src) const
     {
+      NVTX_RANGE("mg v-cycle", dealiiX::nvtx::color::solver);
+
       Timer time;
 
 
@@ -194,12 +202,14 @@ namespace multigrid
     void
     do_matvec()
     {
+      NVTX_RANGE("fine matvec", dealiiX::nvtx::color::matvec);
       fine_matrix->vmult(solution_fine, rhs);
     }
 
     void
     do_matvec_smoother()
     {
+      NVTX_RANGE("level matvec", dealiiX::nvtx::color::matvec);
       matrix[maxlevel]->vmult(t[maxlevel], solution[maxlevel]);
     }
 
@@ -210,14 +220,19 @@ namespace multigrid
     void
     v_cycle(const unsigned int level) const
     {
+      NVTX_RANGE_LEVEL("mg level", dealiiX::nvtx::color::level, level);
+
       // std::cout << "Entering v-cycle level " << level << std::endl;
       if (level == minlevel)
         {
           Kokkos::fence();
-          Timer time;
-          (coarse)(level, solution[level], defect[level]);
-          Kokkos::fence();
-          timings[level][0] += time.wall_time();
+          {
+            NVTX_RANGE_LEVEL("mg coarse solve", dealiiX::nvtx::color::coarse, level);
+            Timer time;
+            (coarse)(level, solution[level], defect[level]);
+            Kokkos::fence();
+            timings[level][0] += time.wall_time();
+          }
 
           // std::cout << "After coarse solve "  << level << std::endl;
 
@@ -227,25 +242,40 @@ namespace multigrid
       Timer time;
 
       Kokkos::fence();
-      time.restart();
-      (smooth)[level].vmult(solution[level], defect[level]);
-      // (smooth)[level].step(solution[level], defect[level]);
-      Kokkos::fence();
-      timings[level][5] += time.wall_time();
+      {
+        NVTX_RANGE_LEVEL("mg pre-smooth", dealiiX::nvtx::color::smoother, level);
+        time.restart();
+        (smooth)[level].vmult(solution[level], defect[level]);
+        // (smooth)[level].step(solution[level], defect[level]);
+        Kokkos::fence();
+        timings[level][5] += time.wall_time();
+      }
 
       Kokkos::fence();
-      time.restart();
-      (matrix)[level]->vmult(t[level], solution[level]);
-      t[level].sadd(-1.0, 1.0, defect[level]);
-      Kokkos::fence();
-      timings[level][0] += time.wall_time();
+      {
+        NVTX_RANGE_LEVEL("mg residual", dealiiX::nvtx::color::matvec, level);
+        time.restart();
+        {
+          NVTX_RANGE_LEVEL("mg operator vmult", dealiiX::nvtx::color::matvec, level);
+          (matrix)[level]->vmult(t[level], solution[level]);
+        }
+        {
+          NVTX_RANGE_LEVEL("mg residual sadd", dealiiX::nvtx::color::other, level);
+          t[level].sadd(-1.0, 1.0, defect[level]);
+        }
+        Kokkos::fence();
+        timings[level][0] += time.wall_time();
+      }
 
       Kokkos::fence();
-      time.restart();
-      defect[level - 1] = 0;
-      transfer[level]->restrict_and_add(defect[level - 1], t[level]);
-      Kokkos::fence();
-      timings[level][1] += time.wall_time();
+      {
+        NVTX_RANGE_LEVEL("mg restrict", dealiiX::nvtx::color::restrict_, level);
+        time.restart();
+        defect[level - 1] = 0;
+        transfer[level]->restrict_and_add(defect[level - 1], t[level]);
+        Kokkos::fence();
+        timings[level][1] += time.wall_time();
+      }
 
       // std::cout << "After restrict_and_add " << level << std::endl;
 
@@ -254,18 +284,24 @@ namespace multigrid
 
 
       Kokkos::fence();
-      time.restart();
-      transfer[level]->prolongate_and_add(solution[level], solution[level - 1]);
-      Kokkos::fence();
-      timings[level][2] += time.wall_time();
+      {
+        NVTX_RANGE_LEVEL("mg prolongate", dealiiX::nvtx::color::prolongate, level);
+        time.restart();
+        transfer[level]->prolongate_and_add(solution[level], solution[level - 1]);
+        Kokkos::fence();
+        timings[level][2] += time.wall_time();
+      }
 
         // std::cout << "After prolongate_and_add " << level << std::endl;
 
       Kokkos::fence();
-      time.restart();
-      (smooth)[level].step(solution[level], defect[level]);
-      Kokkos::fence();
-      timings[level][5] += time.wall_time();
+      {
+        NVTX_RANGE_LEVEL("mg post-smooth", dealiiX::nvtx::color::smoother, level);
+        time.restart();
+        (smooth)[level].step(solution[level], defect[level]);
+        Kokkos::fence();
+        timings[level][5] += time.wall_time();
+      }
 
         // std::cout << "After post smooth " << level << std::endl;
     }

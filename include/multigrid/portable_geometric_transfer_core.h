@@ -11,6 +11,7 @@
 
 #include <Kokkos_Core.hpp>
 
+#include "base/nvtx_profiling.h"
 #include "base/portable_mg_transfer_base.h"
 
 DEAL_II_NAMESPACE_OPEN
@@ -299,6 +300,8 @@ namespace Portable
     GeometricTransferCore<dim, number>::prolongate_and_add(VectorType       &dst,
                                                            const VectorType &src) const
     {
+      NVTX_RANGE("h-transfer prolongate", dealiiX::nvtx::color::prolongate);
+
       const bool  use_dst_inplace = this->vec_fine.size() == 0;
       auto *const vec_fine_ptr    = use_dst_inplace ? &dst : &this->vec_fine;
       Assert(vec_fine_ptr->get_partitioner().get() == this->partitioner_fine.get(),
@@ -315,15 +318,24 @@ namespace Portable
         this->vec_coarse.copy_locally_owned_data_from(src);
 
       if ((use_src_inplace == false) || (src_ghosts_have_been_set == false))
-        this->update_ghost_values(*vec_coarse_ptr);
+        {
+          NVTX_RANGE("ghost exchange", dealiiX::nvtx::color::comm);
+          this->update_ghost_values(*vec_coarse_ptr);
+        }
 
       if (use_dst_inplace == false)
         *vec_fine_ptr = number(0.);
 
-      this->prolongate_and_add_internal(*vec_fine_ptr, *vec_coarse_ptr);
+      {
+        NVTX_RANGE("prolongate kernels", dealiiX::nvtx::color::prolongate);
+        this->prolongate_and_add_internal(*vec_fine_ptr, *vec_coarse_ptr);
+      }
 
       if (this->vec_fine_needs_ghost_update || use_dst_inplace == false)
-        this->compress(*vec_fine_ptr, VectorOperation::add);
+        {
+          NVTX_RANGE("compress", dealiiX::nvtx::color::comm);
+          this->compress(*vec_fine_ptr, VectorOperation::add);
+        }
 
       if (use_dst_inplace == false)
         dst += this->vec_fine;
@@ -337,6 +349,8 @@ namespace Portable
     GeometricTransferCore<dim, number>::restrict_and_add(VectorType       &dst,
                                                          const VectorType &src) const
     {
+      NVTX_RANGE("h-transfer restrict", dealiiX::nvtx::color::restrict_);
+
       const bool        use_src_inplace = this->vec_fine.size() == 0;
       const auto *const vec_fine_ptr    = use_src_inplace ? &src : &this->vec_fine;
       Assert(vec_fine_ptr->get_partitioner().get() == this->partitioner_fine.get(),
@@ -354,7 +368,10 @@ namespace Portable
 
       if ((use_src_inplace == false) ||
           (vec_fine_needs_ghost_update && (src_ghosts_have_been_set == false)))
-        this->update_ghost_values(*vec_fine_ptr);
+        {
+          NVTX_RANGE("ghost exchange", dealiiX::nvtx::color::comm);
+          this->update_ghost_values(*vec_fine_ptr);
+        }
 
       if (use_dst_inplace == false)
         *vec_coarse_ptr = number(0.0);
@@ -362,7 +379,10 @@ namespace Portable
       // since we might add into the ghost values and call compress
       this->zero_out_ghost_values(*vec_coarse_ptr);
 
-      this->restrict_and_add_internal(*vec_coarse_ptr, *vec_fine_ptr);
+      {
+        NVTX_RANGE("restrict kernels", dealiiX::nvtx::color::restrict_);
+        this->restrict_and_add_internal(*vec_coarse_ptr, *vec_fine_ptr);
+      }
 
       // clean up related to update_ghost_values()
       if (vec_fine_needs_ghost_update == false && use_src_inplace == false)
@@ -372,7 +392,10 @@ namespace Portable
       else if (vec_fine_needs_ghost_update && (src_ghosts_have_been_set == false))
         this->zero_out_ghost_values(*vec_fine_ptr); // external vector
 
-      this->compress(*vec_coarse_ptr, VectorOperation::add);
+      {
+        NVTX_RANGE("compress", dealiiX::nvtx::color::comm);
+        this->compress(*vec_coarse_ptr, VectorOperation::add);
+      }
 
       if (use_dst_inplace == false)
         dst += this->vec_coarse;

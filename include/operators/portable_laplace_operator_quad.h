@@ -7,9 +7,7 @@
 
 #include <memory>
 
-#ifdef __CUDACC__
-#  include <nvtx3/nvToolsExt.h>
-#endif
+#include "base/nvtx_profiling.h"
 
 
 DEAL_II_NAMESPACE_OPEN

@@ -31,7 +31,9 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <string>
 
+#include "base/nvtx_profiling.h"
 #include "multigrid/portable_geometric_transfer.h"
 #include "multigrid/portable_polynomial_transfer.h"
 #include "operators/portable_laplace_operator.h"
@@ -628,6 +630,7 @@ namespace multigrid
     for (unsigned int i = 0; i < 10; ++i)
       {
         Kokkos::fence();
+        NVTX_RANGE("cg repetition", dealiiX::nvtx::color::solver);
         time.restart();
         cg_details = solver->solve_cg();
         Kokkos::fence();
@@ -731,23 +734,43 @@ namespace multigrid
 
         triangulation.refine_global(n_refine);
 
-        create_coarse_triangulations();
+        {
+          NVTX_RANGE("setup", dealiiX::nvtx::color::setup);
 
-        setup_dofs();
-
-        setup_matrix_free();
-
-        setup_mg_transfers();
-
-        setup_smoothers(n_pre_smooth, n_post_smooth);
-
-        compute_rhs();
+          {
+            NVTX_RANGE("coarse triangulations", dealiiX::nvtx::color::setup);
+            create_coarse_triangulations();
+          }
+          {
+            NVTX_RANGE("setup dofs", dealiiX::nvtx::color::setup);
+            setup_dofs();
+          }
+          {
+            NVTX_RANGE("setup matrix-free", dealiiX::nvtx::color::setup);
+            setup_matrix_free();
+          }
+          {
+            NVTX_RANGE("setup mg transfers", dealiiX::nvtx::color::setup);
+            setup_mg_transfers();
+          }
+          {
+            NVTX_RANGE("setup smoothers", dealiiX::nvtx::color::setup);
+            setup_smoothers(n_pre_smooth, n_post_smooth);
+          }
+          {
+            NVTX_RANGE("compute rhs", dealiiX::nvtx::color::setup);
+            compute_rhs();
+          }
+        }
 
         pcout << "Total setup time: " << setup_time << std::endl;
 
         pcout << std::endl << std::endl;
 
-        solve(n_pre_smooth, n_post_smooth);
+        {
+          NVTX_RANGE("solve", dealiiX::nvtx::color::solver);
+          solve(n_pre_smooth, n_post_smooth);
+        }
 
         pcout << std::endl << std::endl;
       }
@@ -792,6 +815,10 @@ main(int argc, char *argv[])
       using namespace multigrid;
 
       Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
+
+      NVTX_NAME_THREAD(
+        "rank " +
+        std::to_string(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)));
 
       unsigned int degree            = 4;
       std::size_t  maxsize           = 200000000;

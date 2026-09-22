@@ -8,9 +8,7 @@
 
 #include <vector>
 
-#ifdef __CUDACC__
-#  include <nvtx3/nvToolsExt.h>
-#endif
+#include "base/nvtx_profiling.h"
 
 #include "matrix_free/portable_tensor_product_kernels.h"
 
