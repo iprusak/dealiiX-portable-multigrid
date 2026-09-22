@@ -7,6 +7,10 @@
 
 #include <memory>
 
+#ifdef __CUDACC__
+#  include <nvtx3/nvToolsExt.h>
+#endif
+
 #include "base/portable_laplace_operator_base.h"
 #include "kernels/bk3_kokkos_kernels.h"
 #include "kernels/portable_local_laplace_operator.h"
@@ -36,7 +40,7 @@ namespace Portable
     static constexpr unsigned int n_local_dofs  = Utilities::pow(fe_degree_ + 1, dim);
     static constexpr unsigned int n_q_points    = Utilities::pow(n_q_points_1d_, dim);
     static constexpr unsigned int n_q_points_1d = n_q_points_1d_;
-    static constexpr unsigned int fe_degree = fe_degree_;
+    static constexpr unsigned int fe_degree     = fe_degree_;
 
     LocalLaplaceOperatorNew() = default;
 
@@ -318,8 +322,8 @@ namespace Portable
     constexpr bool is_serial =
       std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
 
-    unsigned int numBlocks         = numbers::invalid_unsigned_int;
-    unsigned int threadsPerBlock   = numbers::invalid_unsigned_int;
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
     // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
     unsigned int n_cells_per_batch = 1;
 
@@ -416,8 +420,8 @@ namespace Portable
     constexpr bool is_serial =
       std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
 
-    unsigned int numBlocks         = numbers::invalid_unsigned_int;
-    unsigned int threadsPerBlock   = numbers::invalid_unsigned_int;
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
     // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
     unsigned int n_cells_per_batch = 1;
 
@@ -658,8 +662,8 @@ namespace Portable
     constexpr bool is_serial =
       std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
 
-    unsigned int numBlocks         = numbers::invalid_unsigned_int;
-    unsigned int threadsPerBlock   = numbers::invalid_unsigned_int;
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
     // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
     unsigned int n_cells_per_batch = 1;
 
@@ -744,8 +748,8 @@ namespace Portable
     constexpr bool is_serial =
       std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
 
-    unsigned int numBlocks         = numbers::invalid_unsigned_int;
-    unsigned int threadsPerBlock   = numbers::invalid_unsigned_int;
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
     // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
     unsigned int n_cells_per_batch = 1;
 

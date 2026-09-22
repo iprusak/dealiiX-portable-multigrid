@@ -9,6 +9,10 @@
 
 #include <memory>
 
+#ifdef __CUDACC__
+#  include <nvtx3/nvToolsExt.h>
+#endif
+
 #include "base/portable_laplace_operator_base.h"
 #include "kernels/bk3_kokkos_kernels.h"
 #include "operators/portable_laplace_operator_quad.h"

@@ -8,6 +8,10 @@
 
 #include <vector>
 
+#ifdef __CUDACC__
+#  include <nvtx3/nvToolsExt.h>
+#endif
+
 #include "matrix_free/portable_tensor_product_kernels.h"
 
 DEAL_II_NAMESPACE_OPEN
@@ -79,7 +83,9 @@ namespace BK1
 
 
         Kokkos::parallel_for(
-          policy, KOKKOS_LAMBDA(member_type team_member) {
+          "prolongate_and_add",
+          policy,
+          KOKKOS_LAMBDA(member_type team_member) {
             Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
             Number *s_shape_values = scratch;
@@ -249,7 +255,9 @@ namespace BK1
 
 
         Kokkos::parallel_for(
-          policy, KOKKOS_LAMBDA(member_type team_member) {
+          "restrict_and_add",
+          policy,
+          KOKKOS_LAMBDA(member_type team_member) {
             Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
             Number *s_shape_values = scratch;
@@ -418,7 +426,9 @@ namespace BK1
 
 
         Kokkos::parallel_for(
-          policy, KOKKOS_LAMBDA(member_type team_member) {
+          "prolongate_and_add",
+          policy,
+          KOKKOS_LAMBDA(member_type team_member) {
             Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
             Number *s_shape_values = scratch;
@@ -764,7 +774,9 @@ namespace BK1
 
 
         Kokkos::parallel_for(
-          policy, KOKKOS_LAMBDA(member_type team_member) {
+          "restrict_and_add",
+          policy,
+          KOKKOS_LAMBDA(member_type team_member) {
             Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
             Number *s_shape_values = scratch;
@@ -1093,7 +1105,9 @@ namespace BK1
 
 
         Kokkos::parallel_for(
-          policy, KOKKOS_LAMBDA(member_type team_member) {
+          "prolongate_and_add",
+          policy,
+          KOKKOS_LAMBDA(member_type team_member) {
             Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
             Number *s_shape_values = scratch;
@@ -1314,7 +1328,9 @@ namespace BK1
         policy.set_scratch_size(0, Kokkos::PerTeam(shmem_size));
 
         Kokkos::parallel_for(
-          policy, KOKKOS_LAMBDA(member_type team_member) {
+          "restrict_and_add",
+          policy,
+          KOKKOS_LAMBDA(member_type team_member) {
             Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
             Number *s_shape_values = scratch;

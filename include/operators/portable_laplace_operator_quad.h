@@ -7,6 +7,10 @@
 
 #include <memory>
 
+#ifdef __CUDACC__
+#  include <nvtx3/nvToolsExt.h>
+#endif
+
 
 DEAL_II_NAMESPACE_OPEN
 
