@@ -5,10 +5,11 @@
 
 #include <deal.II/fe/mapping_q1.h>
 
+#include <deal.II/matrix_free/tools.h>
+
 #include <memory>
 
 #include "base/nvtx_profiling.h"
-
 #include "base/portable_laplace_operator_base.h"
 #include "kernels/bk3_kokkos_kernels.h"
 #include "kernels/portable_local_laplace_operator.h"
@@ -92,6 +93,10 @@ namespace Portable
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
 
     void
+    compute_rhs_bk3_abstracted(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs) const;
+
+    void
     vmult_dealii_batched(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
@@ -126,14 +131,6 @@ namespace Portable
     initialize_dof_vector(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &vec) const override;
 
-    // vmult_dealii_new() needs both its src and dst vectors initialized
-    // against matrix_free_new specifically: Copy::Portable::MatrixFree::
-    // distributed_cell_loop() picks its dof_handler_index by comparing
-    // dst.get_partitioner().get() against each registered DoFHandler's own
-    // partitioner pointer by identity, so a vector initialized against the
-    // real (separate) matrix_free -- as initialize_dof_vector() above does
-    // -- never matches, regardless of whether the underlying dof layout is
-    // equivalent.
     void
     initialize_dof_vector_new(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &vec) const;
@@ -163,9 +160,6 @@ namespace Portable
     const MatrixFree<dim, number> &
     get_matrix_free() const override;
 
-    // matrix_free_new's own accessor -- see initialize_dof_vector_new()'s
-    // comment for why vmult_dealii_new()'s vectors need matrix_free_new
-    // specifically, not the real matrix_free above.
     const Copy::Portable::MatrixFree<dim, number> &
     get_matrix_free_new() const;
 
@@ -214,8 +208,6 @@ namespace Portable
 
     MatrixFree<dim, number> matrix_free;
 
-    // Local matrix_free_dealii port of the above, filled identically -- see
-    // vmult_dealii_new()/LocalLaplaceOperatorNew.
     Copy::Portable::MatrixFree<dim, number> matrix_free_new;
 
     ObserverPointer<const AffineConstraints<number>> constraints;
@@ -323,9 +315,6 @@ namespace Portable
 
     unsigned int numBlocks       = numbers::invalid_unsigned_int;
     unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
-    // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
-    unsigned int n_cells_per_batch = 1;
-
 
     if (is_serial)
       {
@@ -350,8 +339,7 @@ namespace Portable
               dof_indices_per_color[color],
               n_cells,
               numBlocks,
-              threadsPerBlock,
-              n_cells_per_batch);
+              threadsPerBlock);
           }
       };
 
@@ -421,9 +409,6 @@ namespace Portable
 
     unsigned int numBlocks       = numbers::invalid_unsigned_int;
     unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
-    // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
-    unsigned int n_cells_per_batch = 1;
-
 
     if (is_serial)
       {
@@ -448,8 +433,7 @@ namespace Portable
               dof_indices_per_color[color],
               n_cells,
               numBlocks,
-              threadsPerBlock,
-              n_cells_per_batch);
+              threadsPerBlock);
           }
       };
 
@@ -497,6 +481,47 @@ namespace Portable
 
     src.zero_out_ghost_values();
     matrix_free.copy_constrained_values(src, dst);
+  }
+
+  template <int dim, int fe_degree, typename number>
+  void
+  LaplaceOperator<dim, fe_degree, number>::compute_rhs_bk3_abstracted(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs) const
+  {
+    rhs = 0.;
+
+    DeviceVector<number> rhs_device(rhs.get_values(), rhs.locally_owned_size());
+
+    const auto        &colored_graph = matrix_free.get_colored_graph();
+    const unsigned int n_colors      = colored_graph.size();
+
+    constexpr bool is_serial =
+      std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
+
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+    if (is_serial)
+      threadsPerBlock = 1u;
+
+    for (unsigned int color = 0; color < n_colors; ++color)
+      {
+        const unsigned int n_cells = colored_graph[color].size();
+
+        if (n_cells > 0)
+          {
+            const auto &precomputed_data = matrix_free.get_data(color);
+
+            BK3::Parallel::KokkosRHSAbstracted<dim, fe_degree, fe_degree + 1, number>(
+              precomputed_data.shape_values,
+              precomputed_data.JxW,
+              rhs_device,
+              dof_indices_per_color[color],
+              n_cells,
+              numbers::invalid_unsigned_int,
+              threadsPerBlock);
+          }
+      }
+
+    rhs.compress(VectorOperation::add);
   }
 
 
@@ -663,9 +688,6 @@ namespace Portable
 
     unsigned int numBlocks       = numbers::invalid_unsigned_int;
     unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
-    // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
-    unsigned int n_cells_per_batch = 1;
-
 
     if (is_serial)
       {
@@ -686,8 +708,7 @@ namespace Portable
             src,
             dst,
             numBlocks,
-            threadsPerBlock,
-            n_cells_per_batch);
+            threadsPerBlock);
       };
 
     if (matrix_free.use_overlap_communication_computation())
@@ -749,8 +770,6 @@ namespace Portable
 
     unsigned int numBlocks       = numbers::invalid_unsigned_int;
     unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
-    // unsigned int n_cells_per_batch = numbers::invalid_unsigned_int;
-    unsigned int n_cells_per_batch = 1;
 
     if (is_serial)
       {
@@ -770,8 +789,7 @@ namespace Portable
             src,
             dst,
             numBlocks,
-            threadsPerBlock,
-            n_cells_per_batch);
+            threadsPerBlock);
       };
 
     if (matrix_free.use_overlap_communication_computation())

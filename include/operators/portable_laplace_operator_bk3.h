@@ -7,10 +7,11 @@
 
 #include <deal.II/fe/mapping_q1.h>
 
+#include <deal.II/matrix_free/tools.h>
+
 #include <memory>
 
 #include "base/nvtx_profiling.h"
-
 #include "base/portable_laplace_operator_base.h"
 #include "kernels/bk3_kokkos_kernels.h"
 #include "operators/portable_laplace_operator_quad.h"
@@ -31,6 +32,9 @@ namespace Portable
     vmult(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
+
+    void
+    compute_rhs(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs) const;
 
     void
     vmult_dummy(LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
@@ -152,7 +156,6 @@ namespace Portable
     unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
     if (is_serial)
       {
-        numBlocks       = 1u;
         threadsPerBlock = 1u;
       }
 
@@ -247,6 +250,52 @@ namespace Portable
 
   template <int dim, int fe_degree, typename number>
   void
+  LaplaceOperatorBK3<dim, fe_degree, number>::compute_rhs(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs) const
+  {
+    NVTX_RANGE("BK3 compute_rhs", dealiiX::nvtx::color::setup);
+
+    rhs = 0.;
+
+    DeviceVector<number> rhs_device(rhs.get_values(), rhs.locally_owned_size());
+
+    const auto        &colored_graph = matrix_free.get_colored_graph();
+    const unsigned int n_colors      = colored_graph.size();
+
+    constexpr bool is_serial =
+      std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value;
+
+    unsigned int numBlocks       = numbers::invalid_unsigned_int;
+    unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
+    if (is_serial)
+      {
+        threadsPerBlock = 1u;
+      }
+
+    for (unsigned int color = 0; color < n_colors; ++color)
+      {
+        const unsigned int n_cells = colored_graph[color].size();
+
+        if (n_cells > 0)
+          {
+            const auto &precomputed_data = matrix_free.get_data(color);
+
+            BK3::Parallel::KokkosRHSAbstracted<dim, fe_degree, fe_degree + 1, number>(
+              precomputed_data.shape_values,
+              precomputed_data.JxW,
+              rhs_device,
+              dof_indices_per_color[color],
+              n_cells,
+              numBlocks,
+              threadsPerBlock);
+          }
+      }
+
+    rhs.compress(VectorOperation::add);
+  }
+
+  template <int dim, int fe_degree, typename number>
+  void
   LaplaceOperatorBK3<dim, fe_degree, number>::vmult_dummy(
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src,
@@ -268,7 +317,6 @@ namespace Portable
     unsigned int threadsPerBlock = numbers::invalid_unsigned_int;
     if (is_serial)
       {
-        numBlocks       = 1u;
         threadsPerBlock = 1u;
       }
 
