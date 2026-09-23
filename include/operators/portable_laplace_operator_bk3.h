@@ -34,7 +34,7 @@ namespace Portable
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const override;
 
     void
-    compute_rhs(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs) const;
+    compute_rhs(LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs) const override;
 
     void
     vmult_dummy(LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,

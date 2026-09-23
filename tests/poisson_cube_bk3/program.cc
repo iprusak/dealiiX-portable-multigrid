@@ -38,8 +38,6 @@
 #include "multigrid/portable_polynomial_transfer.h"
 #include "operators/portable_laplace_operator.h"
 #include "operators/portable_laplace_operator_bk3.h"
-#include "operators/portable_laplace_operator.h"
-
 #include "portable_multigrid_solver.h"
 
 
@@ -516,7 +514,11 @@ namespace multigrid
   {
     Timer time;
 
-    level_matrices.back()->compute_rhs(system_rhs_device);
+    if constexpr (std::is_same_v<full_number, vcycle_number>)
+
+      level_matrices.back()->compute_rhs(system_rhs_device);
+    else
+      fine_level_matrix->compute_rhs(system_rhs_device);
 
     setup_time += time.wall_time();
 
@@ -735,8 +737,7 @@ namespace multigrid
 
         for (unsigned int i = 0; i < 5; ++i)
           {
-            const unsigned int n_mv =
-              dof_handler.n_dofs() < 10000000 ? 200 : 50;
+            const unsigned int n_mv = dof_handler.n_dofs() < 10000000 ? 200 : 50;
 
             {
               Kokkos::fence();
@@ -929,7 +930,6 @@ namespace multigrid
             ghost_timing_table.write_text(std::cout);
 
             std::cout << std::endl << std::endl;
-
           }
       }
   }

@@ -58,6 +58,9 @@ namespace Portable
 
     virtual const std::shared_ptr<const Utilities::MPI::Partitioner> &
     get_vector_partitioner() const = 0;
+
+    virtual void
+    compute_rhs(LinearAlgebra::distributed::Vector<Number, MemorySpace::Default> &rhs) const = 0;
   };
 
   class OperatorDispatchFactory

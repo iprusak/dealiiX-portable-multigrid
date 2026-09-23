@@ -45,6 +45,13 @@ namespace Portable
                 const bool ghost_exchange_on,
                 const bool computation_on) const override;
 
+                 void
+    compute_rhs(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs) const override
+    {
+      DEAL_II_NOT_IMPLEMENTED();
+    }
+
     void
     vmult_interface_cell_range(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,

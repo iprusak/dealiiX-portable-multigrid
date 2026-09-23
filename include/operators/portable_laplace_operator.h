@@ -92,9 +92,18 @@ namespace Portable
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
       const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
 
+
     void
     compute_rhs_bk3_abstracted(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs) const;
+
+
+    void
+    compute_rhs(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &rhs) const override
+    {
+      compute_rhs_bk3_abstracted(rhs);
+    }
 
     void
     vmult_dealii_batched(
