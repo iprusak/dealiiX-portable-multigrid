@@ -228,7 +228,7 @@ namespace multigrid
     , setup_time(0.)
     , pcout(std::cout, Utilities::MPI::this_mpi_process(mpi_communicator) == 0)
     , time_details(std::cout,
-                   false &&
+                   true &&
                      Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
 
   {
