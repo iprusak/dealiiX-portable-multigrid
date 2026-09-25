@@ -189,11 +189,11 @@ namespace BK4
     template <int dim, int fe_degree, int n_q_points_1d, int n_components, typename Number>
     void
     KokkosRHSAbstracted(
-      const DeviceView<Number>                                           d_shape_values,
-      const Kokkos::View<Number **, MemorySpace::Default::kokkos_space> &d_JxW,
-      DeviceView<Number>                                                 d_out,
-      const Kokkos::Array<DoFIndicesView, n_components>                 &dof_indices_per_component,
-      const unsigned int                                                 n_cells,
+      const DeviceView<Number>                           d_shape_values,
+      const DeviceView<Number>                           d_JxW,
+      DeviceView<Number>                                 d_out,
+      const Kokkos::Array<DoFIndicesView, n_components> &dof_indices_per_component,
+      const unsigned int                                 n_cells,
       const unsigned int    n_blocks          = numbers::invalid_unsigned_int,
       const unsigned int    threads_per_block = numbers::invalid_unsigned_int,
       const CellRangeIdView cell_range_ids    = CellRangeIdView())
@@ -294,7 +294,7 @@ namespace BK4
                     if (cell_range_ids.size() > 0)
                       global_cell_index = cell_range_ids(global_cell_index);
 
-                    s_values[tid] = d_JxW(q_local, global_cell_index);
+                    s_values[tid] = d_JxW[global_cell_index * n_quad_points_total + q_local];
                   }
                 team_member.team_barrier();
 

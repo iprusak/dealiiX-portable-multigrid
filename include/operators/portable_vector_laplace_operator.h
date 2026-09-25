@@ -1,6 +1,8 @@
 #ifndef portable_vector_laplace_operator_h
 #define portable_vector_laplace_operator_h
 
+#include <deal.II/base/config.h>
+
 #include <deal.II/dofs/dof_handler.h>
 
 #include <deal.II/fe/mapping_q1.h>
@@ -155,6 +157,10 @@ namespace Portable
       dof_indices_per_color;
 
     std::vector<Kokkos::View<number *, MemorySpace::Default::kokkos_space>> G_tensors;
+
+    // Flat, decompressed JxW per (cell, quad point); deal.II's own JxW may
+    // be compressed to one value per cell. Filled in compute_G_tensors().
+    std::vector<Kokkos::View<number *, MemorySpace::Default::kokkos_space>> JxW_tensors;
   };
 
 
@@ -332,7 +338,7 @@ namespace Portable
             BK4::Parallel::
               KokkosRHSAbstracted<dim, fe_degree, n_q_points_1d, n_components, number>(
                 precomputed_data.shape_values,
-                precomputed_data.JxW,
+                JxW_tensors[color],
                 rhs_device,
                 dof_indices_per_color[color],
                 n_cells,
@@ -713,23 +719,28 @@ namespace Portable
     const unsigned int n_colors      = colored_graph.size();
 
     G_tensors.resize(n_colors);
+    JxW_tensors.resize(n_colors);
 
     for (unsigned int color = 0; color < n_colors; ++color)
       {
         if (colored_graph[color].size() > 0)
           {
-            const auto        &precomputed_data = matrix_free.get_data(color);
+            // By value: cheap (View handles + POD), and > 9.8.1 needs it
+            // live for the JxW_value()/inv_jacobian_index() accessor calls.
+            const auto         precomputed_data = matrix_free.get_data(color);
             const unsigned int n_cells          = precomputed_data.n_cells;
-
-            const auto &inv_jacobian = precomputed_data.inv_jacobian;
-            const auto &JxW          = precomputed_data.JxW;
 
             G_tensors[color] = Kokkos::View<number *, MemorySpace::Default::kokkos_space>(
               Kokkos::view_alloc("G_tensor_color_" + std::to_string(color),
                                  Kokkos::WithoutInitializing),
               symmetric_tensor_dim * n_cells * n_q_points);
+            JxW_tensors[color] = Kokkos::View<number *, MemorySpace::Default::kokkos_space>(
+              Kokkos::view_alloc("JxW_tensor_color_" + std::to_string(color),
+                                 Kokkos::WithoutInitializing),
+              n_cells * n_q_points);
 
-            auto G = G_tensors[color];
+            auto G   = G_tensors[color];
+            auto JxW = JxW_tensors[color];
 
             Kokkos::parallel_for(
               "Fill_G_tensor_color" + std::to_string(color),
@@ -738,6 +749,12 @@ namespace Portable
               KOKKOS_LAMBDA(const int cell_id) {
                 for (unsigned int q_point = 0; q_point < n_q_points; q_point++)
                   {
+#if DEAL_II_VERSION_GTE(9, 8, 2)
+                    const number q_jxw = precomputed_data.JxW_value(cell_id, q_point);
+#else
+                    const number q_jxw = precomputed_data.JxW(q_point, cell_id);
+#endif
+
                     number components[symmetric_tensor_dim];
 
                     int idx = 0;
@@ -745,10 +762,19 @@ namespace Portable
                       for (int d2 = d1; d2 < dim; ++d2)
                         {
                           number sum = 0;
+#if DEAL_II_VERSION_GTE(9, 8, 2)
+                          const unsigned int inv_jac_idx =
+                            precomputed_data.inv_jacobian_index(cell_id, q_point);
+
                           for (int k = 0; k < dim; ++k)
-                            sum += inv_jacobian(q_point, cell_id, d1, k) *
-                                   inv_jacobian(q_point, cell_id, d2, k);
-                          components[idx] = JxW(q_point, cell_id) * sum;
+                            sum += precomputed_data.inv_jacobian(inv_jac_idx, d1, k) *
+                                   precomputed_data.inv_jacobian(inv_jac_idx, d2, k);
+#else
+                          for (int k = 0; k < dim; ++k)
+                            sum += precomputed_data.inv_jacobian(q_point, cell_id, d1, k) *
+                                   precomputed_data.inv_jacobian(q_point, cell_id, d2, k);
+#endif
+                          components[idx] = q_jxw * sum;
                           ++idx;
                         }
 
@@ -757,6 +783,8 @@ namespace Portable
                         G[cell_id * symmetric_tensor_dim * n_q_points + c * n_q_points + q_point] =
                           components[c];
                       }
+
+                    JxW[cell_id * n_q_points + q_point] = q_jxw;
                   }
               });
             Kokkos::fence();
