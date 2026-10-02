@@ -1061,9 +1061,6 @@ LaplaceProblem<dim, fe_degree>::setup_mg_preconditioners()
     Portable::SubdomainVCycleMultigrid<dim, double, LevelMatrixType, TransferType, SmootherType>>(
     level_subdomain_matrices, subdomain_mg_transfers_dirichlet, subdomain_mg_smoothers_dirichlet);
 
-  const bool impose_zero_mean =
-    level_subdomain_matrices.back()->get_physical_boundary_dof_indices_subdomain().size() == 0;
-
   subdomain_mg_preconditioner_bddc = std::make_unique<
     Portable::
       SubdomainVCycleMultigrid<dim, double, LevelMatrixType, TransferType, BddcSmootherType>>(
@@ -1300,17 +1297,34 @@ LaplaceProblem<dim, fe_degree>::solve_interface()
   bddc_preconditioner->reset_static_condensation_timings();
   interface_operator->reset_maximum_subdomain_mg_iterations();
 
+  double                          time_solve = 1e10;
+  std::pair<unsigned int, double> cg_details;
+  for (unsigned int i = 0; i < 5; ++i)
+    {
+      Kokkos::fence();
+      time.restart();
+      solution_interface_device = 0.;
+      cg.solve_dd(*interface_operator,
+                  solution_interface_device,
+                  rhs_schur_device,
+                  *bddc_preconditioner);
+      Kokkos::fence();
+      time_solve = std::min(time.wall_time(), time_solve);
+      pcout << "Time solve CG              " << time.wall_time() << "\n";
+    }
+
+
+  bddc_preconditioner->reset_timings();
+  bddc_preconditioner->reset_static_condensation_timings();
+  interface_operator->reset_maximum_subdomain_mg_iterations();
+
+  Kokkos::fence();
   solution_interface_device = 0.;
   cg.solve_dd(*interface_operator,
               solution_interface_device,
               rhs_schur_device,
               *bddc_preconditioner);
-
-  Kokkos::fence();
-  const double time_solve = time.wall_time();
-
   solution_interface_device.update_ghost_values();
-
 
   pcout << "                      Interface solver converged in " << solver_control.last_step()
         << " iterations.    (CPU/wall) " << time.cpu_time() << "s/" << time.wall_time() << 's'
@@ -1372,6 +1386,7 @@ LaplaceProblem<dim, fe_degree>::solve_interface()
   // timings[4] = vmult_interface (outer Dirichlet solve via S, driven by solve_dd())
   const std::array<double, 5> &timings = bddc_preconditioner->get_timings();
 
+  timing_table.add_value("subs", level_subdomain_dof_handlers.back().n_subdomains());
   timing_table.add_value("cells", n_cells_total);
   timing_table.add_value("dofs", level_distributed_dof_handlers.back().n_dofs());
   timing_table.add_value("Dirichlet", timings[4]);
@@ -1382,6 +1397,7 @@ LaplaceProblem<dim, fe_degree>::solve_interface()
   timing_table.add_value("CG_time", time_solve);
   timing_table.add_value("Iters", solver_control.last_step());
 
+  timing_table_per_iteration.add_value("subs", level_subdomain_dof_handlers.back().n_subdomains());
   timing_table_per_iteration.add_value("cells", n_cells_total);
   timing_table_per_iteration.add_value("dofs", level_distributed_dof_handlers.back().n_dofs());
   timing_table_per_iteration.add_value("Dir_per_iter", timings[4] / iterations);
@@ -1519,6 +1535,7 @@ LaplaceProblem<dim, fe_degree>::matvec_ghost_timing()
     }
 
 
+  ghost_timing_table.add_value("subs", level_subdomain_dof_handlers.back().n_subdomains());
   ghost_timing_table.add_value("cells", n_cells_total);
   ghost_timing_table.add_value("dofs", level_distributed_dof_handlers.back().n_dofs());
 
@@ -2045,7 +2062,7 @@ template <int dim, int fe_degree>
 void
 LaplaceProblem<dim, fe_degree>::run()
 {
-  for (unsigned int cycle = 0; cycle < 15 - dim; ++cycle)
+  for (unsigned int cycle = 0; cycle < 100 - dim; ++cycle)
     {
       pcout << "dim = " << dim << ", fe_degree = " << fe_degree << ":  cycle " << cycle
             << std::endl;
@@ -2288,13 +2305,13 @@ main(int argc, char *argv[])
       //   LaplaceProblem<dim, fe_degree> laplace_problem(n_pre_smooth, n_post_smooth);
       //   laplace_problem.run();
       // }
-      // {
-      //   constexpr int dim       = 2;
-      //   constexpr int fe_degree = 4;
+      {
+        constexpr int dim       = 2;
+        constexpr int fe_degree = 4;
 
-      //   LaplaceProblem<dim, fe_degree> laplace_problem(n_pre_smooth, n_post_smooth);
-      //   laplace_problem.run();
-      // }
+        LaplaceProblem<dim, fe_degree> laplace_problem(n_pre_smooth, n_post_smooth);
+        laplace_problem.run();
+      }
 
 
       // {
@@ -2318,13 +2335,13 @@ main(int argc, char *argv[])
       //   LaplaceProblem<dim, fe_degree> laplace_problem(n_pre_smooth, n_post_smooth);
       //   laplace_problem.run();
       // }
-      {
-        constexpr int dim       = 3;
-        constexpr int fe_degree = 4;
+      // {
+      //   constexpr int dim       = 3;
+      //   constexpr int fe_degree = 4;
 
-        LaplaceProblem<dim, fe_degree> laplace_problem(n_pre_smooth, n_post_smooth);
-        laplace_problem.run();
-      }
+      //   LaplaceProblem<dim, fe_degree> laplace_problem(n_pre_smooth, n_post_smooth);
+      //   laplace_problem.run();
+      // }
     }
   catch (std::exception &exc)
     {
