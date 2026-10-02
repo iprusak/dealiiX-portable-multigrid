@@ -1,0 +1,502 @@
+The following modules were not unloaded:
+  (Use "module --force purge" to unload all):
+
+  1) Stages/2026
+dim = 2, fe_degree = 4:  cycle 0
+                      N_cells = 16384
+
+                      Subdomain triangulations extracted        (CPU/wall) 2.02855s/2.75308s
+                      Total number of DoFs: 263169
+                      Subdomain DoFs setup                      (CPU/wall) 2.93674s/7.57378s
+                      Matrix-free operators setup               (CPU/wall) 0.012369s/0.0264959s
+                      MG transfers setup                        (CPU/wall) 0.007807s/0.00791267s
+                      Smoothers setup                           (CPU/wall) 0.0025s/0.0159579s
+                      MG Preconditioners setup                  (CPU/wall) 0.004185s/0.00429723s
+                      Interface system setup                    (CPU/wall) 0.026152s/0.0467393s
+                      BDDC preconditioner setup                  (CPU/wall) 0.036809s/0.0377678s
+                      Coarse matrix for BDDC computed            (CPU/wall) 0.096205s/0.0983441s
+                      RHS assembled                             (CPU/wall) 8.9e-05s/9.1838e-05s
+                      Schur RHS assembled                       (CPU/wall) 0.017567s/0.0175916s
+                      setup time: 10.5819s
+Time solve CG              0.204071
+Time solve CG              0.286666
+Time solve CG              0.200621
+Time solve CG              0.208132
+Time solve CG              0.203836
+                      Interface solver converged in 7 iterations.    (CPU/wall) 0.208s/0.20828s
+Subdomain Dirichlet MG iteration / BDDC MG iterations: 6   /    7
+                      Subdomain solution post-processed         (CPU/wall) 0.017883s/0.0179132s
+                      Output results                            (CPU/wall) 0.002476s/0.00248059s
+                      solution norm: 0.0372078
+
+
+
+BDDC coarse-matrix setup timings (seconds):
+cells  dofs  n_global_coarse_dofs n_local_coarse_dofs   lift    vmult_plain fine_correction inner_products  mpi_sum  lu_factorization   total   
+16384 263169                 2945                   3 2.449e-04   1.887e-04       2.870e-02      1.397e-04 5.543e-02        7.747e-03 9.244e-02 
+
+
+Static-condensation edge/face Schur-complement setup timings (seconds):
+cells  dofs    lift    basis_solves schur_column_fill cholesky_factorization   total   
+16384 263169 3.661e-05    3.337e-02         1.384e-04              4.755e-04 3.402e-02 
+
+
+BDDC interface-solve timings (seconds):
+subs cells  dofs  Dirichlet gather_scatter coarse_correction fine_correction total_vmult  CG_time  Iters 
+1024 16384 263169 8.992e-02      4.350e-04         8.188e-03       5.725e-02   8.080e-02 2.006e-01     7 
+
+
+BDDC interface-solve timings per CG iteration (seconds):
+subs cells  dofs  Dir_per_iter gather_scatter_per_iter coarse_per_iter fine_per_iter vmult_per_iter CG_per_iter dirichlet_mg_its bddc_mg_its 
+1024 16384 263169    1.285e-02               6.214e-05       1.170e-03     8.179e-03      1.154e-02   2.866e-02                6           7 
+
+dim = 2, fe_degree = 4:  cycle 1
+                      N_cells = 65536
+
+                      Subdomain triangulations extracted        (CPU/wall) 0.09923s/0.099236s
+                      Total number of DoFs: 1050625
+                      Subdomain DoFs setup                      (CPU/wall) 1.13408s/1.13447s
+                      Matrix-free operators setup               (CPU/wall) 0.00915s/0.00915658s
+                      MG transfers setup                        (CPU/wall) 0.010022s/0.010028s
+                      Smoothers setup                           (CPU/wall) 0.014183s/0.0141891s
+                      MG Preconditioners setup                  (CPU/wall) 0.00583s/0.00583537s
+                      Interface system setup                    (CPU/wall) 0.001552s/0.001616s
+                      BDDC preconditioner setup                  (CPU/wall) 0.037851s/0.0460921s
+                      Coarse matrix for BDDC computed            (CPU/wall) 0.17682s/0.1792s
+                      RHS assembled                             (CPU/wall) 5.8e-05s/6.0063e-05s
+                      Schur RHS assembled                       (CPU/wall) 0.024641s/0.0246949s
+                      setup time: 12.1063s
+Time solve CG              0.291148
+Time solve CG              0.300074
+Time solve CG              0.292138
+Time solve CG              0.295334
+Time solve CG              0.296214
+                      Interface solver converged in 8 iterations.    (CPU/wall) 0.285098s/0.285139s
+Subdomain Dirichlet MG iteration / BDDC MG iterations: 6   /    8
+                      Subdomain solution post-processed         (CPU/wall) 0.021949s/0.0219966s
+                      Output results                            (CPU/wall) 0.000896s/0.000902574s
+                      solution norm: 0.0392213
+
+
+
+BDDC coarse-matrix setup timings (seconds):
+cells  dofs   n_global_coarse_dofs n_local_coarse_dofs   lift    vmult_plain fine_correction inner_products  mpi_sum  lu_factorization   total   
+16384  263169                 2945                   3 2.449e-04   1.887e-04       2.870e-02      1.397e-04 5.543e-02        7.747e-03 9.244e-02 
+65536 1050625                 2945                   3 2.350e-04   1.566e-04       5.216e-02      1.643e-04 1.194e-01        4.896e-03 1.771e-01 
+
+
+Static-condensation edge/face Schur-complement setup timings (seconds):
+cells  dofs     lift    basis_solves schur_column_fill cholesky_factorization   total   
+16384  263169 3.661e-05    3.337e-02         1.384e-04              4.755e-04 3.402e-02 
+65536 1050625 1.837e-05    4.128e-02         1.137e-04              7.040e-06 4.142e-02 
+
+
+BDDC interface-solve timings (seconds):
+subs cells  dofs   Dirichlet gather_scatter coarse_correction fine_correction total_vmult  CG_time  Iters 
+1024 16384  263169 8.992e-02      4.350e-04         8.188e-03       5.725e-02   8.080e-02 2.006e-01     7 
+1024 65536 1050625 1.160e-01      4.483e-04         1.005e-02       8.167e-02   1.054e-01 2.911e-01     8 
+
+
+BDDC interface-solve timings per CG iteration (seconds):
+subs cells  dofs   Dir_per_iter gather_scatter_per_iter coarse_per_iter fine_per_iter vmult_per_iter CG_per_iter dirichlet_mg_its bddc_mg_its 
+1024 16384  263169    1.285e-02               6.214e-05       1.170e-03     8.179e-03      1.154e-02   2.866e-02                6           7 
+1024 65536 1050625    1.450e-02               5.604e-05       1.256e-03     1.021e-02      1.317e-02   3.639e-02                6           8 
+
+dim = 2, fe_degree = 4:  cycle 2
+                      N_cells = 262144
+
+                      Subdomain triangulations extracted        (CPU/wall) 0.243191s/0.250674s
+                      Total number of DoFs: 4198401
+                      Subdomain DoFs setup                      (CPU/wall) 1.25123s/1.25321s
+                      Matrix-free operators setup               (CPU/wall) 0.011413s/0.0121871s
+                      MG transfers setup                        (CPU/wall) 0.014563s/0.0145689s
+                      Smoothers setup                           (CPU/wall) 0.017938s/0.017944s
+                      MG Preconditioners setup                  (CPU/wall) 0.00698s/0.00698488s
+                      Interface system setup                    (CPU/wall) 0.001316s/0.00181849s
+                      BDDC preconditioner setup                  (CPU/wall) 0.057162s/0.0571683s
+                      Coarse matrix for BDDC computed            (CPU/wall) 0.218s/0.218104s
+                      RHS assembled                             (CPU/wall) 6.2e-05s/6.4735e-05s
+                      Schur RHS assembled                       (CPU/wall) 0.029323s/0.0293636s
+                      setup time: 13.9683s
+Time solve CG              0.345774
+Time solve CG              0.361951
+Time solve CG              0.352958
+Time solve CG              0.387698
+Time solve CG              0.420209
+                      Interface solver converged in 9 iterations.    (CPU/wall) 0.449453s/0.449504s
+Subdomain Dirichlet MG iteration / BDDC MG iterations: 6   /    8
+                      Subdomain solution post-processed         (CPU/wall) 0.026321s/0.0263622s
+                      Output results                            (CPU/wall) 0.001095s/0.00110177s
+                      solution norm: 0.0402381
+
+
+
+BDDC coarse-matrix setup timings (seconds):
+cells   dofs   n_global_coarse_dofs n_local_coarse_dofs   lift    vmult_plain fine_correction inner_products  mpi_sum  lu_factorization   total   
+ 16384  263169                 2945                   3 2.449e-04   1.887e-04       2.870e-02      1.397e-04 5.543e-02        7.747e-03 9.244e-02 
+ 65536 1050625                 2945                   3 2.350e-04   1.566e-04       5.216e-02      1.643e-04 1.194e-01        4.896e-03 1.771e-01 
+262144 4198401                 2945                   3 2.426e-04   1.219e-04       6.007e-02      1.375e-04 1.505e-01        4.930e-03 2.160e-01 
+
+
+Static-condensation edge/face Schur-complement setup timings (seconds):
+cells   dofs     lift    basis_solves schur_column_fill cholesky_factorization   total   
+ 16384  263169 3.661e-05    3.337e-02         1.384e-04              4.755e-04 3.402e-02 
+ 65536 1050625 1.837e-05    4.128e-02         1.137e-04              7.040e-06 4.142e-02 
+262144 4198401 2.106e-05    5.170e-02         1.244e-04              7.200e-06 5.185e-02 
+
+
+BDDC interface-solve timings (seconds):
+subs cells   dofs   Dirichlet gather_scatter coarse_correction fine_correction total_vmult  CG_time  Iters 
+1024  16384  263169 8.992e-02      4.350e-04         8.188e-03       5.725e-02   8.080e-02 2.006e-01     7 
+1024  65536 1050625 1.160e-01      4.483e-04         1.005e-02       8.167e-02   1.054e-01 2.911e-01     8 
+1024 262144 4198401 1.731e-01      5.274e-04         3.059e-02       1.216e-01   1.826e-01 3.458e-01     9 
+
+
+BDDC interface-solve timings per CG iteration (seconds):
+subs cells   dofs   Dir_per_iter gather_scatter_per_iter coarse_per_iter fine_per_iter vmult_per_iter CG_per_iter dirichlet_mg_its bddc_mg_its 
+1024  16384  263169    1.285e-02               6.214e-05       1.170e-03     8.179e-03      1.154e-02   2.866e-02                6           7 
+1024  65536 1050625    1.450e-02               5.604e-05       1.256e-03     1.021e-02      1.317e-02   3.639e-02                6           8 
+1024 262144 4198401    1.923e-02               5.861e-05       3.399e-03     1.351e-02      2.029e-02   3.842e-02                6           8 
+
+dim = 2, fe_degree = 4:  cycle 3
+                      N_cells = 1048576
+
+                      Subdomain triangulations extracted        (CPU/wall) 0.636202s/0.665658s
+                      Total number of DoFs: 16785409
+                      Subdomain DoFs setup                      (CPU/wall) 1.81412s/1.82297s
+                      Matrix-free operators setup               (CPU/wall) 0.018702s/0.0187116s
+                      MG transfers setup                        (CPU/wall) 0.023237s/0.023975s
+                      Smoothers setup                           (CPU/wall) 0.021339s/0.0218357s
+                      MG Preconditioners setup                  (CPU/wall) 0.008569s/0.008575s
+                      Interface system setup                    (CPU/wall) 0.001721s/0.0018576s
+                      BDDC preconditioner setup                  (CPU/wall) 0.069223s/0.0692288s
+                      Coarse matrix for BDDC computed            (CPU/wall) 0.284983s/0.285124s
+                      RHS assembled                             (CPU/wall) 6.5e-05s/6.8126e-05s
+                      Schur RHS assembled                       (CPU/wall) 0.03118s/0.0314868s
+                      setup time: 16.9176s
+Time solve CG              0.48182
+Time solve CG              0.530506
+Time solve CG              0.543573
+Time solve CG              0.631483
+Time solve CG              0.593025
+                      Interface solver converged in 10 iterations.    (CPU/wall) 0.532556s/0.532905s
+Subdomain Dirichlet MG iteration / BDDC MG iterations: 6   /    9
+                      Subdomain solution post-processed         (CPU/wall) 0.031258s/0.0313493s
+                      Output results                            (CPU/wall) 0.014645s/0.0147154s
+                      solution norm: 0.0407489
+
+
+
+BDDC coarse-matrix setup timings (seconds):
+ cells    dofs   n_global_coarse_dofs n_local_coarse_dofs   lift    vmult_plain fine_correction inner_products  mpi_sum  lu_factorization   total   
+  16384   263169                 2945                   3 2.449e-04   1.887e-04       2.870e-02      1.397e-04 5.543e-02        7.747e-03 9.244e-02 
+  65536  1050625                 2945                   3 2.350e-04   1.566e-04       5.216e-02      1.643e-04 1.194e-01        4.896e-03 1.771e-01 
+ 262144  4198401                 2945                   3 2.426e-04   1.219e-04       6.007e-02      1.375e-04 1.505e-01        4.930e-03 2.160e-01 
+1048576 16785409                 2945                   3 2.566e-04   1.391e-04       6.984e-02      1.441e-04 2.077e-01        4.989e-03 2.831e-01 
+
+
+Static-condensation edge/face Schur-complement setup timings (seconds):
+ cells    dofs     lift    basis_solves schur_column_fill cholesky_factorization   total   
+  16384   263169 3.661e-05    3.337e-02         1.384e-04              4.755e-04 3.402e-02 
+  65536  1050625 1.837e-05    4.128e-02         1.137e-04              7.040e-06 4.142e-02 
+ 262144  4198401 2.106e-05    5.170e-02         1.244e-04              7.200e-06 5.185e-02 
+1048576 16785409 2.438e-05    6.202e-02         1.279e-04              1.242e-05 6.219e-02 
+
+
+BDDC interface-solve timings (seconds):
+subs  cells    dofs   Dirichlet gather_scatter coarse_correction fine_correction total_vmult  CG_time  Iters 
+1024   16384   263169 8.992e-02      4.350e-04         8.188e-03       5.725e-02   8.080e-02 2.006e-01     7 
+1024   65536  1050625 1.160e-01      4.483e-04         1.005e-02       8.167e-02   1.054e-01 2.911e-01     8 
+1024  262144  4198401 1.731e-01      5.274e-04         3.059e-02       1.216e-01   1.826e-01 3.458e-01     9 
+1024 1048576 16785409 2.204e-01      5.863e-04         1.810e-02       1.536e-01   2.154e-01 4.818e-01    10 
+
+
+BDDC interface-solve timings per CG iteration (seconds):
+subs  cells    dofs   Dir_per_iter gather_scatter_per_iter coarse_per_iter fine_per_iter vmult_per_iter CG_per_iter dirichlet_mg_its bddc_mg_its 
+1024   16384   263169    1.285e-02               6.214e-05       1.170e-03     8.179e-03      1.154e-02   2.866e-02                6           7 
+1024   65536  1050625    1.450e-02               5.604e-05       1.256e-03     1.021e-02      1.317e-02   3.639e-02                6           8 
+1024  262144  4198401    1.923e-02               5.861e-05       3.399e-03     1.351e-02      2.029e-02   3.842e-02                6           8 
+1024 1048576 16785409    2.204e-02               5.863e-05       1.810e-03     1.536e-02      2.154e-02   4.818e-02                6           9 
+
+dim = 2, fe_degree = 4:  cycle 4
+                      N_cells = 4194304
+
+                      Subdomain triangulations extracted        (CPU/wall) 2.05589s/2.16516s
+                      Total number of DoFs: 67125249
+                      Subdomain DoFs setup                      (CPU/wall) 3.05245s/3.05787s
+                      Matrix-free operators setup               (CPU/wall) 0.035693s/0.035702s
+                      MG transfers setup                        (CPU/wall) 0.056195s/0.0562013s
+                      Smoothers setup                           (CPU/wall) 0.02769s/0.0277112s
+                      MG Preconditioners setup                  (CPU/wall) 0.010484s/0.0105384s
+                      Interface system setup                    (CPU/wall) 0s/0.00204354s
+                      BDDC preconditioner setup                  (CPU/wall) 0.088545s/0.0987085s
+                      Coarse matrix for BDDC computed            (CPU/wall) 0.33025s/0.338571s
+                      RHS assembled                             (CPU/wall) 6.9e-05s/7.0559e-05s
+                      Schur RHS assembled                       (CPU/wall) 0.035255s/0.0353089s
+                      setup time: 22.7453s
+Time solve CG              0.693606
+Time solve CG              0.633225
+Time solve CG              0.678396
+Time solve CG              0.686148
+Time solve CG              0.682514
+                      Interface solver converged in 11 iterations.    (CPU/wall) 0.706385s/0.726474s
+Subdomain Dirichlet MG iteration / BDDC MG iterations: 6   /    9
+                      Subdomain solution post-processed         (CPU/wall) 0.037125s/0.0371921s
+                      Output results                            (CPU/wall) 0.016203s/0.0162101s
+                      solution norm: 0.041005
+
+
+
+BDDC coarse-matrix setup timings (seconds):
+ cells    dofs   n_global_coarse_dofs n_local_coarse_dofs   lift    vmult_plain fine_correction inner_products  mpi_sum  lu_factorization   total   
+  16384   263169                 2945                   3 2.449e-04   1.887e-04       2.870e-02      1.397e-04 5.543e-02        7.747e-03 9.244e-02 
+  65536  1050625                 2945                   3 2.350e-04   1.566e-04       5.216e-02      1.643e-04 1.194e-01        4.896e-03 1.771e-01 
+ 262144  4198401                 2945                   3 2.426e-04   1.219e-04       6.007e-02      1.375e-04 1.505e-01        4.930e-03 2.160e-01 
+1048576 16785409                 2945                   3 2.566e-04   1.391e-04       6.984e-02      1.441e-04 2.077e-01        4.989e-03 2.831e-01 
+4194304 67125249                 2945                   3 3.009e-04   1.242e-04       8.171e-02      1.421e-04 2.490e-01        5.204e-03 3.365e-01 
+
+
+Static-condensation edge/face Schur-complement setup timings (seconds):
+ cells    dofs     lift    basis_solves schur_column_fill cholesky_factorization   total   
+  16384   263169 3.661e-05    3.337e-02         1.384e-04              4.755e-04 3.402e-02 
+  65536  1050625 1.837e-05    4.128e-02         1.137e-04              7.040e-06 4.142e-02 
+ 262144  4198401 2.106e-05    5.170e-02         1.244e-04              7.200e-06 5.185e-02 
+1048576 16785409 2.438e-05    6.202e-02         1.279e-04              1.242e-05 6.219e-02 
+4194304 67125249 3.417e-05    8.448e-02         1.426e-04              1.139e-05 8.467e-02 
+
+
+BDDC interface-solve timings (seconds):
+subs  cells    dofs   Dirichlet gather_scatter coarse_correction fine_correction total_vmult  CG_time  Iters 
+1024   16384   263169 8.992e-02      4.350e-04         8.188e-03       5.725e-02   8.080e-02 2.006e-01     7 
+1024   65536  1050625 1.160e-01      4.483e-04         1.005e-02       8.167e-02   1.054e-01 2.911e-01     8 
+1024  262144  4198401 1.731e-01      5.274e-04         3.059e-02       1.216e-01   1.826e-01 3.458e-01     9 
+1024 1048576 16785409 2.204e-01      5.863e-04         1.810e-02       1.536e-01   2.154e-01 4.818e-01    10 
+1024 4194304 67125249 2.910e-01      6.471e-04         5.653e-02       1.999e-01   3.068e-01 6.332e-01    11 
+
+
+BDDC interface-solve timings per CG iteration (seconds):
+subs  cells    dofs   Dir_per_iter gather_scatter_per_iter coarse_per_iter fine_per_iter vmult_per_iter CG_per_iter dirichlet_mg_its bddc_mg_its 
+1024   16384   263169    1.285e-02               6.214e-05       1.170e-03     8.179e-03      1.154e-02   2.866e-02                6           7 
+1024   65536  1050625    1.450e-02               5.604e-05       1.256e-03     1.021e-02      1.317e-02   3.639e-02                6           8 
+1024  262144  4198401    1.923e-02               5.861e-05       3.399e-03     1.351e-02      2.029e-02   3.842e-02                6           8 
+1024 1048576 16785409    2.204e-02               5.863e-05       1.810e-03     1.536e-02      2.154e-02   4.818e-02                6           9 
+1024 4194304 67125249    2.645e-02               5.883e-05       5.139e-03     1.817e-02      2.789e-02   5.757e-02                6           9 
+
+dim = 2, fe_degree = 4:  cycle 5
+                      N_cells = 16777216
+
+                      Subdomain triangulations extracted        (CPU/wall) 7.49294s/7.86268s
+                      Total number of DoFs: 268468225
+                      Subdomain DoFs setup                      (CPU/wall) 5.7337s/5.73449s
+                      Matrix-free operators setup               (CPU/wall) 0.098172s/0.098207s
+                      MG transfers setup                        (CPU/wall) 0.179986s/0.179991s
+                      Smoothers setup                           (CPU/wall) 0.030865s/0.0406513s
+                      MG Preconditioners setup                  (CPU/wall) 0.012277s/0.0126403s
+                      Interface system setup                    (CPU/wall) 0.002164s/0.00252568s
+                      BDDC preconditioner setup                  (CPU/wall) 0.141296s/0.145639s
+                      Coarse matrix for BDDC computed            (CPU/wall) 0.406336s/0.413887s
+                      RHS assembled                             (CPU/wall) 6.7e-05s/6.9662e-05s
+                      Schur RHS assembled                       (CPU/wall) 0.041658s/0.0417013s
+                      setup time: 37.2776s
+Time solve CG              0.71281
+Time solve CG              0.830424
+Time solve CG              0.89681
+Time solve CG              0.821435
+Time solve CG              0.823101
+                      Interface solver converged in 11 iterations.    (CPU/wall) 0.823843s/0.825297s
+Subdomain Dirichlet MG iteration / BDDC MG iterations: 6   /    10
+                      Subdomain solution post-processed         (CPU/wall) 0.044389s/0.0444836s
+                      Output results                            (CPU/wall) 0.040977s/0.0409813s
+                      solution norm: 0.0411332
+
+
+
+BDDC coarse-matrix setup timings (seconds):
+ cells     dofs    n_global_coarse_dofs n_local_coarse_dofs   lift    vmult_plain fine_correction inner_products  mpi_sum  lu_factorization   total   
+   16384    263169                 2945                   3 2.449e-04   1.887e-04       2.870e-02      1.397e-04 5.543e-02        7.747e-03 9.244e-02 
+   65536   1050625                 2945                   3 2.350e-04   1.566e-04       5.216e-02      1.643e-04 1.194e-01        4.896e-03 1.771e-01 
+  262144   4198401                 2945                   3 2.426e-04   1.219e-04       6.007e-02      1.375e-04 1.505e-01        4.930e-03 2.160e-01 
+ 1048576  16785409                 2945                   3 2.566e-04   1.391e-04       6.984e-02      1.441e-04 2.077e-01        4.989e-03 2.831e-01 
+ 4194304  67125249                 2945                   3 3.009e-04   1.242e-04       8.171e-02      1.421e-04 2.490e-01        5.204e-03 3.365e-01 
+16777216 268468225                 2945                   3 6.817e-04   1.587e-04       9.975e-02      1.731e-04 3.048e-01        5.126e-03 4.107e-01 
+
+
+Static-condensation edge/face Schur-complement setup timings (seconds):
+ cells     dofs      lift    basis_solves schur_column_fill cholesky_factorization   total   
+   16384    263169 3.661e-05    3.337e-02         1.384e-04              4.755e-04 3.402e-02 
+   65536   1050625 1.837e-05    4.128e-02         1.137e-04              7.040e-06 4.142e-02 
+  262144   4198401 2.106e-05    5.170e-02         1.244e-04              7.200e-06 5.185e-02 
+ 1048576  16785409 2.438e-05    6.202e-02         1.279e-04              1.242e-05 6.219e-02 
+ 4194304  67125249 3.417e-05    8.448e-02         1.426e-04              1.139e-05 8.467e-02 
+16777216 268468225 5.206e-05    1.144e-01         1.835e-04              1.139e-05 1.146e-01 
+
+
+BDDC interface-solve timings (seconds):
+subs  cells     dofs    Dirichlet gather_scatter coarse_correction fine_correction total_vmult  CG_time  Iters 
+1024    16384    263169 8.992e-02      4.350e-04         8.188e-03       5.725e-02   8.080e-02 2.006e-01     7 
+1024    65536   1050625 1.160e-01      4.483e-04         1.005e-02       8.167e-02   1.054e-01 2.911e-01     8 
+1024   262144   4198401 1.731e-01      5.274e-04         3.059e-02       1.216e-01   1.826e-01 3.458e-01     9 
+1024  1048576  16785409 2.204e-01      5.863e-04         1.810e-02       1.536e-01   2.154e-01 4.818e-01    10 
+1024  4194304  67125249 2.910e-01      6.471e-04         5.653e-02       1.999e-01   3.068e-01 6.332e-01    11 
+1024 16777216 268468225 3.353e-01      6.847e-04         1.508e-02       2.480e-01   3.204e-01 7.128e-01    11 
+
+
+BDDC interface-solve timings per CG iteration (seconds):
+subs  cells     dofs    Dir_per_iter gather_scatter_per_iter coarse_per_iter fine_per_iter vmult_per_iter CG_per_iter dirichlet_mg_its bddc_mg_its 
+1024    16384    263169    1.285e-02               6.214e-05       1.170e-03     8.179e-03      1.154e-02   2.866e-02                6           7 
+1024    65536   1050625    1.450e-02               5.604e-05       1.256e-03     1.021e-02      1.317e-02   3.639e-02                6           8 
+1024   262144   4198401    1.923e-02               5.861e-05       3.399e-03     1.351e-02      2.029e-02   3.842e-02                6           8 
+1024  1048576  16785409    2.204e-02               5.863e-05       1.810e-03     1.536e-02      2.154e-02   4.818e-02                6           9 
+1024  4194304  67125249    2.645e-02               5.883e-05       5.139e-03     1.817e-02      2.789e-02   5.757e-02                6           9 
+1024 16777216 268468225    3.048e-02               6.225e-05       1.371e-03     2.254e-02      2.913e-02   6.480e-02                6          10 
+
+dim = 2, fe_degree = 4:  cycle 6
+                      N_cells = 67108864
+
+                      Subdomain triangulations extracted        (CPU/wall) 30.3108s/31.6021s
+                      Total number of DoFs: 1073807361
+                      Subdomain DoFs setup                      (CPU/wall) 11.7653s/11.8157s
+                      Matrix-free operators setup               (CPU/wall) 0.328612s/0.339922s
+                      MG transfers setup                        (CPU/wall) 0.678953s/0.688866s
+                      Smoothers setup                           (CPU/wall) 0.068488s/0.0708126s
+                      MG Preconditioners setup                  (CPU/wall) 0.017278s/0.0172839s
+                      Interface system setup                    (CPU/wall) 0.003769s/0.00413755s
+                      BDDC preconditioner setup                  (CPU/wall) 0.286083s/0.287422s
+                      Coarse matrix for BDDC computed            (CPU/wall) 0.546014s/0.54602s
+                      RHS assembled                             (CPU/wall) 8.5e-05s/8.7038e-05s
+                      Schur RHS assembled                       (CPU/wall) 0.050119s/0.0502336s
+                      setup time: 82.6999s
+Time solve CG              1.1735
+Time solve CG              1.17531
+Time solve CG              1.21107
+Time solve CG              1.21643
+Time solve CG              1.19678
+                      Interface solver converged in 13 iterations.    (CPU/wall) 1.16228s/1.1627s
+Subdomain Dirichlet MG iteration / BDDC MG iterations: 6   /    10
+                      Subdomain solution post-processed         (CPU/wall) 0.062691s/0.0628285s
+                      Output results                            (CPU/wall) 0.142443s/0.142447s
+                      solution norm: 0.0411973
+
+
+
+BDDC coarse-matrix setup timings (seconds):
+ cells      dofs    n_global_coarse_dofs n_local_coarse_dofs   lift    vmult_plain fine_correction inner_products  mpi_sum  lu_factorization   total   
+   16384     263169                 2945                   3 2.449e-04   1.887e-04       2.870e-02      1.397e-04 5.543e-02        7.747e-03 9.244e-02 
+   65536    1050625                 2945                   3 2.350e-04   1.566e-04       5.216e-02      1.643e-04 1.194e-01        4.896e-03 1.771e-01 
+  262144    4198401                 2945                   3 2.426e-04   1.219e-04       6.007e-02      1.375e-04 1.505e-01        4.930e-03 2.160e-01 
+ 1048576   16785409                 2945                   3 2.566e-04   1.391e-04       6.984e-02      1.441e-04 2.077e-01        4.989e-03 2.831e-01 
+ 4194304   67125249                 2945                   3 3.009e-04   1.242e-04       8.171e-02      1.421e-04 2.490e-01        5.204e-03 3.365e-01 
+16777216  268468225                 2945                   3 6.817e-04   1.587e-04       9.975e-02      1.731e-04 3.048e-01        5.126e-03 4.107e-01 
+67108864 1073807361                 2945                   3 8.739e-04   2.570e-04       1.237e-01      1.971e-04 4.124e-01        5.130e-03 5.426e-01 
+
+
+Static-condensation edge/face Schur-complement setup timings (seconds):
+ cells      dofs      lift    basis_solves schur_column_fill cholesky_factorization   total   
+   16384     263169 3.661e-05    3.337e-02         1.384e-04              4.755e-04 3.402e-02 
+   65536    1050625 1.837e-05    4.128e-02         1.137e-04              7.040e-06 4.142e-02 
+  262144    4198401 2.106e-05    5.170e-02         1.244e-04              7.200e-06 5.185e-02 
+ 1048576   16785409 2.438e-05    6.202e-02         1.279e-04              1.242e-05 6.219e-02 
+ 4194304   67125249 3.417e-05    8.448e-02         1.426e-04              1.139e-05 8.467e-02 
+16777216  268468225 5.206e-05    1.144e-01         1.835e-04              1.139e-05 1.146e-01 
+67108864 1073807361 1.102e-04    2.044e-01         2.318e-04              1.238e-05 2.047e-01 
+
+
+BDDC interface-solve timings (seconds):
+subs  cells      dofs    Dirichlet gather_scatter coarse_correction fine_correction total_vmult  CG_time  Iters 
+1024    16384     263169 8.992e-02      4.350e-04         8.188e-03       5.725e-02   8.080e-02 2.006e-01     7 
+1024    65536    1050625 1.160e-01      4.483e-04         1.005e-02       8.167e-02   1.054e-01 2.911e-01     8 
+1024   262144    4198401 1.731e-01      5.274e-04         3.059e-02       1.216e-01   1.826e-01 3.458e-01     9 
+1024  1048576   16785409 2.204e-01      5.863e-04         1.810e-02       1.536e-01   2.154e-01 4.818e-01    10 
+1024  4194304   67125249 2.910e-01      6.471e-04         5.653e-02       1.999e-01   3.068e-01 6.332e-01    11 
+1024 16777216  268468225 3.353e-01      6.847e-04         1.508e-02       2.480e-01   3.204e-01 7.128e-01    11 
+1024 67108864 1073807361 4.851e-01      8.469e-04         2.841e-02       3.492e-01   4.681e-01 1.173e+00    13 
+
+
+BDDC interface-solve timings per CG iteration (seconds):
+subs  cells      dofs    Dir_per_iter gather_scatter_per_iter coarse_per_iter fine_per_iter vmult_per_iter CG_per_iter dirichlet_mg_its bddc_mg_its 
+1024    16384     263169    1.285e-02               6.214e-05       1.170e-03     8.179e-03      1.154e-02   2.866e-02                6           7 
+1024    65536    1050625    1.450e-02               5.604e-05       1.256e-03     1.021e-02      1.317e-02   3.639e-02                6           8 
+1024   262144    4198401    1.923e-02               5.861e-05       3.399e-03     1.351e-02      2.029e-02   3.842e-02                6           8 
+1024  1048576   16785409    2.204e-02               5.863e-05       1.810e-03     1.536e-02      2.154e-02   4.818e-02                6           9 
+1024  4194304   67125249    2.645e-02               5.883e-05       5.139e-03     1.817e-02      2.789e-02   5.757e-02                6           9 
+1024 16777216  268468225    3.048e-02               6.225e-05       1.371e-03     2.254e-02      2.913e-02   6.480e-02                6          10 
+1024 67108864 1073807361    3.732e-02               6.515e-05       2.185e-03     2.686e-02      3.601e-02   9.027e-02                6          10 
+
+dim = 2, fe_degree = 4:  cycle 7
+                      N_cells = 268435456
+
+                      Subdomain triangulations extracted        (CPU/wall) 122.069s/127.021s
+                      Total number of DoFs: 4295098369
+                      Subdomain DoFs setup                      (CPU/wall) 27.5219s/27.6526s
+                      Matrix-free operators setup               (CPU/wall) 1.26235s/1.2862s
+                      MG transfers setup                        (CPU/wall) 2.82943s/2.86957s
+                      Smoothers setup                           (CPU/wall) 0.14709s/0.147095s
+                      MG Preconditioners setup                  (CPU/wall) 0.011982s/0.0219388s
+                      Interface system setup                    (CPU/wall) 0s/0.00472772s
+                      BDDC preconditioner setup                  (CPU/wall) 0.816723s/0.832151s
+                      Coarse matrix for BDDC computed            (CPU/wall) 1.01584s/1.01607s
+                      RHS assembled                             (CPU/wall) 0.000166s/0.000168571s
+                      Schur RHS assembled                       (CPU/wall) 0.065141s/0.0751097s
+                      setup time: 243.626s
+Time solve CG              1.91614
+Time solve CG              1.88107
+Time solve CG              1.88431
+Time solve CG              1.8891
+Time solve CG              1.88604
+                      Interface solver converged in 14 iterations.    (CPU/wall) 1.89861s/1.89872s
+Subdomain Dirichlet MG iteration / BDDC MG iterations: 6   /    11
+                      Subdomain solution post-processed         (CPU/wall) 0.121902s/0.122066s
+                      Output results                            (CPU/wall) 0.425281s/0.425284s
+                      solution norm: 0.0412294
+
+
+
+BDDC coarse-matrix setup timings (seconds):
+  cells      dofs    n_global_coarse_dofs n_local_coarse_dofs   lift    vmult_plain fine_correction inner_products  mpi_sum  lu_factorization   total   
+    16384     263169                 2945                   3 2.449e-04   1.887e-04       2.870e-02      1.397e-04 5.543e-02        7.747e-03 9.244e-02 
+    65536    1050625                 2945                   3 2.350e-04   1.566e-04       5.216e-02      1.643e-04 1.194e-01        4.896e-03 1.771e-01 
+   262144    4198401                 2945                   3 2.426e-04   1.219e-04       6.007e-02      1.375e-04 1.505e-01        4.930e-03 2.160e-01 
+  1048576   16785409                 2945                   3 2.566e-04   1.391e-04       6.984e-02      1.441e-04 2.077e-01        4.989e-03 2.831e-01 
+  4194304   67125249                 2945                   3 3.009e-04   1.242e-04       8.171e-02      1.421e-04 2.490e-01        5.204e-03 3.365e-01 
+ 16777216  268468225                 2945                   3 6.817e-04   1.587e-04       9.975e-02      1.731e-04 3.048e-01        5.126e-03 4.107e-01 
+ 67108864 1073807361                 2945                   3 8.739e-04   2.570e-04       1.237e-01      1.971e-04 4.124e-01        5.130e-03 5.426e-01 
+268435456 4295098369                 2945                   3 1.205e-03   6.682e-04       1.948e-01      3.449e-04 8.095e-01        5.222e-03 1.012e+00 
+
+
+Static-condensation edge/face Schur-complement setup timings (seconds):
+  cells      dofs      lift    basis_solves schur_column_fill cholesky_factorization   total   
+    16384     263169 3.661e-05    3.337e-02         1.384e-04              4.755e-04 3.402e-02 
+    65536    1050625 1.837e-05    4.128e-02         1.137e-04              7.040e-06 4.142e-02 
+   262144    4198401 2.106e-05    5.170e-02         1.244e-04              7.200e-06 5.185e-02 
+  1048576   16785409 2.438e-05    6.202e-02         1.279e-04              1.242e-05 6.219e-02 
+  4194304   67125249 3.417e-05    8.448e-02         1.426e-04              1.139e-05 8.467e-02 
+ 16777216  268468225 5.206e-05    1.144e-01         1.835e-04              1.139e-05 1.146e-01 
+ 67108864 1073807361 1.102e-04    2.044e-01         2.318e-04              1.238e-05 2.047e-01 
+268435456 4295098369 2.000e-04    5.533e-01         3.648e-04              1.561e-05 5.539e-01 
+
+
+BDDC interface-solve timings (seconds):
+subs   cells      dofs    Dirichlet gather_scatter coarse_correction fine_correction total_vmult  CG_time  Iters 
+1024     16384     263169 8.992e-02      4.350e-04         8.188e-03       5.725e-02   8.080e-02 2.006e-01     7 
+1024     65536    1050625 1.160e-01      4.483e-04         1.005e-02       8.167e-02   1.054e-01 2.911e-01     8 
+1024    262144    4198401 1.731e-01      5.274e-04         3.059e-02       1.216e-01   1.826e-01 3.458e-01     9 
+1024   1048576   16785409 2.204e-01      5.863e-04         1.810e-02       1.536e-01   2.154e-01 4.818e-01    10 
+1024   4194304   67125249 2.910e-01      6.471e-04         5.653e-02       1.999e-01   3.068e-01 6.332e-01    11 
+1024  16777216  268468225 3.353e-01      6.847e-04         1.508e-02       2.480e-01   3.204e-01 7.128e-01    11 
+1024  67108864 1073807361 4.851e-01      8.469e-04         2.841e-02       3.492e-01   4.681e-01 1.173e+00    13 
+1024 268435456 4295098369 7.624e-01      1.039e-03         3.433e-02       5.971e-01   8.058e-01 1.881e+00    14 
+
+
+BDDC interface-solve timings per CG iteration (seconds):
+subs   cells      dofs    Dir_per_iter gather_scatter_per_iter coarse_per_iter fine_per_iter vmult_per_iter CG_per_iter dirichlet_mg_its bddc_mg_its 
+1024     16384     263169    1.285e-02               6.214e-05       1.170e-03     8.179e-03      1.154e-02   2.866e-02                6           7 
+1024     65536    1050625    1.450e-02               5.604e-05       1.256e-03     1.021e-02      1.317e-02   3.639e-02                6           8 
+1024    262144    4198401    1.923e-02               5.861e-05       3.399e-03     1.351e-02      2.029e-02   3.842e-02                6           8 
+1024   1048576   16785409    2.204e-02               5.863e-05       1.810e-03     1.536e-02      2.154e-02   4.818e-02                6           9 
+1024   4194304   67125249    2.645e-02               5.883e-05       5.139e-03     1.817e-02      2.789e-02   5.757e-02                6           9 
+1024  16777216  268468225    3.048e-02               6.225e-05       1.371e-03     2.254e-02      2.913e-02   6.480e-02                6          10 
+1024  67108864 1073807361    3.732e-02               6.515e-05       2.185e-03     2.686e-02      3.601e-02   9.027e-02                6          10 
+1024 268435456 4295098369    5.446e-02               7.421e-05       2.452e-03     4.265e-02      5.756e-02   1.344e-01                6          11 
+
+dim = 2, fe_degree = 4:  cycle 8
+srun: error: jpbo-006-08: tasks 28-30: Terminated
