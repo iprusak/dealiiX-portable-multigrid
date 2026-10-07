@@ -7,8 +7,9 @@ bugs that shift the answer went unnoticed. The 2D BDDC results converge at O(h)
 towards the exact value ||u||_L2 = 0.0412615 (3D on `main`: O(h^2) towards
 0.0249871), where Q_p elements should be essentially exact.
 
-**Status:** Phase 1 item 1 is written but not yet committed or tested. Nothing
-else has started.
+**Status:** Phase 1 item 1 is done and verified: the 2D BDDC driver gives
+||u||_L2 = 0.0412615 on every mesh with 4 and 9 subdomains, against
+0.0376-0.0412 before the fix. Nothing else has started.
 
 Phases run in order. Suggested commit grouping: (0 + 1), (2), (3 + 4), so the
 refactor never mixes with bug fixes. Re-check that each finding still applies
@@ -30,7 +31,7 @@ New `correctness_tests/check_correctness_dd_vs_global/`:
    The Dirichlet operator has identity rows on the interface, so the solve
    returns `z_G = F_G`. The next `vmult_interface_cell_range` then adds an extra
    `-A_GG F_G` term. Fix: zero the interface entries of `z` before applying `A`,
-   as `vmult()` already does.
+   as `vmult()` already does. **Done.**
 2. **`solve_dd` with BNN converges to `S^-1 b - Q b`**
    (`portable_solver_projected_cg.h`, `portable_bnn_preconditioner.h`).
    `project_initial_residual(r)` balances `r` but never adds `Q r` to `x`.

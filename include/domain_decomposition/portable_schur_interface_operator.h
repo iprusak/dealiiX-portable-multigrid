@@ -288,12 +288,22 @@ namespace Portable
 
     DeviceVector<Number> rhs_subdomain_view(rhs_subdomain.get_values(), rhs_subdomain.size());
     DeviceVector<Number> rhs_schur_view(rhs_schur.get_values(), interface_dofs.size());
-    DeviceVector<Number> t_subdomain_dst_view(temp_subdomain_vector_dst.get_values(),
-                                              temp_subdomain_vector_dst.size());
+    DeviceVector<Number> t_subdomain_src_view(temp_subdomain_vector_src.get_values(),
+                                              temp_subdomain_vector_src.size()),
+      t_subdomain_dst_view(temp_subdomain_vector_dst.get_values(),
+                           temp_subdomain_vector_dst.size());
 
     // solve for interior, A_II^{-1} * F_I
     temp_subdomain_vector_src = 0.;
     dirichlet_solve_subdomain(temp_subdomain_vector_src, rhs_subdomain);
+
+    // zero out entries corresponding to interface dofs: the Dirichlet
+    // operator has identity rows there, so the solve returns F_G on them,
+    // which would otherwise add A_GG * F_G below
+    Kokkos::parallel_for(
+      "zero_out_interface_rhs", interface_dofs.size(), KOKKOS_LAMBDA(const int i) {
+        t_subdomain_src_view(interface_dofs(i)) = 0.;
+      });
 
     // multiply by A_GI *A_II^{-1} * F_I
     this->subdomain_operator->vmult_interface_cell_range(temp_subdomain_vector_dst,
