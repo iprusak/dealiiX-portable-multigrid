@@ -21,7 +21,9 @@ DEAL_II_NAMESPACE_OPEN
 namespace Portable
 {
   template <int dim, int fe_degree, typename number, int n_q_points_1d = fe_degree + 1>
-  class LaplaceOperatorBK3 : public LaplaceOperatorBase<dim, number>
+  class LaplaceOperatorBK3
+    : public LaplaceOperatorBase<dim,
+                                 LinearAlgebra::distributed::Vector<number, MemorySpace::Default>>
   {
   public:
     LaplaceOperatorBK3(const DoFHandler<dim>           &dof_handler,
