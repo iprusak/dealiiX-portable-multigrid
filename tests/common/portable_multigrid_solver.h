@@ -182,6 +182,7 @@ namespace multigrid
     void
     vmult(VectorTypeFine &dst, const VectorTypeFine &src) const
     {
+      fence();
       Timer time;
 
 
@@ -197,6 +198,11 @@ namespace multigrid
 
 
       dst.copy_locally_owned_data_from(solution[maxlevel]);
+      fence();
+
+      // number of V-cycles and their total time, see print_wall_times()
+      timings[minlevel][1] += 1;
+      timings[minlevel][2] += time.wall_time();
     }
 
     void
