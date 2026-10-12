@@ -79,7 +79,8 @@ namespace multigrid
       const MGLevelObject<SmootherType>                     &smoothers,
       const VectorTypeFine                                  &right_hand_side,
       const unsigned int                                     degree_pre,
-      const unsigned int                                     degree_post)
+      const unsigned int                                     degree_post,
+      const MGCoarseGridBase<VectorType>                    *coarse_solver = nullptr)
       : minlevel(level_dof_handlers.min_level())
       , maxlevel(level_dof_handlers.max_level())
       , fine_matrix(fine_matrix)
@@ -93,6 +94,7 @@ namespace multigrid
       , defect(minlevel, maxlevel)
       , t(minlevel, maxlevel)
       , coarse(smooth, false)
+      , external_coarse(coarse_solver)
       , degree_pre(degree_pre)
       , degree_post(degree_post)
       , timings(maxlevel + 1)
@@ -232,7 +234,10 @@ namespace multigrid
         {
           fence();
           Timer time;
-          (coarse)(level, solution[level], defect[level]);
+          if (external_coarse != nullptr)
+            (*external_coarse)(level, solution[level], defect[level]);
+          else
+            (coarse)(level, solution[level], defect[level]);
           fence();
           timings[level][0] += time.wall_time();
 
@@ -341,6 +346,11 @@ namespace multigrid
      * The coarse solver
      */
     MGCoarseFromSmoother<VectorType, MGLevelObject<SmootherType>> coarse;
+
+    /**
+     * Coarse solver passed to the constructor; replaces `coarse` if not null.
+     */
+    const MGCoarseGridBase<VectorType> *external_coarse;
 
     /**
      * Chebyshev degree for pre-smoothing

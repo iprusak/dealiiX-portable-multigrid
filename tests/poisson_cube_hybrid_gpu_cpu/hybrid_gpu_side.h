@@ -48,7 +48,8 @@ namespace hybrid
    * from there. Levels 0..n_refine are Q1 on the meshes refined l times, the
    * levels above are p-levels on the fine mesh up to Q_fe_degree.
    *
-   * For now all levels are on the GPU and solve() is bk3's outer CG.
+   * setup() can cut the hierarchy at a lowest level min_level (the switch
+   * level s-1 of the hybrid) and use another coarse solver there.
    */
   template <int dim, int fe_degree>
   class GpuSide
@@ -76,10 +77,14 @@ namespace hybrid
       Assert(layout.is_gpu_rank, ExcMessage("GpuSide lives on the GPU ranks only."));
     }
 
-    // Collective on comm_gpu: build all levels for a fine mesh refined
-    // n_refine times.
+    // Collective on comm_gpu: build the levels min_level.. for a fine mesh
+    // refined n_refine times; min_level <= n_refine is a Q1 h-level. On
+    // min_level the V-cycle calls coarse_solver, or if nullptr Chebyshev as
+    // coarse solver (as on level 0 of poisson_cube_bk3).
     void
-    setup(const unsigned int n_refine);
+    setup(const unsigned int                  n_refine,
+          const unsigned int                  min_level     = 0,
+          const MGCoarseGridBase<VectorTypeMG> *coarse_solver = nullptr);
 
     // Collective on comm_gpu: CG on the fine level with f = 1, preconditioned
     // by the V-cycle. Returns iterations and reduction per iteration.
@@ -91,6 +96,8 @@ namespace hybrid
     h_level_dofs(const unsigned int refinement) const
     {
       AssertIndexRange(refinement, hierarchy->mesh.levels.size());
+      Assert(refinement >= hierarchy->dof_handlers.min_level(),
+             ExcMessage("This level is below the lowest GPU level."));
       return hierarchy->dof_handlers[refinement];
     }
 
@@ -152,10 +159,11 @@ namespace hybrid
     };
 
     void
-    setup_dofs(Hierarchy &h) const;
+    setup_dofs(Hierarchy &h, const unsigned int min_level) const;
 
+    // with_coarse_smoother: Chebyshev as coarse solver on the lowest level
     void
-    setup_operators(Hierarchy &h) const;
+    setup_operators(Hierarchy &h, const bool with_coarse_smoother) const;
 
     void
     compute_rhs(Hierarchy &h) const;
@@ -171,8 +179,12 @@ namespace hybrid
 
   template <int dim, int fe_degree>
   void
-  GpuSide<dim, fe_degree>::setup(const unsigned int n_refine)
+  GpuSide<dim, fe_degree>::setup(const unsigned int                    n_refine,
+                                 const unsigned int                    min_level,
+                                 const MGCoarseGridBase<VectorTypeMG> *coarse_solver)
   {
+    AssertThrow(min_level <= n_refine, ExcMessage("The lowest GPU level has to be an h-level."));
+
     Kokkos::fence();
     Timer time;
 
@@ -182,8 +194,8 @@ namespace hybrid
 
     print_level_partitions(h.mesh.levels, layout.comm_gpu, "GPU side, comm_gpu", std::cout);
 
-    setup_dofs(h);
-    setup_operators(h);
+    setup_dofs(h, min_level);
+    setup_operators(h, coarse_solver == nullptr);
     compute_rhs(h);
 
     h.solver = std::make_unique<MGSolverType>(h.fine_matrix,
@@ -194,14 +206,16 @@ namespace hybrid
                                               h.smoothers,
                                               h.rhs,
                                               n_smooth,
-                                              n_smooth);
+                                              n_smooth,
+                                              coarse_solver);
     Kokkos::fence();
 
     const double setup_time = Utilities::MPI::max(time.wall_time(), layout.comm_gpu);
     if (Utilities::MPI::this_mpi_process(layout.comm_gpu) == 0)
       {
-        std::cout << "GPU levels 0.." << h.dof_handlers.max_level() << ", degree/DoFs:";
-        for (unsigned int l = 0; l <= h.dof_handlers.max_level(); ++l)
+        std::cout << "GPU levels " << h.dof_handlers.min_level() << ".."
+                  << h.dof_handlers.max_level() << ", degree/DoFs:";
+        for (unsigned int l = h.dof_handlers.min_level(); l <= h.dof_handlers.max_level(); ++l)
           std::cout << " Q" << h.degrees[l] << '/' << h.dof_handlers[l].n_dofs();
         std::cout << std::endl << "GPU side setup: " << setup_time << " s" << std::endl;
       }
@@ -211,7 +225,7 @@ namespace hybrid
 
   template <int dim, int fe_degree>
   void
-  GpuSide<dim, fe_degree>::setup_dofs(Hierarchy &h) const
+  GpuSide<dim, fe_degree>::setup_dofs(Hierarchy &h, const unsigned int min_level) const
   {
     // h-levels: Q1 on the meshes refined 0..n_refine times; then p-levels on
     // the fine mesh with degrees ..., fe_degree - 2, fe_degree (as bk3)
@@ -227,10 +241,10 @@ namespace hybrid
 
     const unsigned int max_level = h.degrees.size() - 1;
 
-    h.dof_handlers.resize(0, max_level);
-    h.constraints.resize(0, max_level);
+    h.dof_handlers.resize(min_level, max_level);
+    h.constraints.resize(min_level, max_level);
 
-    for (unsigned int l = 0; l <= max_level; ++l)
+    for (unsigned int l = min_level; l <= max_level; ++l)
       {
         DoFHandler<dim> &dof_handler = h.dof_handlers[l];
         dof_handler.reinit(*h.mesh.levels[std::min(l, n_h_levels - 1)]);
@@ -261,14 +275,15 @@ namespace hybrid
 
   template <int dim, int fe_degree>
   void
-  GpuSide<dim, fe_degree>::setup_operators(Hierarchy &h) const
+  GpuSide<dim, fe_degree>::setup_operators(Hierarchy &h, const bool with_coarse_smoother) const
   {
+    const unsigned int min_level  = h.dof_handlers.min_level();
     const unsigned int max_level  = h.dof_handlers.max_level();
     const unsigned int n_h_levels = h.mesh.levels.size();
 
     // BK3 level operators in vcycle_number, the fine level also in double
-    h.matrices.resize(0, max_level);
-    for (unsigned int l = 0; l <= max_level; ++l)
+    h.matrices.resize(min_level, max_level);
+    for (unsigned int l = min_level; l <= max_level; ++l)
       {
         OperatorRunner runner{h.dof_handlers[l], h.constraints[l], h.matrices[l]};
         const bool     success = Portable::OperatorDispatchFactory::dispatch(h.degrees[l], runner);
@@ -279,8 +294,8 @@ namespace hybrid
       h.dof_handlers[max_level], h.fine_constraints, false);
 
     // geometric transfers between h-levels, polynomial ones between p-levels
-    h.transfers.resize(0, max_level);
-    for (unsigned int l = 1; l <= max_level; ++l)
+    h.transfers.resize(min_level, max_level);
+    for (unsigned int l = min_level + 1; l <= max_level; ++l)
       if (l < n_h_levels)
         {
           h.transfers[l] = std::make_unique<Portable::GeometricTransfer<dim, 1, vcycle_number>>();
@@ -303,23 +318,26 @@ namespace hybrid
           AssertThrow(success, ExcMessage("No polynomial transfer for this degree pair."));
         }
 
-    // Chebyshev smoothers; on level 0 Chebyshev serves as coarse solver
-    h.smoothers.resize(0, max_level);
-    for (unsigned int l = 0; l <= max_level; ++l)
+    // Chebyshev smoothers; on the lowest level either Chebyshev as coarse
+    // solver or nothing (another coarse solver is used there)
+    h.smoothers.resize(min_level, max_level);
+    for (unsigned int l = min_level; l <= max_level; ++l)
       {
         typename SmootherType::AdditionalData smoother_data;
-        if (l > 0)
+        if (l > min_level)
           {
             smoother_data.smoothing_range     = 15.;
             smoother_data.degree              = n_smooth;
             smoother_data.eig_cg_n_iterations = 10;
           }
-        else
+        else if (with_coarse_smoother)
           {
             smoother_data.smoothing_range     = 1e-3;
             smoother_data.degree              = numbers::invalid_unsigned_int;
-            smoother_data.eig_cg_n_iterations = h.matrices[0]->m();
+            smoother_data.eig_cg_n_iterations = h.matrices[l]->m();
           }
+        else
+          continue;
 
         h.matrices[l]->compute_diagonal();
         smoother_data.preconditioner = h.matrices[l]->get_matrix_diagonal_inverse();
