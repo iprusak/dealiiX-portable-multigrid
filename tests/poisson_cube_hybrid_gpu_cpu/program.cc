@@ -1,5 +1,5 @@
-// Hybrid CPU-GPU multigrid (work in progress), step 1: rank roles and
-// communicators.
+// Hybrid CPU-GPU multigrid (work in progress), step 2: rank roles,
+// communicators, and the command loop of the CPU-only ranks (dummy work).
 //
 //   mpirun -n <ranks> ./program ranks_per_gpu
 //
@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "hybrid_mpi_layout.h"
+#include "hybrid_service.h"
 
 
 namespace hybrid
@@ -54,6 +55,78 @@ namespace hybrid
       AssertThrow(std::count(indices.begin(), indices.end(), g) == layout.ranks_per_gpu,
                   ExcMessage("Block " + std::to_string(g) + " has the wrong number of ranks."));
   }
+
+
+
+  // Stand-in for the CPU levels. setup() and coarse_solve() only run
+  // collectives over comm_world that check all ranks are at the same call.
+  class DummyCpuSide
+  {
+  public:
+    explicit DummyCpuSide(const MPILayout &layout)
+      : layout(layout)
+    {}
+
+    void
+    setup(const unsigned int switch_level)
+    {
+      ++n_setups;
+      AssertThrow(Utilities::MPI::min(n_setups, layout.comm_world) ==
+                    Utilities::MPI::max(n_setups, layout.comm_world),
+                  ExcMessage("Ranks are at different setups."));
+      AssertThrow(Utilities::MPI::min(switch_level, layout.comm_world) ==
+                    Utilities::MPI::max(switch_level, layout.comm_world),
+                  ExcMessage("Ranks got different switch levels."));
+      this->switch_level = switch_level;
+    }
+
+    void
+    coarse_solve()
+    {
+      ++n_solves;
+      AssertThrow(Utilities::MPI::min(n_solves, layout.comm_world) ==
+                    Utilities::MPI::max(n_solves, layout.comm_world),
+                  ExcMessage("Ranks are at different coarse solves."));
+    }
+
+    unsigned int n_setups     = 0;
+    unsigned int n_solves     = 0;
+    unsigned int switch_level = 0;
+
+  private:
+    const MPILayout &layout;
+  };
+
+
+
+  // Stand-in for the driver on the GPU ranks: refinement cycles, each with a
+  // CPU-side setup and a few V-cycles that reach the CPU levels.
+  void
+  run_dummy_driver(const MPILayout   &layout,
+                   DummyCpuSide      &cpu_side,
+                   const unsigned int n_cycles,
+                   const unsigned int n_vcycles)
+  {
+    for (unsigned int cycle = 0; cycle < n_cycles; ++cycle)
+      {
+        const unsigned int switch_level = 2 + cycle; // placeholder
+
+        send_command(layout, Command::setup, switch_level);
+        cpu_side.setup(switch_level);
+
+        for (unsigned int v = 0; v < n_vcycles; ++v)
+          {
+            // GPU levels: collectives on comm_gpu only, CPU-only ranks wait
+            const unsigned int n_gpu_ranks = Utilities::MPI::sum(1u, layout.comm_gpu);
+            AssertThrow(n_gpu_ranks == layout.n_graces, ExcInternalError());
+
+            send_command(layout, Command::solve);
+            cpu_side.coarse_solve();
+          }
+      }
+
+    send_command(layout, Command::stop);
+  }
 } // namespace hybrid
 
 
@@ -86,9 +159,10 @@ main(int argc, char **argv)
       layout.print(std::cout);
       hybrid::check_layout(layout);
 
-      // only a warning: on pc02 (one socket) it never fires; on JUPITER it
-      // catches a wrong srun rank placement
+      // only warnings: on pc02 they never fire; on JUPITER they catch a wrong
+      // srun rank placement or --ntasks-per-node that does not match k
       const bool share_socket = layout.blocks_share_socket();
+      const bool match_gpus   = layout.blocks_match_slurm_gpus();
       if (is_root)
         {
           if (!share_socket)
@@ -96,8 +170,35 @@ main(int argc, char **argv)
                       << std::endl
                       << "         With srun use --distribution=block:block --cpu-bind=cores."
                       << std::endl;
+          if (!match_gpus)
+            std::cout << "WARNING: ranks per node / ranks_per_gpu differs from SLURM_GPUS_ON_NODE."
+                      << std::endl;
           std::cout << "MPI layout checks passed." << std::endl;
         }
+
+      // GPU ranks drive, CPU-only ranks follow their commands
+      const unsigned int n_cycles  = 3;
+      const unsigned int n_vcycles = 5;
+
+      hybrid::DummyCpuSide cpu_side(layout);
+      if (layout.is_gpu_rank)
+        hybrid::run_dummy_driver(layout, cpu_side, n_cycles, n_vcycles);
+      else
+        hybrid::run_service_loop(layout, cpu_side);
+
+      // every rank took part in every setup and coarse solve
+      AssertThrow(Utilities::MPI::min(cpu_side.n_setups, MPI_COMM_WORLD) == n_cycles &&
+                    Utilities::MPI::max(cpu_side.n_setups, MPI_COMM_WORLD) == n_cycles,
+                  ExcMessage("Wrong number of setups."));
+      AssertThrow(Utilities::MPI::min(cpu_side.n_solves, MPI_COMM_WORLD) == n_cycles * n_vcycles &&
+                    Utilities::MPI::max(cpu_side.n_solves, MPI_COMM_WORLD) ==
+                      n_cycles * n_vcycles,
+                  ExcMessage("Wrong number of coarse solves."));
+
+      if (is_root)
+        std::cout << "Service loop passed: " << n_cycles << " setups and "
+                  << n_cycles * n_vcycles << " coarse solves on all "
+                  << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) << " ranks." << std::endl;
     }
   catch (std::exception &exc)
     {

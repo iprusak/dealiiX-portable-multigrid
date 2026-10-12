@@ -104,6 +104,11 @@ namespace hybrid
     bool
     blocks_share_socket() const;
 
+    // Collective on comm_world. False if SLURM_GPUS_ON_NODE is set and differs
+    // from the number of blocks on some node (--ntasks-per-node != GPUs * k).
+    bool
+    blocks_match_slurm_gpus() const;
+
     const MPI_Comm     comm_world;    // all ranks, owned by the caller
     const unsigned int ranks_per_gpu; // k
 
@@ -218,6 +223,21 @@ namespace hybrid
 
     // logical AND over all blocks
     return Utilities::MPI::min(block_ok ? 1u : 0u, comm_world) == 1u;
+  }
+
+
+
+  inline bool
+  MPILayout::blocks_match_slurm_gpus() const
+  {
+    // set by SLURM when GPUs are allocated; unset on pc02 -> nothing to check
+    const char        *gpus_on_node   = std::getenv("SLURM_GPUS_ON_NODE");
+    const unsigned int blocks_on_node = Utilities::MPI::n_mpi_processes(comm_node) / ranks_per_gpu;
+
+    const bool node_ok =
+      gpus_on_node == nullptr || std::atoi(gpus_on_node) == static_cast<int>(blocks_on_node);
+
+    return Utilities::MPI::min(node_ok ? 1u : 0u, comm_world) == 1u;
   }
 
 
