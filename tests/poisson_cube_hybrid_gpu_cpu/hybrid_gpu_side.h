@@ -49,7 +49,8 @@ namespace hybrid
    * levels above are p-levels on the fine mesh up to Q_fe_degree.
    *
    * setup() can cut the hierarchy at a lowest level min_level (the switch
-   * level s-1 of the hybrid) and use another coarse solver there.
+   * level s-1 of the hybrid, h- or p-level) and use another coarse solver
+   * there.
    */
   template <int dim, int fe_degree>
   class GpuSide
@@ -78,9 +79,9 @@ namespace hybrid
     }
 
     // Collective on comm_gpu: build the levels min_level.. for a fine mesh
-    // refined n_refine times; min_level <= n_refine is a Q1 h-level. On
-    // min_level the V-cycle calls coarse_solver, or if nullptr Chebyshev as
-    // coarse solver (as on level 0 of poisson_cube_bk3).
+    // refined n_refine times (any level below the fine one). On min_level the
+    // V-cycle calls coarse_solver, or if nullptr Chebyshev as coarse solver
+    // (as on level 0 of poisson_cube_bk3).
     void
     setup(const unsigned int                  n_refine,
           const unsigned int                  min_level     = 0,
@@ -91,14 +92,23 @@ namespace hybrid
     std::pair<unsigned int, double>
     solve();
 
-    // Q1 DoFHandler of the mesh refined `refinement` times (an h-level).
-    const DoFHandler<dim> &
-    h_level_dofs(const unsigned int refinement) const
+    // Rank 0: per-level times of the last solve() (MultigridSolver's timers).
+    void
+    print_level_times()
     {
-      AssertIndexRange(refinement, hierarchy->mesh.levels.size());
-      Assert(refinement >= hierarchy->dof_handlers.min_level(),
-             ExcMessage("This level is below the lowest GPU level."));
-      return hierarchy->dof_handlers[refinement];
+      if (Utilities::MPI::this_mpi_process(layout.comm_gpu) == 0)
+        std::cout << "==== GPU side levels, rank 0, last solve" << std::endl;
+      hierarchy->solver->print_wall_times();
+    }
+
+    // DoFHandler of a GPU level (index in the full ph-hierarchy).
+    const DoFHandler<dim> &
+    level_dofs(const unsigned int level) const
+    {
+      Assert(level >= hierarchy->dof_handlers.min_level() &&
+               level <= hierarchy->dof_handlers.max_level(),
+             ExcMessage("This level is not on the GPU."));
+      return hierarchy->dof_handlers[level];
     }
 
   private:
@@ -183,8 +193,6 @@ namespace hybrid
                                  const unsigned int                    min_level,
                                  const MGCoarseGridBase<VectorTypeMG> *coarse_solver)
   {
-    AssertThrow(min_level <= n_refine, ExcMessage("The lowest GPU level has to be an h-level."));
-
     Kokkos::fence();
     Timer time;
 
@@ -230,16 +238,10 @@ namespace hybrid
     // h-levels: Q1 on the meshes refined 0..n_refine times; then p-levels on
     // the fine mesh with degrees ..., fe_degree - 2, fe_degree (as bk3)
     const unsigned int n_h_levels = h.mesh.levels.size();
-
-    std::vector<unsigned int> p_degrees({fe_degree});
-    while (p_degrees.back() > 1)
-      p_degrees.push_back(std::max(p_degrees.back() - 2, 1u));
-    std::reverse(p_degrees.begin(), p_degrees.end()); // 1, ..., fe_degree
-
-    h.degrees.assign(n_h_levels, 1);
-    h.degrees.insert(h.degrees.end(), p_degrees.begin() + 1, p_degrees.end());
+    h.degrees                     = ph_level_degrees(n_h_levels, fe_degree);
 
     const unsigned int max_level = h.degrees.size() - 1;
+    AssertThrow(min_level <= max_level, ExcMessage("min_level is above the fine level."));
 
     h.dof_handlers.resize(min_level, max_level);
     h.constraints.resize(min_level, max_level);

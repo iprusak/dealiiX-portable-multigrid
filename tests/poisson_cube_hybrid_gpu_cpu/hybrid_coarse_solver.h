@@ -27,17 +27,17 @@ namespace hybrid
    * block's CPU-only ranks join, run one V-cycle on the CPU levels (P in and
    * out inside CpuSide::coarse_solve()), copy the correction back.
    */
-  template <int dim>
+  template <typename CpuSideType>
   class HybridCoarseSolver
     : public MGCoarseGridBase<
-        LinearAlgebra::distributed::Vector<typename CpuSide<dim>::vcycle_number,
+        LinearAlgebra::distributed::Vector<typename CpuSideType::vcycle_number,
                                            MemorySpace::Default>>
   {
   public:
-    using Number     = typename CpuSide<dim>::vcycle_number;
+    using Number     = typename CpuSideType::vcycle_number;
     using VectorType = LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
 
-    HybridCoarseSolver(const MPILayout &layout, CpuSide<dim> &cpu_side)
+    HybridCoarseSolver(const MPILayout &layout, CpuSideType &cpu_side)
       : layout(layout)
       , cpu_side(cpu_side)
     {}
@@ -52,43 +52,42 @@ namespace hybrid
 
       // wake up the CPU-only ranks of the block
       send_command(layout, Command::solve);
+      times[0] += time.wall_time();
 
       // device -> host, owned entries; same layout on both ends
+      time.restart();
       Kokkos::deep_copy(host_view(host_values), device_view(src));
-      times[0] += time.wall_time();
+      times[1] += time.wall_time();
 
       // P down, V-cycle on the CPU levels (all ranks), P up
       time.restart();
       cpu_side.coarse_solve();
-      times[1] += time.wall_time();
+      times[2] += time.wall_time();
 
       // host -> device
       time.restart();
       Kokkos::deep_copy(device_view(dst), host_view(host_values));
-      times[2] += time.wall_time();
+      times[3] += time.wall_time();
 
       ++n_calls;
     }
 
-    // Collective on comm_gpu: accumulated times (max over GPU ranks).
+    // Rank 0 (of comm_gpu): times since reset_times(), rank-local like the
+    // per-level times of MultigridSolver.
     void
     print_times(std::ostream &out) const
     {
-      double max_times[3];
-      for (unsigned int i = 0; i < 3; ++i)
-        max_times[i] = Utilities::MPI::max(times[i], layout.comm_gpu);
-
       if (Utilities::MPI::this_mpi_process(layout.comm_gpu) == 0)
-        out << "Hybrid coarse solver: " << n_calls << " calls, device->host "
-            << std::setprecision(3) << max_times[0] << " s, CPU levels " << max_times[1]
-            << " s, host->device " << max_times[2] << " s" << std::endl;
+        out << "==== switch, rank 0: " << n_calls << " calls, bcast " << times[0]
+            << " device->host " << times[1] << " CPU part " << times[2] << " host->device "
+            << times[3] << std::endl;
     }
 
     void
     reset_times()
     {
-      times[0] = times[1] = times[2] = 0.;
-      n_calls                        = 0;
+      times[0] = times[1] = times[2] = times[3] = 0.;
+      n_calls                                   = 0;
     }
 
   private:
@@ -112,9 +111,9 @@ namespace hybrid
     }
 
     const MPILayout &layout;
-    CpuSide<dim>    &cpu_side;
+    CpuSideType     &cpu_side;
 
-    mutable double       times[3] = {0., 0., 0.}; // device->host, CPU levels, host->device
-    mutable unsigned int n_calls  = 0;
+    mutable double times[4] = {0., 0., 0., 0.}; // bcast, device->host, CPU part, host->device
+    mutable unsigned int n_calls = 0;
   };
 } // namespace hybrid

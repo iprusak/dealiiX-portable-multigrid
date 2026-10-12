@@ -1,18 +1,20 @@
 // Hybrid CPU-GPU multigrid: the ph-multigrid of poisson_cube_bk3 with the
-// fine levels switch_refine.. on the GPU ranks (comm_gpu) and the coarse
-// levels 0..switch_refine on all ranks (comm_world). The GPU V-cycle's coarse
+// fine levels switch_level.. on the GPU ranks (comm_gpu) and the coarse
+// levels 0..switch_level on all ranks (comm_world). The GPU V-cycle's coarse
 // solve on the switch level is one V-cycle on the CPU levels; the CPU-only
 // ranks join it through the command loop.
 //
-//   mpirun -n <ranks> ./program ranks_per_gpu degree [n_refine] [switch_refine]
+//   mpirun -n <ranks> ./program ranks_per_gpu degree [n_refine] [switch_level]
+//                               [n_subdivisions]
 //
 // ranks_per_gpu = k: one GPU rank + k-1 CPU-only ranks per GPU.
 // degree:        polynomial degree of the fine level, 1..4
-// n_refine:      refinements of the 3x3x3 coarse grid for the fine mesh
-//                (default 2); same mesh as poisson_cube_bk3 with the
-//                non-doubling mesh of size 3 * 2^n_refine
-// switch_refine: refinements of the switch level = finest CPU level
-//                (default n_refine - 1)
+// n_refine:      refinements of the coarse grid for the fine mesh (default 2)
+// switch_level:  finest CPU level, index in the ph-hierarchy: 0..n_refine are
+//                the Q1 h-levels, then the p-levels of the fine mesh; at most
+//                one below the fine level (default n_refine - 1)
+// n_subdivisions: coarse grid n x n x n cells (default 3); the fine mesh is
+//                poisson_cube_bk3's non-doubling mesh of size n * 2^n_refine
 // Without a GPU, HYBRID_SIMULATED_RANKS_PER_NODE=<n> mimics nodes of n ranks.
 
 #include <deal.II/base/mpi.h>
@@ -72,47 +74,52 @@ namespace hybrid
 
 
 
-  // Driver on the GPU ranks: set up the GPU levels switch_refine.. and the
-  // CPU levels 0..switch_refine (with P from the GPU side's switch level),
+  // Driver on the GPU ranks: set up the GPU levels switch_level.. and the
+  // CPU levels 0..switch_level (with P from the GPU side's switch level),
   // then solve with CG on the fine level.
-  template <int dim, int fe_degree>
+  template <int dim, int fe_degree, typename CpuSideType>
   void
   run_driver(const MPILayout          &layout,
              GpuSide<dim, fe_degree> &gpu_side,
-             CpuSide<dim>            &cpu_side,
+             CpuSideType             &cpu_side,
              const unsigned int       n_refine,
-             const unsigned int       switch_refine)
+             const unsigned int       switch_level)
   {
     // the GPU V-cycle stops at the switch level and hands it to the CPU levels
-    HybridCoarseSolver<dim> coarse_solver(layout, cpu_side);
-    gpu_side.setup(n_refine, switch_refine, &coarse_solver);
+    HybridCoarseSolver<CpuSideType> coarse_solver(layout, cpu_side);
+    gpu_side.setup(n_refine, switch_level, &coarse_solver);
 
-    // GPU level switch_refine is Q1 on the switch-level mesh: P is built from it
-    cpu_side.set_gpu_switch_dofs(&gpu_side.h_level_dofs(switch_refine));
-    send_command(layout, Command::setup, switch_refine);
-    cpu_side.setup(switch_refine);
+    // P is built from the GPU side's switch level
+    cpu_side.set_gpu_switch_dofs(&gpu_side.level_dofs(switch_level));
+    send_command(layout, Command::setup, switch_level);
+    cpu_side.setup(switch_level);
 
-    // every V-cycle of the CG solve runs one coarse solve on all ranks
-    for (unsigned int i = 0; i < 2; ++i)
+    // every V-cycle of the CG solve runs one coarse solve on all ranks;
+    // timers of all parts are reset per solve, printed for the last one
+    for (unsigned int i = 0; i < 10; ++i)
       {
         coarse_solver.reset_times();
+        cpu_side.reset_times();
         gpu_side.solve();
-        coarse_solver.print_times(std::cout);
       }
+    gpu_side.print_level_times();
+    cpu_side.print_times();
+    coarse_solver.print_times(std::cout);
 
     send_command(layout, Command::stop);
   }
 
 
 
-  template <int dim, int fe_degree>
+  // cpu_degree: degree of the switch level, the top CPU level
+  template <int dim, int fe_degree, int cpu_degree>
   void
-  run(const MPILayout   &layout,
-      const unsigned int n_refine,
-      const unsigned int switch_refine)
+  run_hybrid(const MPILayout   &layout,
+             const unsigned int n_refine,
+             const unsigned int switch_level,
+             const unsigned int n_subdivisions)
   {
-    const unsigned int n_subdivisions = 3; // coarse grid: 3x3x3 cells
-    const unsigned int n_smooth       = 3; // Chebyshev degree, as poisson_cube_*
+    const unsigned int n_smooth = 3; // Chebyshev degree, as poisson_cube_*
 
     // GPU side only on the GPU ranks; declared first so that it outlives
     // cpu_side, which points to its switch-level DoFs
@@ -122,11 +129,35 @@ namespace hybrid
 
     // CPU side on all ranks. GPU ranks drive, CPU-only ranks follow their
     // commands.
-    CpuSide<dim> cpu_side(layout, n_subdivisions, n_smooth);
+    CpuSide<dim, cpu_degree> cpu_side(layout, n_subdivisions, n_smooth, n_refine, fe_degree);
     if (layout.is_gpu_rank)
-      run_driver(layout, *gpu_side, cpu_side, n_refine, switch_refine);
+      run_driver(layout, *gpu_side, cpu_side, n_refine, switch_level);
     else
       run_service_loop(layout, cpu_side);
+  }
+
+
+
+  // dispatches the degree of the switch level (known at run time)
+  template <int dim, int fe_degree>
+  void
+  run(const MPILayout   &layout,
+      const unsigned int n_refine,
+      const unsigned int switch_level,
+      const unsigned int n_subdivisions)
+  {
+    const std::vector<unsigned int> degrees = ph_level_degrees(n_refine + 1, fe_degree);
+    AssertThrow(switch_level + 1 < degrees.size(),
+                ExcMessage("The switch level has to be below the fine level."));
+
+    // below Q4 the p-levels are 4 -> 2 -> 1, 3 -> 1, 2 -> 1
+    if (degrees[switch_level] == 1)
+      run_hybrid<dim, fe_degree, 1>(layout, n_refine, switch_level, n_subdivisions);
+    else if constexpr (fe_degree > 2)
+      {
+        AssertThrow(degrees[switch_level] == 2, ExcNotImplemented());
+        run_hybrid<dim, fe_degree, 2>(layout, n_refine, switch_level, n_subdivisions);
+      }
   }
 } // namespace hybrid
 
@@ -150,7 +181,7 @@ main(int argc, char **argv)
         {
           if (is_root)
             std::cout << "Usage: mpirun -n <ranks> ./program ranks_per_gpu degree [n_refine] "
-                         "[switch_refine]"
+                         "[switch_level] [n_subdivisions]"
                       << std::endl;
           return 1;
         }
@@ -158,10 +189,9 @@ main(int argc, char **argv)
       const unsigned int ranks_per_gpu = std::atoi(argv[1]);
       const unsigned int degree        = std::atoi(argv[2]);
       const unsigned int n_refine      = argc > 3 ? std::atoi(argv[3]) : 2;
-      const unsigned int switch_refine = argc > 4 ? std::atoi(argv[4]) : n_refine - 1;
+      const unsigned int switch_level   = argc > 4 ? std::atoi(argv[4]) : n_refine - 1;
+      const unsigned int n_subdivisions = argc > 5 ? std::atoi(argv[5]) : 3;
       AssertThrow(degree >= 1 && degree <= 4, ExcMessage("degree has to be 1..4."));
-      AssertThrow(switch_refine <= n_refine,
-                  ExcMessage("switch_refine has to be at most n_refine."));
 
       // build the communicators, print the table, verify
       hybrid::MPILayout layout(MPI_COMM_WORLD, ranks_per_gpu);
@@ -190,16 +220,16 @@ main(int argc, char **argv)
       switch (degree)
         {
           case 1:
-            hybrid::run<dim, 1>(layout, n_refine, switch_refine);
+            hybrid::run<dim, 1>(layout, n_refine, switch_level, n_subdivisions);
             break;
           case 2:
-            hybrid::run<dim, 2>(layout, n_refine, switch_refine);
+            hybrid::run<dim, 2>(layout, n_refine, switch_level, n_subdivisions);
             break;
           case 3:
-            hybrid::run<dim, 3>(layout, n_refine, switch_refine);
+            hybrid::run<dim, 3>(layout, n_refine, switch_level, n_subdivisions);
             break;
           case 4:
-            hybrid::run<dim, 4>(layout, n_refine, switch_refine);
+            hybrid::run<dim, 4>(layout, n_refine, switch_level, n_subdivisions);
             break;
         }
     }

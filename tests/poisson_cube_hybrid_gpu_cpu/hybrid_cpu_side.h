@@ -3,30 +3,27 @@
 #include <deal.II/base/function.h>
 #include <deal.II/base/mg_level_object.h>
 #include <deal.II/base/mpi.h>
-#include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/timer.h>
 
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
 
 #include <deal.II/fe/fe_q.h>
-#include <deal.II/fe/fe_values.h>
 
 #include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/la_parallel_vector.h>
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/solver_control.h>
-#include <deal.II/lac/vector.h>
 
 #include <deal.II/multigrid/mg_transfer_global_coarsening.h>
 
 #include <deal.II/numerics/vector_tools.h>
 
-#include <iomanip>
+#include <algorithm>
 #include <iostream>
 #include <memory>
-#include <utility>
+#include <vector>
 
 #include "hybrid_mpi_layout.h"
 #include "hybrid_switch_permutation.h"
@@ -39,15 +36,16 @@ namespace hybrid
   using namespace dealii;
 
   /**
-   * CPU levels of the hybrid multigrid on comm_world (all ranks): Q1 on the
-   * meshes refined 0..switch_refine times, with the operators, transfers and
+   * CPU levels of the hybrid multigrid on comm_world (all ranks): the levels
+   * 0..switch_level of the ph-hierarchy (Q1 h-levels, then p-levels on the
+   * fine mesh up to Q_top_degree), with the operators, transfers and
    * smoothers of poisson_cube_cpu. The finest CPU level is the switch level
    * s-1, which the GPU side also holds; P moves values between the two.
    *
    * GPU ranks call setup()/coarse_solve() directly, CPU-only ranks through
    * run_service_loop().
    */
-  template <int dim>
+  template <int dim, int top_degree>
   class CpuSide
   {
   public:
@@ -62,9 +60,8 @@ namespace hybrid
     using TransferType    = MGTwoLevelTransfer<dim, VectorTypeMG>;
     using SmootherType    = PreconditionChebyshev<LevelMatrixType, VectorTypeMG>;
 
-    // the top CPU level is Q1, hence fe_degree = 1
     using MGSolverType = multigrid::MultigridSolver<dim,
-                                                    1,
+                                                    top_degree,
                                                     vcycle_number,
                                                     full_number,
                                                     SmootherType,
@@ -72,11 +69,18 @@ namespace hybrid
                                                     VectorType,
                                                     TransferType>;
 
-    CpuSide(const MPILayout &layout, const unsigned int n_subdivisions, const unsigned int n_smooth)
+    // n_refine, fine_degree: the full hierarchy, of which the CPU side takes
+    // the bottom levels
+    CpuSide(const MPILayout   &layout,
+            const unsigned int n_subdivisions,
+            const unsigned int n_smooth,
+            const unsigned int n_refine,
+            const unsigned int fine_degree)
       : layout(layout)
       , n_subdivisions(n_subdivisions)
       , n_smooth(n_smooth)
-      , fe(1)
+      , n_refine(n_refine)
+      , fine_degree(fine_degree)
     {}
 
     // GPU ranks: the GPU side's DoFHandler of the switch level. setup() builds
@@ -87,9 +91,10 @@ namespace hybrid
       gpu_switch_dofs = dofs;
     }
 
-    // Collective on comm_world: build the CPU levels 0..switch_refine.
+    // Collective on comm_world: build the CPU levels 0..switch_level (index
+    // in the full ph-hierarchy).
     void
-    setup(const unsigned int switch_refine);
+    setup(const unsigned int switch_level);
 
     // Collective on comm_world: one V-cycle (zero initial guess) on the CPU
     // levels. Input and output are the switch-level values in GPU numbering
@@ -105,6 +110,26 @@ namespace hybrid
       return gpu_switch_values;
     }
 
+    // Rank-local timers: per CPU level (MultigridSolver's) and of P.
+    void
+    reset_times()
+    {
+      hierarchy->solver->reset_timings();
+      p_times[0] = p_times[1] = 0.;
+    }
+
+    // World rank 0: CPU-level times since reset_times(), and P down/up
+    // (including the float/double conversion).
+    void
+    print_times()
+    {
+      if (Utilities::MPI::this_mpi_process(layout.comm_world) == 0)
+        std::cout << "==== CPU side levels, rank 0, coarse solves of the last solve" << std::endl;
+      hierarchy->solver->print_wall_times();
+      if (Utilities::MPI::this_mpi_process(layout.comm_world) == 0)
+        std::cout << "P down " << p_times[0] << " P up " << p_times[1] << std::endl;
+    }
+
   private:
     // Everything one setup() builds. Members are destroyed in reverse order:
     // solver first, mesh last.
@@ -112,11 +137,12 @@ namespace hybrid
     {
       Hierarchy(const MPI_Comm     comm,
                 const unsigned int n_subdivisions,
-                const unsigned int switch_refine)
-        : mesh(comm, n_subdivisions, switch_refine)
+                const unsigned int mesh_refine)
+        : mesh(comm, n_subdivisions, mesh_refine)
       {}
 
       MeshLevels<dim>                                 mesh;
+      std::vector<unsigned int>                       degrees; // polynomial degree per level
       MGLevelObject<DoFHandler<dim>>                  dof_handlers;
       SwitchLevelPermutation<dim>                     permutation; // P
       MGLevelObject<AffineConstraints<vcycle_number>> constraints;
@@ -134,6 +160,23 @@ namespace hybrid
       VectorType                 cpu_solution;
     };
 
+    // creates the CPU operator of the dispatched degree in `matrix`
+    struct OperatorRunner
+    {
+      const DoFHandler<dim>                  &dof_handler;
+      const AffineConstraints<vcycle_number> &constraints;
+      std::unique_ptr<LevelMatrixType>       &matrix;
+
+      template <unsigned int degree>
+      void
+      run()
+      {
+        matrix = std::make_unique<CPU::LaplaceOperator<dim, degree, vcycle_number>>(dof_handler,
+                                                                                    constraints,
+                                                                                    false);
+      }
+    };
+
     void
     setup_dofs(Hierarchy &h) const;
 
@@ -143,27 +186,42 @@ namespace hybrid
     const MPILayout   &layout;
     const unsigned int n_subdivisions;
     const unsigned int n_smooth;
-    const FE_Q<dim>    fe; // Q1 on all CPU levels
+    const unsigned int n_refine;
+    const unsigned int fine_degree;
 
     const DoFHandler<dim> *gpu_switch_dofs = nullptr;
 
     std::vector<vcycle_number> gpu_switch_values;
+
+    double p_times[2] = {0., 0.}; // P down, P up
 
     std::unique_ptr<Hierarchy> hierarchy;
   };
 
 
 
-  template <int dim>
+  template <int dim, int top_degree>
   void
-  CpuSide<dim>::setup(const unsigned int switch_refine)
+  CpuSide<dim, top_degree>::setup(const unsigned int switch_level)
   {
     Timer time;
 
-    // tear down the previous setup (solver first, mesh last), then rebuild
+    // levels 0..switch_level of the full hierarchy
+    std::vector<unsigned int> degrees = ph_level_degrees(n_refine + 1, fine_degree);
+    AssertThrow(switch_level < degrees.size(),
+                ExcMessage("The switch level is above the fine level."));
+    degrees.resize(switch_level + 1);
+    AssertThrow(degrees.back() == top_degree,
+                ExcMessage("The switch level does not have degree top_degree."));
+
+    // tear down the previous setup (solver first, mesh last), then rebuild;
+    // the mesh is refined up to the switch level, at most to the fine mesh
     hierarchy.reset();
-    hierarchy = std::make_unique<Hierarchy>(layout.comm_world, n_subdivisions, switch_refine);
+    hierarchy = std::make_unique<Hierarchy>(layout.comm_world,
+                                            n_subdivisions,
+                                            std::min(switch_level, n_refine));
     Hierarchy &h = *hierarchy;
+    h.degrees    = degrees;
 
     print_level_partitions(h.mesh.levels, layout.comm_world, "CPU side, comm_world", std::cout);
 
@@ -213,20 +271,21 @@ namespace hybrid
     const double setup_time = Utilities::MPI::max(time.wall_time(), layout.comm_world);
     if (Utilities::MPI::this_mpi_process(layout.comm_world) == 0)
       {
-        std::cout << "CPU levels 0.." << h.dof_handlers.max_level() << ", DoFs:";
+        std::cout << "CPU levels 0.." << h.dof_handlers.max_level() << ", degree/DoFs:";
         for (unsigned int l = 0; l <= h.dof_handlers.max_level(); ++l)
-          std::cout << ' ' << h.dof_handlers[l].n_dofs();
+          std::cout << " Q" << h.degrees[l] << '/' << h.dof_handlers[l].n_dofs();
         std::cout << std::endl << "CPU side setup: " << setup_time << " s" << std::endl;
       }
   }
 
 
 
-  template <int dim>
+  template <int dim, int top_degree>
   void
-  CpuSide<dim>::setup_dofs(Hierarchy &h) const
+  CpuSide<dim, top_degree>::setup_dofs(Hierarchy &h) const
   {
-    const unsigned int max_level = h.mesh.levels.size() - 1;
+    const unsigned int n_h_levels = h.mesh.levels.size();
+    const unsigned int max_level  = h.degrees.size() - 1;
 
     h.dof_handlers.resize(0, max_level);
     h.constraints.resize(0, max_level);
@@ -234,8 +293,8 @@ namespace hybrid
     for (unsigned int l = 0; l <= max_level; ++l)
       {
         DoFHandler<dim> &dof_handler = h.dof_handlers[l];
-        dof_handler.reinit(*h.mesh.levels[l]);
-        dof_handler.distribute_dofs(fe);
+        dof_handler.reinit(*h.mesh.levels[std::min(l, n_h_levels - 1)]);
+        dof_handler.distribute_dofs(FE_Q<dim>(h.degrees[l]));
 
         const IndexSet relevant_dofs = DoFTools::extract_locally_relevant_dofs(dof_handler);
 
@@ -260,30 +319,41 @@ namespace hybrid
 
 
 
-  template <int dim>
+  template <int dim, int top_degree>
   void
-  CpuSide<dim>::setup_operators(Hierarchy &h) const
+  CpuSide<dim, top_degree>::setup_operators(Hierarchy &h) const
   {
-    const unsigned int max_level = h.dof_handlers.max_level();
+    const unsigned int max_level  = h.dof_handlers.max_level();
+    const unsigned int n_h_levels = h.mesh.levels.size();
 
-    // level operators in vcycle_number, the top level also in double for CG
+    // level operators in vcycle_number, the top level also in double for
+    // MultigridSolver
     h.matrices.resize(0, max_level);
     for (unsigned int l = 0; l <= max_level; ++l)
-      h.matrices[l] = std::make_unique<CPU::LaplaceOperator<dim, 1, vcycle_number>>(
-        h.dof_handlers[l], h.constraints[l], false);
+      {
+        OperatorRunner runner{h.dof_handlers[l], h.constraints[l], h.matrices[l]};
+        const bool     success = Portable::OperatorDispatchFactory::dispatch(h.degrees[l], runner);
+        AssertThrow(success, ExcMessage("No CPU operator for this degree."));
+      }
 
-    h.top_matrix = std::make_unique<CPU::LaplaceOperator<dim, 1, full_number>>(
+    h.top_matrix = std::make_unique<CPU::LaplaceOperator<dim, top_degree, full_number>>(
       h.dof_handlers[max_level], h.top_constraints, false);
 
-    // geometric transfers between consecutive CPU levels
+    // geometric transfers between h-levels, polynomial ones between p-levels
     h.transfers.resize(0, max_level);
     for (unsigned int l = 1; l <= max_level; ++l)
       {
         h.transfers[l] = std::make_unique<TransferType>();
-        h.transfers[l]->reinit_geometric_transfer(h.dof_handlers[l],
-                                                  h.dof_handlers[l - 1],
-                                                  h.constraints[l],
-                                                  h.constraints[l - 1]);
+        if (l < n_h_levels)
+          h.transfers[l]->reinit_geometric_transfer(h.dof_handlers[l],
+                                                    h.dof_handlers[l - 1],
+                                                    h.constraints[l],
+                                                    h.constraints[l - 1]);
+        else
+          h.transfers[l]->reinit_polynomial_transfer(h.dof_handlers[l],
+                                                     h.dof_handlers[l - 1],
+                                                     h.constraints[l],
+                                                     h.constraints[l - 1]);
         h.transfers[l]->enable_inplace_operations_if_possible(
           h.matrices[l - 1]->get_vector_partitioner(), h.matrices[l]->get_vector_partitioner());
       }
@@ -315,27 +385,30 @@ namespace hybrid
 
 
 
-  // f = 1 on the switch level, as poisson_cube_cpu's compute_rhs().
-  template <int dim>
+  template <int dim, int top_degree>
   void
-  CpuSide<dim>::coarse_solve()
+  CpuSide<dim, top_degree>::coarse_solve()
   {
     Assert(hierarchy, ExcMessage("coarse_solve() before setup()."));
     Hierarchy &h = *hierarchy;
 
     // GPU numbering -> CPU numbering (P), float -> double
+    Timer time;
     h.permutation.gpu_to_cpu(ArrayView<const vcycle_number>(gpu_switch_values),
                              ArrayView<vcycle_number>(h.cpu_values));
     for (unsigned int i = 0; i < h.cpu_values.size(); ++i)
       h.cpu_rhs.local_element(i) = h.cpu_values[i];
+    p_times[0] += time.wall_time();
 
-    // one V-cycle on the CPU levels, zero initial guess
+    // one V-cycle on the CPU levels, zero initial guess (timed by the solver)
     h.solver->vmult(h.cpu_solution, h.cpu_rhs);
 
     // double -> float, CPU numbering -> GPU numbering (P back)
+    time.restart();
     for (unsigned int i = 0; i < h.cpu_values.size(); ++i)
       h.cpu_values[i] = h.cpu_solution.local_element(i);
     h.permutation.cpu_to_gpu(ArrayView<vcycle_number>(h.cpu_values),
                              ArrayView<vcycle_number>(gpu_switch_values));
+    p_times[1] += time.wall_time();
   }
 } // namespace hybrid

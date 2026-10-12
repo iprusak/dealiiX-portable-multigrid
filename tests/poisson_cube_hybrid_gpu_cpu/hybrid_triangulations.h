@@ -36,6 +36,24 @@ namespace hybrid
 
 
 
+  // Polynomial degree of every level of the ph-hierarchy of poisson_cube_bk3:
+  // Q1 on the n_h_levels h-levels, then p-levels on the fine mesh with
+  // degrees ..., fe_degree - 2, fe_degree.
+  inline std::vector<unsigned int>
+  ph_level_degrees(const unsigned int n_h_levels, const unsigned int fe_degree)
+  {
+    std::vector<unsigned int> p_degrees({fe_degree});
+    while (p_degrees.back() > 1)
+      p_degrees.push_back(std::max(p_degrees.back() - 2, 1u));
+    std::reverse(p_degrees.begin(), p_degrees.end()); // 1, ..., fe_degree
+
+    std::vector<unsigned int> degrees(n_h_levels, 1);
+    degrees.insert(degrees.end(), p_degrees.begin() + 1, p_degrees.end());
+    return degrees;
+  }
+
+
+
   // Mesh hierarchy of one side on its communicator, built as in
   // poisson_cube_*: levels[l] = coarse grid refined l times.
   template <int dim>
