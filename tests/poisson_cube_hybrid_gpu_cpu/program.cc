@@ -1,9 +1,8 @@
-// Hybrid CPU-GPU multigrid (work in progress): rank roles and communicators,
-// the ph-multigrid of poisson_cube_bk3 on the GPU ranks (comm_gpu), and the
-// CPU levels on all ranks (comm_world), driven by the GPU ranks through the
-// command loop. For now the two sides solve separately: CG on the fine level
-// with the GPU levels switch_refine.. (Chebyshev as coarse solver on the
-// lowest), and CG on the switch level with the CPU levels.
+// Hybrid CPU-GPU multigrid: the ph-multigrid of poisson_cube_bk3 with the
+// fine levels switch_refine.. on the GPU ranks (comm_gpu) and the coarse
+// levels 0..switch_refine on all ranks (comm_world). The GPU V-cycle's coarse
+// solve on the switch level is one V-cycle on the CPU levels; the CPU-only
+// ranks join it through the command loop.
 //
 //   mpirun -n <ranks> ./program ranks_per_gpu degree [n_refine] [switch_refine]
 //
@@ -25,6 +24,7 @@
 #include <memory>
 #include <vector>
 
+#include "hybrid_coarse_solver.h"
 #include "hybrid_cpu_side.h"
 #include "hybrid_gpu_side.h"
 #include "hybrid_mpi_layout.h"
@@ -72,8 +72,9 @@ namespace hybrid
 
 
 
-  // Driver on the GPU ranks: set up the GPU levels, then the CPU levels (with
-  // P from the GPU side's switch level), then solve on each side separately.
+  // Driver on the GPU ranks: set up the GPU levels switch_refine.. and the
+  // CPU levels 0..switch_refine (with P from the GPU side's switch level),
+  // then solve with CG on the fine level.
   template <int dim, int fe_degree>
   void
   run_driver(const MPILayout          &layout,
@@ -82,22 +83,22 @@ namespace hybrid
              const unsigned int       n_refine,
              const unsigned int       switch_refine)
   {
-    // GPU levels switch_refine..; for now Chebyshev as coarse solver on the
-    // lowest one (switch_refine = 0: the full hierarchy of poisson_cube_bk3)
-    gpu_side.setup(n_refine, switch_refine);
+    // the GPU V-cycle stops at the switch level and hands it to the CPU levels
+    HybridCoarseSolver<dim> coarse_solver(layout, cpu_side);
+    gpu_side.setup(n_refine, switch_refine, &coarse_solver);
 
-    // GPU level switch_refine is Q1 on the switch-level mesh
+    // GPU level switch_refine is Q1 on the switch-level mesh: P is built from it
     cpu_side.set_gpu_switch_dofs(&gpu_side.h_level_dofs(switch_refine));
     send_command(layout, Command::setup, switch_refine);
     cpu_side.setup(switch_refine);
 
-    // all levels on the GPU (only the GPU ranks take part)
+    // every V-cycle of the CG solve runs one coarse solve on all ranks
     for (unsigned int i = 0; i < 2; ++i)
-      gpu_side.solve();
-
-    // CPU levels alone
-    send_command(layout, Command::solve);
-    cpu_side.coarse_solve();
+      {
+        coarse_solver.reset_times();
+        gpu_side.solve();
+        coarse_solver.print_times(std::cout);
+      }
 
     send_command(layout, Command::stop);
   }

@@ -41,7 +41,8 @@ namespace hybrid
   /**
    * CPU levels of the hybrid multigrid on comm_world (all ranks): Q1 on the
    * meshes refined 0..switch_refine times, with the operators, transfers and
-   * smoothers of poisson_cube_cpu.
+   * smoothers of poisson_cube_cpu. The finest CPU level is the switch level
+   * s-1, which the GPU side also holds; P moves values between the two.
    *
    * GPU ranks call setup()/coarse_solve() directly, CPU-only ranks through
    * run_service_loop().
@@ -90,12 +91,19 @@ namespace hybrid
     void
     setup(const unsigned int switch_refine);
 
-    // Collective on comm_world. For now a test: CG on the switch level with
-    // right-hand side f = 1, preconditioned by the CPU V-cycle.
+    // Collective on comm_world: one V-cycle (zero initial guess) on the CPU
+    // levels. Input and output are the switch-level values in GPU numbering
+    // in gpu_values(): right-hand side in, solution out.
     void
     coarse_solve();
 
-    std::pair<unsigned int, double> last_cg = {0, 0.}; // iterations, reduction per iteration
+    // Switch-level values in GPU numbering: the locally owned entries of the
+    // GPU side's level vector, in host memory. Empty on CPU-only ranks.
+    std::vector<vcycle_number> &
+    gpu_values()
+    {
+      return gpu_switch_values;
+    }
 
   private:
     // Everything one setup() builds. Members are destroyed in reverse order:
@@ -117,8 +125,13 @@ namespace hybrid
       std::unique_ptr<TopMatrixType>                  top_matrix; // switch level, double
       MGLevelObject<std::unique_ptr<TransferType>>    transfers;
       MGLevelObject<SmootherType>                     smoothers;
-      VectorType                                      rhs;
+      VectorType                                      rhs; // unused, MultigridSolver needs one
       std::unique_ptr<MGSolverType>                   solver;
+
+      // switch-level values in CPU numbering, for coarse_solve()
+      std::vector<vcycle_number> cpu_values;
+      VectorType                 cpu_rhs;
+      VectorType                 cpu_solution;
     };
 
     void
@@ -127,15 +140,14 @@ namespace hybrid
     void
     setup_operators(Hierarchy &h) const;
 
-    void
-    compute_rhs(Hierarchy &h) const;
-
     const MPILayout   &layout;
     const unsigned int n_subdivisions;
     const unsigned int n_smooth;
     const FE_Q<dim>    fe; // Q1 on all CPU levels
 
     const DoFHandler<dim> *gpu_switch_dofs = nullptr;
+
+    std::vector<vcycle_number> gpu_switch_values;
 
     std::unique_ptr<Hierarchy> hierarchy;
   };
@@ -179,7 +191,14 @@ namespace hybrid
       }
 
     setup_operators(h);
-    compute_rhs(h);
+
+    // buffers for coarse_solve(), in the MatrixFree layout of the switch level
+    h.top_matrix->initialize_dof_vector(h.rhs);
+    h.top_matrix->initialize_dof_vector(h.cpu_rhs);
+    h.top_matrix->initialize_dof_vector(h.cpu_solution);
+    h.cpu_values.resize(h.cpu_rhs.locally_owned_size());
+    gpu_switch_values.resize(
+      gpu_switch_dofs != nullptr ? gpu_switch_dofs->locally_owned_dofs().n_elements() : 0);
 
     h.solver = std::make_unique<MGSolverType>(h.top_matrix,
                                               h.dof_handlers,
@@ -299,53 +318,24 @@ namespace hybrid
   // f = 1 on the switch level, as poisson_cube_cpu's compute_rhs().
   template <int dim>
   void
-  CpuSide<dim>::compute_rhs(Hierarchy &h) const
-  {
-    const DoFHandler<dim> &dof_handler = h.dof_handlers[h.dof_handlers.max_level()];
-
-    VectorType rhs_ghosted(dof_handler.locally_owned_dofs(),
-                           DoFTools::extract_locally_relevant_dofs(dof_handler),
-                           layout.comm_world);
-
-    const QGauss<dim> quadrature(fe.degree + 1);
-    FEValues<dim>     fe_values(fe, quadrature, update_values | update_JxW_values);
-
-    Vector<full_number>                  cell_rhs(fe.n_dofs_per_cell());
-    std::vector<types::global_dof_index> dof_indices(fe.n_dofs_per_cell());
-
-    for (const auto &cell : dof_handler.active_cell_iterators())
-      if (cell->is_locally_owned())
-        {
-          fe_values.reinit(cell);
-          cell_rhs = 0;
-          for (unsigned int q = 0; q < quadrature.size(); ++q)
-            for (unsigned int i = 0; i < fe.n_dofs_per_cell(); ++i)
-              cell_rhs(i) += fe_values.shape_value(i, q) * fe_values.JxW(q);
-
-          cell->get_dof_indices(dof_indices);
-          h.top_constraints.distribute_local_to_global(cell_rhs, dof_indices, rhs_ghosted);
-        }
-    rhs_ghosted.compress(VectorOperation::add);
-
-    h.top_matrix->initialize_dof_vector(h.rhs);
-    h.rhs.copy_locally_owned_data_from(rhs_ghosted);
-  }
-
-
-
-  template <int dim>
-  void
   CpuSide<dim>::coarse_solve()
   {
     Assert(hierarchy, ExcMessage("coarse_solve() before setup()."));
+    Hierarchy &h = *hierarchy;
 
-    Timer time;
-    last_cg = hierarchy->solver->solve_cg();
+    // GPU numbering -> CPU numbering (P), float -> double
+    h.permutation.gpu_to_cpu(ArrayView<const vcycle_number>(gpu_switch_values),
+                             ArrayView<vcycle_number>(h.cpu_values));
+    for (unsigned int i = 0; i < h.cpu_values.size(); ++i)
+      h.cpu_rhs.local_element(i) = h.cpu_values[i];
 
-    const double solve_time = Utilities::MPI::max(time.wall_time(), layout.comm_world);
-    if (Utilities::MPI::this_mpi_process(layout.comm_world) == 0)
-      std::cout << "CG on the switch level: " << last_cg.first << " iterations, reduction "
-                << std::setprecision(4) << last_cg.second << " per iteration, " << solve_time
-                << " s" << std::endl;
+    // one V-cycle on the CPU levels, zero initial guess
+    h.solver->vmult(h.cpu_solution, h.cpu_rhs);
+
+    // double -> float, CPU numbering -> GPU numbering (P back)
+    for (unsigned int i = 0; i < h.cpu_values.size(); ++i)
+      h.cpu_values[i] = h.cpu_solution.local_element(i);
+    h.permutation.cpu_to_gpu(ArrayView<vcycle_number>(h.cpu_values),
+                             ArrayView<vcycle_number>(gpu_switch_values));
   }
 } // namespace hybrid
