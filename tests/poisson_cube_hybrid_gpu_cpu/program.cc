@@ -1,12 +1,16 @@
 // Hybrid CPU-GPU multigrid (work in progress): rank roles and communicators,
-// mesh levels of the GPU side (comm_gpu), and the CPU levels on comm_world,
-// driven by the GPU ranks through the command loop. For now each coarse
-// solve is a CG solve on the switch level (f = 1) with the CPU V-cycle.
+// the ph-multigrid of poisson_cube_bk3 on the GPU ranks (comm_gpu), and the
+// CPU levels on all ranks (comm_world), driven by the GPU ranks through the
+// command loop. For now the two sides solve separately: CG on the fine level
+// with all levels on the GPU, and CG on the switch level with the CPU levels.
 //
-//   mpirun -n <ranks> ./program ranks_per_gpu [n_refine] [switch_refine]
+//   mpirun -n <ranks> ./program ranks_per_gpu degree [n_refine] [switch_refine]
 //
 // ranks_per_gpu = k: one GPU rank + k-1 CPU-only ranks per GPU.
-// n_refine:      refinements of the fine mesh (default 3)
+// degree:        polynomial degree of the fine level, 1..4
+// n_refine:      refinements of the 3x3x3 coarse grid for the fine mesh
+//                (default 2); same mesh as poisson_cube_bk3 with the
+//                non-doubling mesh of size 3 * 2^n_refine
 // switch_refine: refinements of the switch level = finest CPU level
 //                (default n_refine - 1)
 // Without a GPU, HYBRID_SIMULATED_RANKS_PER_NODE=<n> mimics nodes of n ranks.
@@ -21,6 +25,7 @@
 #include <vector>
 
 #include "hybrid_cpu_side.h"
+#include "hybrid_gpu_side.h"
 #include "hybrid_mpi_layout.h"
 #include "hybrid_service.h"
 #include "hybrid_triangulations.h"
@@ -66,25 +71,58 @@ namespace hybrid
 
 
 
-  // Driver on the GPU ranks, for now without GPU levels: one setup of the CPU
-  // side, then a few coarse solves.
-  template <int dim>
+  // Driver on the GPU ranks: set up the GPU levels, then the CPU levels (with
+  // P from the GPU side's switch level), then solve on each side separately.
+  template <int dim, int fe_degree>
   void
-  run_driver(const MPILayout   &layout,
-             CpuSide<dim>      &cpu_side,
-             const unsigned int switch_refine,
-             const unsigned int n_solves)
+  run_driver(const MPILayout          &layout,
+             GpuSide<dim, fe_degree> &gpu_side,
+             CpuSide<dim>            &cpu_side,
+             const unsigned int       n_refine,
+             const unsigned int       switch_refine)
   {
+    gpu_side.setup(n_refine);
+
+    // GPU level switch_refine is Q1 on the switch-level mesh
+    cpu_side.set_gpu_switch_dofs(&gpu_side.h_level_dofs(switch_refine));
     send_command(layout, Command::setup, switch_refine);
     cpu_side.setup(switch_refine);
 
-    for (unsigned int i = 0; i < n_solves; ++i)
-      {
-        send_command(layout, Command::solve);
-        cpu_side.coarse_solve();
-      }
+    // all levels on the GPU (only the GPU ranks take part)
+    for (unsigned int i = 0; i < 2; ++i)
+      gpu_side.solve();
+
+    // CPU levels alone
+    send_command(layout, Command::solve);
+    cpu_side.coarse_solve();
 
     send_command(layout, Command::stop);
+  }
+
+
+
+  template <int dim, int fe_degree>
+  void
+  run(const MPILayout   &layout,
+      const unsigned int n_refine,
+      const unsigned int switch_refine)
+  {
+    const unsigned int n_subdivisions = 3; // coarse grid: 3x3x3 cells
+    const unsigned int n_smooth       = 3; // Chebyshev degree, as poisson_cube_*
+
+    // GPU side only on the GPU ranks; declared first so that it outlives
+    // cpu_side, which points to its switch-level DoFs
+    std::unique_ptr<GpuSide<dim, fe_degree>> gpu_side;
+    if (layout.is_gpu_rank)
+      gpu_side = std::make_unique<GpuSide<dim, fe_degree>>(layout, n_subdivisions, n_smooth);
+
+    // CPU side on all ranks. GPU ranks drive, CPU-only ranks follow their
+    // commands.
+    CpuSide<dim> cpu_side(layout, n_subdivisions, n_smooth);
+    if (layout.is_gpu_rank)
+      run_driver(layout, *gpu_side, cpu_side, n_refine, switch_refine);
+    else
+      run_service_loop(layout, cpu_side);
   }
 } // namespace hybrid
 
@@ -104,18 +142,20 @@ main(int argc, char **argv)
       const bool is_root = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
 
       // all ranks return 1; only rank 0 prints
-      if (argc < 2)
+      if (argc < 3)
         {
           if (is_root)
-            std::cout << "Usage: mpirun -n <ranks> ./program ranks_per_gpu [n_refine] "
+            std::cout << "Usage: mpirun -n <ranks> ./program ranks_per_gpu degree [n_refine] "
                          "[switch_refine]"
                       << std::endl;
           return 1;
         }
 
       const unsigned int ranks_per_gpu = std::atoi(argv[1]);
-      const unsigned int n_refine      = argc > 2 ? std::atoi(argv[2]) : 3;
-      const unsigned int switch_refine = argc > 3 ? std::atoi(argv[3]) : n_refine - 1;
+      const unsigned int degree        = std::atoi(argv[2]);
+      const unsigned int n_refine      = argc > 3 ? std::atoi(argv[3]) : 2;
+      const unsigned int switch_refine = argc > 4 ? std::atoi(argv[4]) : n_refine - 1;
+      AssertThrow(degree >= 1 && degree <= 4, ExcMessage("degree has to be 1..4."));
       AssertThrow(switch_refine <= n_refine,
                   ExcMessage("switch_refine has to be at most n_refine."));
 
@@ -141,38 +181,23 @@ main(int argc, char **argv)
           std::cout << "MPI layout checks passed." << std::endl << std::endl;
         }
 
-      constexpr int      dim            = 3;
-      const unsigned int n_subdivisions = 3; // coarse grid: 3x3x3 cells
-      const unsigned int n_smooth       = 3; // Chebyshev degree, as poisson_cube_*
-      const unsigned int n_solves       = 2;
-
-      // GPU side, for now only its mesh levels and the switch-level DoFs (Q1)
-      // on the GPU ranks
-      std::unique_ptr<hybrid::MeshLevels<dim>> gpu_mesh;
-      std::unique_ptr<DoFHandler<dim>>         gpu_switch_dofs;
-      if (layout.is_gpu_rank)
+      // degree known at run time, templates need it at compile time
+      constexpr int dim = 3;
+      switch (degree)
         {
-          gpu_mesh =
-            std::make_unique<hybrid::MeshLevels<dim>>(layout.comm_gpu, n_subdivisions, n_refine);
-          hybrid::print_level_partitions(gpu_mesh->levels,
-                                         layout.comm_gpu,
-                                         "GPU side, comm_gpu",
-                                         std::cout);
-
-          gpu_switch_dofs = std::make_unique<DoFHandler<dim>>(*gpu_mesh->levels[switch_refine]);
-          gpu_switch_dofs->distribute_dofs(FE_Q<dim>(1));
+          case 1:
+            hybrid::run<dim, 1>(layout, n_refine, switch_refine);
+            break;
+          case 2:
+            hybrid::run<dim, 2>(layout, n_refine, switch_refine);
+            break;
+          case 3:
+            hybrid::run<dim, 3>(layout, n_refine, switch_refine);
+            break;
+          case 4:
+            hybrid::run<dim, 4>(layout, n_refine, switch_refine);
+            break;
         }
-
-      // CPU side: built on all ranks by the SETUP command. GPU ranks drive,
-      // CPU-only ranks follow their commands.
-      hybrid::CpuSide<dim> cpu_side(layout, n_subdivisions, n_smooth);
-      if (layout.is_gpu_rank)
-        {
-          cpu_side.set_gpu_switch_dofs(gpu_switch_dofs.get());
-          hybrid::run_driver(layout, cpu_side, switch_refine, n_solves);
-        }
-      else
-        hybrid::run_service_loop(layout, cpu_side);
     }
   catch (std::exception &exc)
     {
