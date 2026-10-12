@@ -1,6 +1,7 @@
 // Hybrid CPU-GPU multigrid (work in progress): rank roles and communicators,
-// mesh levels of the GPU side (comm_gpu) and the CPU side (comm_world), and
-// the command loop of the CPU-only ranks (dummy work).
+// mesh levels of the GPU side (comm_gpu), and the CPU levels on comm_world,
+// driven by the GPU ranks through the command loop. For now each coarse
+// solve is a CG solve on the switch level (f = 1) with the CPU V-cycle.
 //
 //   mpirun -n <ranks> ./program ranks_per_gpu [n_refine] [switch_refine]
 //
@@ -19,6 +20,7 @@
 #include <memory>
 #include <vector>
 
+#include "hybrid_cpu_side.h"
 #include "hybrid_mpi_layout.h"
 #include "hybrid_service.h"
 #include "hybrid_triangulations.h"
@@ -64,71 +66,22 @@ namespace hybrid
 
 
 
-  // Stand-in for the CPU levels. setup() and coarse_solve() only run
-  // collectives over comm_world that check all ranks are at the same call.
-  class DummyCpuSide
-  {
-  public:
-    explicit DummyCpuSide(const MPILayout &layout)
-      : layout(layout)
-    {}
-
-    void
-    setup(const unsigned int switch_level)
-    {
-      ++n_setups;
-      AssertThrow(Utilities::MPI::min(n_setups, layout.comm_world) ==
-                    Utilities::MPI::max(n_setups, layout.comm_world),
-                  ExcMessage("Ranks are at different setups."));
-      AssertThrow(Utilities::MPI::min(switch_level, layout.comm_world) ==
-                    Utilities::MPI::max(switch_level, layout.comm_world),
-                  ExcMessage("Ranks got different switch levels."));
-      this->switch_level = switch_level;
-    }
-
-    void
-    coarse_solve()
-    {
-      ++n_solves;
-      AssertThrow(Utilities::MPI::min(n_solves, layout.comm_world) ==
-                    Utilities::MPI::max(n_solves, layout.comm_world),
-                  ExcMessage("Ranks are at different coarse solves."));
-    }
-
-    unsigned int n_setups     = 0;
-    unsigned int n_solves     = 0;
-    unsigned int switch_level = 0;
-
-  private:
-    const MPILayout &layout;
-  };
-
-
-
-  // Stand-in for the driver on the GPU ranks: refinement cycles, each with a
-  // CPU-side setup and a few V-cycles that reach the CPU levels.
+  // Driver on the GPU ranks, for now without GPU levels: one setup of the CPU
+  // side, then a few coarse solves.
+  template <int dim>
   void
-  run_dummy_driver(const MPILayout   &layout,
-                   DummyCpuSide      &cpu_side,
-                   const unsigned int n_cycles,
-                   const unsigned int n_vcycles)
+  run_driver(const MPILayout   &layout,
+             CpuSide<dim>      &cpu_side,
+             const unsigned int switch_refine,
+             const unsigned int n_solves)
   {
-    for (unsigned int cycle = 0; cycle < n_cycles; ++cycle)
+    send_command(layout, Command::setup, switch_refine);
+    cpu_side.setup(switch_refine);
+
+    for (unsigned int i = 0; i < n_solves; ++i)
       {
-        const unsigned int switch_level = 2 + cycle; // placeholder
-
-        send_command(layout, Command::setup, switch_level);
-        cpu_side.setup(switch_level);
-
-        for (unsigned int v = 0; v < n_vcycles; ++v)
-          {
-            // GPU levels: collectives on comm_gpu only, CPU-only ranks wait
-            const unsigned int n_gpu_ranks = Utilities::MPI::sum(1u, layout.comm_gpu);
-            AssertThrow(n_gpu_ranks == layout.n_graces, ExcInternalError());
-
-            send_command(layout, Command::solve);
-            cpu_side.coarse_solve();
-          }
+        send_command(layout, Command::solve);
+        cpu_side.coarse_solve();
       }
 
     send_command(layout, Command::stop);
@@ -188,11 +141,12 @@ main(int argc, char **argv)
           std::cout << "MPI layout checks passed." << std::endl << std::endl;
         }
 
-      // mesh levels of both sides, built independently from the same coarse grid
       constexpr int      dim            = 3;
-      const unsigned int n_subdivisions = 3;
+      const unsigned int n_subdivisions = 3; // coarse grid: 3x3x3 cells
+      const unsigned int n_smooth       = 3; // Chebyshev degree, as poisson_cube_*
+      const unsigned int n_solves       = 2;
 
-      // GPU side: fine mesh on the GPU ranks only
+      // GPU side, for now only its mesh levels: fine mesh on the GPU ranks
       std::unique_ptr<hybrid::MeshLevels<dim>> gpu_mesh;
       if (layout.is_gpu_rank)
         {
@@ -204,44 +158,16 @@ main(int argc, char **argv)
                                          std::cout);
         }
 
-      // CPU side: all ranks, refined only up to the switch level
-      hybrid::MeshLevels<dim> cpu_mesh(layout.comm_world, n_subdivisions, switch_refine);
-      hybrid::print_level_partitions(cpu_mesh.levels,
-                                     layout.comm_world,
-                                     "CPU side, comm_world",
-                                     std::cout);
-
-      // who owns the switch-level cells on each side
-      hybrid::check_switch_level_ownership<dim>(layout,
-                                                layout.is_gpu_rank ?
-                                                  gpu_mesh->levels[switch_refine].get() :
-                                                  nullptr,
-                                                *cpu_mesh.levels.back(),
-                                                std::cout);
-
-      // GPU ranks drive, CPU-only ranks follow their commands
-      const unsigned int n_cycles  = 3;
-      const unsigned int n_vcycles = 5;
-
-      hybrid::DummyCpuSide cpu_side(layout);
+      // CPU side: built on all ranks by the SETUP command. GPU ranks drive,
+      // CPU-only ranks follow their commands.
+      hybrid::CpuSide<dim> cpu_side(layout, n_subdivisions, n_smooth);
       if (layout.is_gpu_rank)
-        hybrid::run_dummy_driver(layout, cpu_side, n_cycles, n_vcycles);
+        {
+          cpu_side.set_gpu_switch_level(gpu_mesh->levels[switch_refine].get());
+          hybrid::run_driver(layout, cpu_side, switch_refine, n_solves);
+        }
       else
         hybrid::run_service_loop(layout, cpu_side);
-
-      // every rank took part in every setup and coarse solve
-      AssertThrow(Utilities::MPI::min(cpu_side.n_setups, MPI_COMM_WORLD) == n_cycles &&
-                    Utilities::MPI::max(cpu_side.n_setups, MPI_COMM_WORLD) == n_cycles,
-                  ExcMessage("Wrong number of setups."));
-      AssertThrow(Utilities::MPI::min(cpu_side.n_solves, MPI_COMM_WORLD) == n_cycles * n_vcycles &&
-                    Utilities::MPI::max(cpu_side.n_solves, MPI_COMM_WORLD) ==
-                      n_cycles * n_vcycles,
-                  ExcMessage("Wrong number of coarse solves."));
-
-      if (is_root)
-        std::cout << "Service loop passed: " << n_cycles << " setups and "
-                  << n_cycles * n_vcycles << " coarse solves on all "
-                  << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) << " ranks." << std::endl;
     }
   catch (std::exception &exc)
     {
