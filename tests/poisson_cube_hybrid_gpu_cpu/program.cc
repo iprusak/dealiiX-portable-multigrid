@@ -146,8 +146,10 @@ main(int argc, char **argv)
       const unsigned int n_smooth       = 3; // Chebyshev degree, as poisson_cube_*
       const unsigned int n_solves       = 2;
 
-      // GPU side, for now only its mesh levels: fine mesh on the GPU ranks
+      // GPU side, for now only its mesh levels and the switch-level DoFs (Q1)
+      // on the GPU ranks
       std::unique_ptr<hybrid::MeshLevels<dim>> gpu_mesh;
+      std::unique_ptr<DoFHandler<dim>>         gpu_switch_dofs;
       if (layout.is_gpu_rank)
         {
           gpu_mesh =
@@ -156,6 +158,9 @@ main(int argc, char **argv)
                                          layout.comm_gpu,
                                          "GPU side, comm_gpu",
                                          std::cout);
+
+          gpu_switch_dofs = std::make_unique<DoFHandler<dim>>(*gpu_mesh->levels[switch_refine]);
+          gpu_switch_dofs->distribute_dofs(FE_Q<dim>(1));
         }
 
       // CPU side: built on all ranks by the SETUP command. GPU ranks drive,
@@ -163,7 +168,7 @@ main(int argc, char **argv)
       hybrid::CpuSide<dim> cpu_side(layout, n_subdivisions, n_smooth);
       if (layout.is_gpu_rank)
         {
-          cpu_side.set_gpu_switch_level(gpu_mesh->levels[switch_refine].get());
+          cpu_side.set_gpu_switch_dofs(gpu_switch_dofs.get());
           hybrid::run_driver(layout, cpu_side, switch_refine, n_solves);
         }
       else

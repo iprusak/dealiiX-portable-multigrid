@@ -29,6 +29,7 @@
 #include <utility>
 
 #include "hybrid_mpi_layout.h"
+#include "hybrid_switch_permutation.h"
 #include "hybrid_triangulations.h"
 #include "operators/cpu_laplace_operator.h"
 #include "portable_multigrid_solver.h"
@@ -77,12 +78,12 @@ namespace hybrid
       , fe(1)
     {}
 
-    // GPU ranks: the GPU side's copy of the switch level, used by setup() to
-    // check who owns which switch-level cells on the two sides.
+    // GPU ranks: the GPU side's DoFHandler of the switch level. setup() builds
+    // P (switch-level values GPU <-> CPU) from it and checks P.
     void
-    set_gpu_switch_level(const Triangulation<dim> *tria)
+    set_gpu_switch_dofs(const DoFHandler<dim> *dofs)
     {
-      gpu_switch_level = tria;
+      gpu_switch_dofs = dofs;
     }
 
     // Collective on comm_world: build the CPU levels 0..switch_refine.
@@ -109,6 +110,7 @@ namespace hybrid
 
       MeshLevels<dim>                                 mesh;
       MGLevelObject<DoFHandler<dim>>                  dof_handlers;
+      SwitchLevelPermutation<dim>                     permutation; // P
       MGLevelObject<AffineConstraints<vcycle_number>> constraints;
       AffineConstraints<full_number>                  top_constraints; // switch level, double
       MGLevelObject<std::unique_ptr<LevelMatrixType>> matrices;
@@ -133,7 +135,7 @@ namespace hybrid
     const unsigned int n_smooth;
     const FE_Q<dim>    fe; // Q1 on all CPU levels
 
-    const Triangulation<dim> *gpu_switch_level = nullptr;
+    const DoFHandler<dim> *gpu_switch_dofs = nullptr;
 
     std::unique_ptr<Hierarchy> hierarchy;
   };
@@ -153,14 +155,29 @@ namespace hybrid
 
     print_level_partitions(h.mesh.levels, layout.comm_world, "CPU side, comm_world", std::cout);
 
-    // only if the GPU ranks provided their switch level
-    if (Utilities::MPI::max(gpu_switch_level != nullptr ? 1u : 0u, layout.comm_world) == 1u)
-      check_switch_level_ownership<dim>(layout,
-                                        gpu_switch_level,
-                                        *h.mesh.levels.back(),
-                                        std::cout);
-
     setup_dofs(h);
+
+    // only if the GPU ranks provided their switch level: who owns which
+    // switch-level cells on the two sides, then P and its check
+    if (Utilities::MPI::max(gpu_switch_dofs != nullptr ? 1u : 0u, layout.comm_world) == 1u)
+      {
+        const DoFHandler<dim> &cpu_switch_dofs = h.dof_handlers[h.dof_handlers.max_level()];
+
+        check_switch_level_ownership<dim>(layout,
+                                          gpu_switch_dofs != nullptr ?
+                                            &gpu_switch_dofs->get_triangulation() :
+                                            nullptr,
+                                          cpu_switch_dofs.get_triangulation(),
+                                          std::cout);
+
+        h.permutation.reinit(layout, gpu_switch_dofs, cpu_switch_dofs);
+
+        // the same on all ranks (global max)
+        const double p_error = check_switch_level_permutation(
+          layout, h.permutation, gpu_switch_dofs, cpu_switch_dofs, std::cout);
+        AssertThrow(p_error < 1e-12, ExcMessage("P moves switch-level values to wrong DoFs."));
+      }
+
     setup_operators(h);
     compute_rhs(h);
 
