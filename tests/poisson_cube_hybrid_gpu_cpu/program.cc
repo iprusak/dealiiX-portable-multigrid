@@ -1,10 +1,14 @@
-// Hybrid CPU-GPU multigrid (work in progress), step 2: rank roles,
-// communicators, and the command loop of the CPU-only ranks (dummy work).
+// Hybrid CPU-GPU multigrid (work in progress): rank roles and communicators,
+// mesh levels of the GPU side (comm_gpu) and the CPU side (comm_world), and
+// the command loop of the CPU-only ranks (dummy work).
 //
-//   mpirun -n <ranks> ./program ranks_per_gpu
+//   mpirun -n <ranks> ./program ranks_per_gpu [n_refine] [switch_refine]
 //
-// ranks_per_gpu = k: one GPU rank + k-1 CPU-only ranks per GPU. Without a
-// GPU, HYBRID_SIMULATED_RANKS_PER_NODE=<n> mimics nodes of n ranks each.
+// ranks_per_gpu = k: one GPU rank + k-1 CPU-only ranks per GPU.
+// n_refine:      refinements of the fine mesh (default 3)
+// switch_refine: refinements of the switch level = finest CPU level
+//                (default n_refine - 1)
+// Without a GPU, HYBRID_SIMULATED_RANKS_PER_NODE=<n> mimics nodes of n ranks.
 
 #include <deal.II/base/mpi.h>
 #include <deal.II/base/utilities.h>
@@ -12,10 +16,12 @@
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <vector>
 
 #include "hybrid_mpi_layout.h"
 #include "hybrid_service.h"
+#include "hybrid_triangulations.h"
 
 
 namespace hybrid
@@ -148,11 +154,17 @@ main(int argc, char **argv)
       if (argc < 2)
         {
           if (is_root)
-            std::cout << "Usage: mpirun -n <ranks> ./program ranks_per_gpu" << std::endl;
+            std::cout << "Usage: mpirun -n <ranks> ./program ranks_per_gpu [n_refine] "
+                         "[switch_refine]"
+                      << std::endl;
           return 1;
         }
 
       const unsigned int ranks_per_gpu = std::atoi(argv[1]);
+      const unsigned int n_refine      = argc > 2 ? std::atoi(argv[2]) : 3;
+      const unsigned int switch_refine = argc > 3 ? std::atoi(argv[3]) : n_refine - 1;
+      AssertThrow(switch_refine <= n_refine,
+                  ExcMessage("switch_refine has to be at most n_refine."));
 
       // build the communicators, print the table, verify
       hybrid::MPILayout layout(MPI_COMM_WORLD, ranks_per_gpu);
@@ -173,8 +185,39 @@ main(int argc, char **argv)
           if (!match_gpus)
             std::cout << "WARNING: ranks per node / ranks_per_gpu differs from SLURM_GPUS_ON_NODE."
                       << std::endl;
-          std::cout << "MPI layout checks passed." << std::endl;
+          std::cout << "MPI layout checks passed." << std::endl << std::endl;
         }
+
+      // mesh levels of both sides, built independently from the same coarse grid
+      constexpr int      dim            = 3;
+      const unsigned int n_subdivisions = 3;
+
+      // GPU side: fine mesh on the GPU ranks only
+      std::unique_ptr<hybrid::MeshLevels<dim>> gpu_mesh;
+      if (layout.is_gpu_rank)
+        {
+          gpu_mesh =
+            std::make_unique<hybrid::MeshLevels<dim>>(layout.comm_gpu, n_subdivisions, n_refine);
+          hybrid::print_level_partitions(gpu_mesh->levels,
+                                         layout.comm_gpu,
+                                         "GPU side, comm_gpu",
+                                         std::cout);
+        }
+
+      // CPU side: all ranks, refined only up to the switch level
+      hybrid::MeshLevels<dim> cpu_mesh(layout.comm_world, n_subdivisions, switch_refine);
+      hybrid::print_level_partitions(cpu_mesh.levels,
+                                     layout.comm_world,
+                                     "CPU side, comm_world",
+                                     std::cout);
+
+      // who owns the switch-level cells on each side
+      hybrid::check_switch_level_ownership<dim>(layout,
+                                                layout.is_gpu_rank ?
+                                                  gpu_mesh->levels[switch_refine].get() :
+                                                  nullptr,
+                                                *cpu_mesh.levels.back(),
+                                                std::cout);
 
       // GPU ranks drive, CPU-only ranks follow their commands
       const unsigned int n_cycles  = 3;
