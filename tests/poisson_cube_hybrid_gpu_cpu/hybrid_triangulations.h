@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "hybrid_cell_id_translator.h"
 #include "hybrid_mpi_layout.h"
 
 namespace hybrid
@@ -161,9 +162,9 @@ namespace hybrid
   {
     // one integer per cell id; same coarse grid and number of levels on both
     // sides -> same numbering
-    const dealii::internal::CellIDTranslator<dim> translator(cpu_switch);
+    const auto translator = make_cell_id_translator(cpu_switch);
     if (layout.is_gpu_rank)
-      AssertThrow(dealii::internal::CellIDTranslator<dim>(*gpu_switch).size() == translator.size(),
+      AssertThrow(make_cell_id_translator(*gpu_switch).size() == translator.size(),
                   ExcMessage("GPU and CPU switch levels have different cell numberings."));
 
     const IndexSet gpu_owned = layout.is_gpu_rank ?

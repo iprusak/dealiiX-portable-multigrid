@@ -24,6 +24,7 @@
 #include <ostream>
 #include <vector>
 
+#include "hybrid_cell_id_translator.h"
 #include "hybrid_mpi_layout.h"
 
 namespace hybrid
@@ -107,7 +108,7 @@ namespace hybrid
                                   "gpu_dofs has to be given exactly on the GPU ranks.");
 
     // one integer per cell id, the same on both sides
-    const dealii::internal::CellIDTranslator<dim> translator(cpu_dofs.get_triangulation());
+    const auto translator = make_cell_id_translator(cpu_dofs.get_triangulation());
     const unsigned int dofs_per_cell = cpu_dofs.get_fe().n_dofs_per_cell();
 
     internal::assert_on_all_ranks(gpu_dofs == nullptr ||
