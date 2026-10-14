@@ -19,9 +19,9 @@
 # 3rd digit of the reduction: Chebyshev eigenvalue estimates).
 
 REPO=$HOME/codes/dealiiX-portable-multigrid/tests
-BK3_BIN=$REPO/poisson_cube_bk3/build-jupiter/program
-CPU_BIN=$REPO/poisson_cube_cpu/build-jupiter/program
-HYBRID_BIN=$REPO/poisson_cube_hybrid_gpu_cpu/build-jupiter/program
+BK3_BIN=$REPO/poisson_cube_bk3/build/program
+CPU_BIN=$REPO/poisson_cube_cpu/build/program
+HYBRID_BIN=$REPO/poisson_cube_hybrid_gpu_cpu/build/program
 
 module purge
 module load Stages/2026
@@ -45,14 +45,19 @@ ldd $HYBRID_BIN | grep libdeal_II
 nvidia-smi --query-gpu=index,compute_mode --format=csv,noheader
 echo "SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"
 
-# n ranks, k per Grace (= per GPU): ranks of a block share a socket
-SRUN_K='--ntasks-per-socket'
+# n ranks, k per Grace (= per GPU), 4k ranks on the node. Each rank gets
+# 72/k cores; block placement then puts ranks 0..k-1 on the cores of Grace 0,
+# k..2k-1 on Grace 1, ... (needs 72 % k == 0). No --ntasks-per-socket /
+# --distribution: with them the step got cores of one Grace only, ranks were
+# left unpinned and MPI latency was ~50 ms (job 2307102).
 run() {
   local k=$1 bin=$2; shift 2
+  local common="--ntasks=$((4 * k)) --cpus-per-task=$((72 / k)) --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
   echo
   echo "=============== k=$k: $bin $*"
-  srun --ntasks=$((4 * k)) $SRUN_K=$k --distribution=block:block \
-       --cpu-bind=cores --gpu-bind=closest --mem-bind=local $bin "$@"
+  echo "placement:"
+  srun $common bash -c 'echo "rank $SLURM_PROCID $(hostname) gpu=$CUDA_VISIBLE_DEVICES $(grep Cpus_allowed_list /proc/self/status)"' | sort -V
+  timeout 400 srun $common $bin "$@"
 }
 
 # poisson_cube_{bk3,cpu}: degree minsize maxsize n_pre n_post [s=non-doubling mesh] overlap
