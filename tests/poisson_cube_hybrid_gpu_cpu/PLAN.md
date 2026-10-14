@@ -51,7 +51,7 @@ communication, not kernel launch. Phase 2 tests this.
 | 1.1 | Record the exact software stack (modules, deal.II install + commit, Kokkos version) in the results folder | one `STACK.txt` |
 | 1.2 | NEON deal.II (`dealii-neon`, branch `neon-vector-extensions`): `fmla ... .2d` count in `libdeal_II.so`; `nm program \| grep VectorizedArray` shows 2-wide double; float/double matvec ratio ~0.5 not ~1; build hybrid and `poisson_cube_cpu` against it; rerun the 3 baselines | CG its identical, CPU matvec faster than scalar |
 | 1.3 | Kokkos as shared library (removes exit abort, double free of static map) or keep the stderr filter | clean exit, or accepted |
-| 1.4 | `scripts/parse_hybrid.py`: out-file -> CSV (k, cycle, s, DoFs, its, CG min/median, per-level times, switch costs) and a plot script | reproduces the tables in this file |
+| 1.4 | `scripts/parse_hybrid.py` (written, tested on the existing results: `parse_hybrid.py out... > summary.csv`, handles hybrid and bk3 outputs); still to do: a plot script | reproduces the tables in this file |
 | 1.5 | Job template: separate `.err`, per-run `timeout`, placement print, `STACK.txt` header | used by all later jobs |
 
 ## Phase 2: microbenchmarks for the crossover (the core study)
@@ -80,7 +80,9 @@ Outputs: time per matvec and DoFs/s vs DoFs per module for GPU and CPU (per Grac
 
 ### 2B. Communication
 
-Small self-written MPI(+CUDA) program, `tests/comm_microbench/`:
+Ready to run: `tests/comm_microbench/` (MPI + Kokkos, tested locally) and the job `scripts/comm_microbench_jupiter.sbatch`
+(k = 1, 4, 18; host / staged / device buffers; pingpong, halo, allreduce; spin vs sleep idle ranks). Build it
+like the other tests, submit from its build dir. Coverage:
 
 | Test | Variants |
 |---|---|
