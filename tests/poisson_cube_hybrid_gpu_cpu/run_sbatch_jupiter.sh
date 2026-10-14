@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=hybrid
+#SBATCH --job-name=hybrid-sweep
 #SBATCH --account=dealii-X
 #SBATCH --partition=booster
 #SBATCH --nodes=1
@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --threads-per-core=1
 #SBATCH --gres=gpu:4
-#SBATCH --time=00:30:00
+#SBATCH --time=01:00:00
 #SBATCH --output=hybrid-%j.out
 
 module purge
@@ -46,21 +46,17 @@ run() {
   echo "=============== k=$k: ./program $k $*"
   echo "placement:"
   srun $common bash -c 'echo "rank $SLURM_PROCID $(hostname) gpu=$CUDA_VISIBLE_DEVICES $(grep Cpus_allowed_list /proc/self/status)"' | sort -V
-  timeout 400 srun $common ./program $k "$@"
+  # drop the stack traces of the exit-time abort (static Kokkos), keep real errors
+  timeout 400 srun $common ./program $k "$@" 2> >(grep -vE '^\[[^]]+\] \[ *[0-9]+\]|End of error message' >&2)
+  wait
 }
 
 # args after k: degree n_refine switch_level n_subdivisions
-
-# 1. regression: switch_level=0 = full GPU hierarchy, CG its must equal poisson_cube_bk3
-run 1 4 3 0 3
-
-# 2. hybrid, 4 ranks: GPU on the fine levels, Grace on the coarse ones
-run 1 4 3 2 3
-
-# 3. one GPU rank + 3 CPU-only ranks per GPU
-run 4 4 3 2 3
-
-# 4. full node, 18 ranks per Grace; sweep the switch level
-for s in 0 1 2 3; do
-  run 18 4 4 $s 3
+# Q4, 24 cells/dir (912673 DoFs). Levels: 0..3 = Q1 h-levels, 4 = Q2, 5 = Q4 (fine);
+# switch_level = finest level on the CPUs, 0 = full GPU hierarchy (regression).
+# Baselines (job 2319072): bk3 0.0601 s, hybrid k=1/k=4 s=0 0.059-0.061 s per CG solve.
+for k in 1 4 18; do
+  for s in 0 1 2 3 4; do
+    run $k 4 3 $s 3
+  done
 done
