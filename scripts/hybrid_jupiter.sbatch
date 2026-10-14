@@ -34,12 +34,14 @@ echo "SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"
 
 # n ranks, k per Grace (= per GPU), 4k ranks on the node. Each rank gets
 # 72/k cores; block placement then puts ranks 0..k-1 on the cores of Grace 0,
-# k..2k-1 on Grace 1, ... (needs 72 % k == 0). No --ntasks-per-socket /
-# --distribution: with them the step got cores of one Grace only, ranks were
-# left unpinned and MPI latency was ~50 ms (job 2307102).
+# k..2k-1 on Grace 1, ... (needs 72 % k == 0). --distribution=block:block is
+# needed: the default is cyclic over sockets, which puts consecutive ranks on
+# different Graces and all GPU ranks on GPU 0 (k=4 baselines run: 36x
+# slower). --ntasks-per-socket must NOT be combined with it: the step then got
+# cores of one Grace only and ranks were left unpinned (~50 ms MPI latency).
 run() {
   local k=$1; shift
-  local common="--ntasks=$((4 * k)) --cpus-per-task=$((72 / k)) --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
+  local common="--ntasks=$((4 * k)) --cpus-per-task=$((72 / k)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
   echo
   echo "=============== k=$k: ./program $k $*"
   echo "placement:"

@@ -265,7 +265,7 @@ namespace hybrid
          << (is_gpu_rank ? "GPU" : "CPU") << std::setw(10)
          << (is_gpu_rank ? std::to_string(Utilities::MPI::this_mpi_process(comm_gpu)) : "-")
          << std::setw(12) << Utilities::MPI::this_mpi_process(comm_grace) << std::setw(6)
-         << sched_getcpu() << std::setw(8) << internal::socket_of_affinity_mask() << std::setw(9)
+         << sched_getcpu() << std::setw(11) << internal::socket_of_affinity_mask() << std::setw(9)
          << internal::n_allowed_cpus() << std::setw(8) << kokkos_device << "  "
          << (visible_devices ? visible_devices : "-") << "  " << host;
 
@@ -277,7 +277,7 @@ namespace hybrid
         out << "Hybrid MPI layout: " << Utilities::MPI::n_mpi_processes(comm_world)
             << " ranks, " << ranks_per_gpu << " ranks per GPU, " << n_graces << " GPUs"
             << (simulated_nodes ? " (simulated nodes)" : "") << std::endl
-            << " world  node  grace  role  gpu_rank  grace_rank   cpu  socket  n_cpus  device"
+            << " world  node  grace  role  gpu_rank  grace_rank   cpu     socket  n_cpus  device"
             << "  CUDA_VISIBLE_DEVICES  host" << std::endl;
         for (const std::string &l : lines)
           out << l << std::endl;
