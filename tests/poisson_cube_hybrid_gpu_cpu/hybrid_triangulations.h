@@ -28,11 +28,37 @@ namespace hybrid
 
   // Coarse grid of both sides. Building it with the same recipe on each
   // communicator gives the same cells with the same cell ids.
+  // stretch < 0: n_subdivisions^dim cube on [-0.9, 1.0] (non-doubling mesh of
+  // poisson_cube_*). stretch = 0, 1, 2: the doubling mesh, one cell of
+  // [-1, 0.9]^dim with `stretch` of the directions doubled (2 cells on
+  // [-1, 2.8]); with n_refine = cycle / 3, stretch = cycle % 3 it is cycle
+  // `cycle` of poisson_cube_*'s doubling sequence.
+  struct CoarseGrid
+  {
+    unsigned int n_subdivisions = 3;
+    int          stretch        = -1;
+  };
+
   template <int dim>
   void
-  make_coarse_grid(Triangulation<dim> &tria, const unsigned int n_subdivisions)
+  make_coarse_grid(Triangulation<dim> &tria, const CoarseGrid &grid)
   {
-    GridGenerator::subdivided_hyper_cube(tria, n_subdivisions, -0.9, 1.0);
+    if (grid.stretch < 0)
+      {
+        GridGenerator::subdivided_hyper_cube(tria, grid.n_subdivisions, -0.9, 1.0);
+        return;
+      }
+
+    Point<dim>                p1, p2;
+    std::vector<unsigned int> subdivisions(dim, 1);
+    for (unsigned int d = 0; d < dim; ++d)
+      {
+        p1[d] = -1;
+        p2[d] = d < static_cast<unsigned int>(grid.stretch) ? 2.8 : 0.9;
+        if (d < static_cast<unsigned int>(grid.stretch))
+          subdivisions[d] = 2;
+      }
+    GridGenerator::subdivided_hyper_rectangle(tria, subdivisions, p1, p2);
   }
 
 
@@ -61,11 +87,11 @@ namespace hybrid
   struct MeshLevels
   {
     MeshLevels(const MPI_Comm     comm,
-               const unsigned int n_subdivisions,
+               const CoarseGrid  &coarse_grid,
                const unsigned int n_refinements)
       : fine(comm)
     {
-      make_coarse_grid(fine, n_subdivisions);
+      make_coarse_grid(fine, coarse_grid);
       fine.refine_global(n_refinements);
       levels = MGTransferGlobalCoarseningTools::create_geometric_coarsening_sequence(
         fine, RepartitioningPolicyTools::MinimalGranularityPolicy<dim>(16));

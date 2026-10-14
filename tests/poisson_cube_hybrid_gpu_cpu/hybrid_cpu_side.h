@@ -72,12 +72,12 @@ namespace hybrid
     // n_refine, fine_degree: the full hierarchy, of which the CPU side takes
     // the bottom levels
     CpuSide(const MPILayout   &layout,
-            const unsigned int n_subdivisions,
+            const CoarseGrid &coarse_grid,
             const unsigned int n_smooth,
             const unsigned int n_refine,
             const unsigned int fine_degree)
       : layout(layout)
-      , n_subdivisions(n_subdivisions)
+      , coarse_grid(coarse_grid)
       , n_smooth(n_smooth)
       , n_refine(n_refine)
       , fine_degree(fine_degree)
@@ -136,9 +136,9 @@ namespace hybrid
     struct Hierarchy
     {
       Hierarchy(const MPI_Comm     comm,
-                const unsigned int n_subdivisions,
+                const CoarseGrid &coarse_grid,
                 const unsigned int mesh_refine)
-        : mesh(comm, n_subdivisions, mesh_refine)
+        : mesh(comm, coarse_grid, mesh_refine)
       {}
 
       MeshLevels<dim>                                 mesh;
@@ -184,7 +184,7 @@ namespace hybrid
     setup_operators(Hierarchy &h) const;
 
     const MPILayout   &layout;
-    const unsigned int n_subdivisions;
+    const CoarseGrid coarse_grid;
     const unsigned int n_smooth;
     const unsigned int n_refine;
     const unsigned int fine_degree;
@@ -218,7 +218,7 @@ namespace hybrid
     // the mesh is refined up to the switch level, at most to the fine mesh
     hierarchy.reset();
     hierarchy = std::make_unique<Hierarchy>(layout.comm_world,
-                                            n_subdivisions,
+                                            coarse_grid,
                                             std::min(switch_level, n_refine));
     Hierarchy &h = *hierarchy;
     h.degrees    = degrees;

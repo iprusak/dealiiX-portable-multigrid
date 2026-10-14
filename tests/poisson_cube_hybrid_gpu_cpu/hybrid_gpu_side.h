@@ -70,9 +70,9 @@ namespace hybrid
     using MGSolverType =
       multigrid::MultigridSolver<dim, fe_degree, vcycle_number, full_number, SmootherType>;
 
-    GpuSide(const MPILayout &layout, const unsigned int n_subdivisions, const unsigned int n_smooth)
+    GpuSide(const MPILayout &layout, const CoarseGrid &coarse_grid, const unsigned int n_smooth)
       : layout(layout)
-      , n_subdivisions(n_subdivisions)
+      , coarse_grid(coarse_grid)
       , n_smooth(n_smooth)
     {
       Assert(layout.is_gpu_rank, ExcMessage("GpuSide lives on the GPU ranks only."));
@@ -116,8 +116,8 @@ namespace hybrid
     // solver first, mesh last.
     struct Hierarchy
     {
-      Hierarchy(const MPI_Comm comm, const unsigned int n_subdivisions, const unsigned int n_refine)
-        : mesh(comm, n_subdivisions, n_refine)
+      Hierarchy(const MPI_Comm comm, const CoarseGrid &coarse_grid, const unsigned int n_refine)
+        : mesh(comm, coarse_grid, n_refine)
       {}
 
       MeshLevels<dim>                                 mesh;
@@ -179,7 +179,7 @@ namespace hybrid
     compute_rhs(Hierarchy &h) const;
 
     const MPILayout   &layout;
-    const unsigned int n_subdivisions;
+    const CoarseGrid coarse_grid;
     const unsigned int n_smooth;
 
     std::unique_ptr<Hierarchy> hierarchy;
@@ -197,7 +197,7 @@ namespace hybrid
     Timer time;
 
     hierarchy.reset();
-    hierarchy = std::make_unique<Hierarchy>(layout.comm_gpu, n_subdivisions, n_refine);
+    hierarchy = std::make_unique<Hierarchy>(layout.comm_gpu, coarse_grid, n_refine);
     Hierarchy &h = *hierarchy;
 
     print_level_partitions(h.mesh.levels, layout.comm_gpu, "GPU side, comm_gpu", std::cout);

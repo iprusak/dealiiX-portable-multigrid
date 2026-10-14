@@ -5,7 +5,7 @@
 // ranks join it through the command loop.
 //
 //   mpirun -n <ranks> ./program ranks_per_gpu degree [n_refine] [switch_level]
-//                               [n_subdivisions]
+//                               [n_subdivisions] [n_smooth] [stretch]
 //
 // ranks_per_gpu = k: one GPU rank + k-1 CPU-only ranks per GPU.
 // degree:        polynomial degree of the fine level, 1..4
@@ -15,6 +15,10 @@
 //                one below the fine level (default n_refine - 1)
 // n_subdivisions: coarse grid n x n x n cells (default 3); the fine mesh is
 //                poisson_cube_bk3's non-doubling mesh of size n * 2^n_refine
+// n_smooth:      Chebyshev degree of the pre- and post-smoother (default 3)
+// stretch:       -1 (default): the n_subdivisions cube above. 0, 1, 2: the
+//                doubling mesh of poisson_cube_*, cycle = 3 * n_refine + stretch
+//                (n_subdivisions is ignored)
 // Without a GPU, HYBRID_SIMULATED_RANKS_PER_NODE=<n> mimics nodes of n ranks.
 
 #include <deal.II/base/mpi.h>
@@ -117,19 +121,18 @@ namespace hybrid
   run_hybrid(const MPILayout   &layout,
              const unsigned int n_refine,
              const unsigned int switch_level,
-             const unsigned int n_subdivisions)
+             const CoarseGrid  &coarse_grid,
+             const unsigned int n_smooth)
   {
-    const unsigned int n_smooth = 3; // Chebyshev degree, as poisson_cube_*
-
     // GPU side only on the GPU ranks; declared first so that it outlives
     // cpu_side, which points to its switch-level DoFs
     std::unique_ptr<GpuSide<dim, fe_degree>> gpu_side;
     if (layout.is_gpu_rank)
-      gpu_side = std::make_unique<GpuSide<dim, fe_degree>>(layout, n_subdivisions, n_smooth);
+      gpu_side = std::make_unique<GpuSide<dim, fe_degree>>(layout, coarse_grid, n_smooth);
 
     // CPU side on all ranks. GPU ranks drive, CPU-only ranks follow their
     // commands.
-    CpuSide<dim, cpu_degree> cpu_side(layout, n_subdivisions, n_smooth, n_refine, fe_degree);
+    CpuSide<dim, cpu_degree> cpu_side(layout, coarse_grid, n_smooth, n_refine, fe_degree);
     if (layout.is_gpu_rank)
       run_driver(layout, *gpu_side, cpu_side, n_refine, switch_level);
     else
@@ -144,7 +147,8 @@ namespace hybrid
   run(const MPILayout   &layout,
       const unsigned int n_refine,
       const unsigned int switch_level,
-      const unsigned int n_subdivisions)
+      const CoarseGrid  &coarse_grid,
+      const unsigned int n_smooth)
   {
     const std::vector<unsigned int> degrees = ph_level_degrees(n_refine + 1, fe_degree);
     AssertThrow(switch_level + 1 < degrees.size(),
@@ -152,11 +156,11 @@ namespace hybrid
 
     // below Q4 the p-levels are 4 -> 2 -> 1, 3 -> 1, 2 -> 1
     if (degrees[switch_level] == 1)
-      run_hybrid<dim, fe_degree, 1>(layout, n_refine, switch_level, n_subdivisions);
+      run_hybrid<dim, fe_degree, 1>(layout, n_refine, switch_level, coarse_grid, n_smooth);
     else if constexpr (fe_degree > 2)
       {
         AssertThrow(degrees[switch_level] == 2, ExcNotImplemented());
-        run_hybrid<dim, fe_degree, 2>(layout, n_refine, switch_level, n_subdivisions);
+        run_hybrid<dim, fe_degree, 2>(layout, n_refine, switch_level, coarse_grid, n_smooth);
       }
   }
 } // namespace hybrid
@@ -181,7 +185,7 @@ main(int argc, char **argv)
         {
           if (is_root)
             std::cout << "Usage: mpirun -n <ranks> ./program ranks_per_gpu degree [n_refine] "
-                         "[switch_level] [n_subdivisions]"
+                         "[switch_level] [n_subdivisions] [n_smooth] [stretch]"
                       << std::endl;
           return 1;
         }
@@ -191,6 +195,9 @@ main(int argc, char **argv)
       const unsigned int n_refine      = argc > 3 ? std::atoi(argv[3]) : 2;
       const unsigned int switch_level   = argc > 4 ? std::atoi(argv[4]) : n_refine - 1;
       const unsigned int n_subdivisions = argc > 5 ? std::atoi(argv[5]) : 3;
+      const unsigned int n_smooth       = argc > 6 ? std::atoi(argv[6]) : 3;
+      const int          stretch        = argc > 7 ? std::atoi(argv[7]) : -1;
+      const hybrid::CoarseGrid coarse_grid{n_subdivisions, stretch};
       AssertThrow(degree >= 1 && degree <= 4, ExcMessage("degree has to be 1..4."));
 
       // build the communicators, print the table, verify
@@ -220,16 +227,16 @@ main(int argc, char **argv)
       switch (degree)
         {
           case 1:
-            hybrid::run<dim, 1>(layout, n_refine, switch_level, n_subdivisions);
+            hybrid::run<dim, 1>(layout, n_refine, switch_level, coarse_grid, n_smooth);
             break;
           case 2:
-            hybrid::run<dim, 2>(layout, n_refine, switch_level, n_subdivisions);
+            hybrid::run<dim, 2>(layout, n_refine, switch_level, coarse_grid, n_smooth);
             break;
           case 3:
-            hybrid::run<dim, 3>(layout, n_refine, switch_level, n_subdivisions);
+            hybrid::run<dim, 3>(layout, n_refine, switch_level, coarse_grid, n_smooth);
             break;
           case 4:
-            hybrid::run<dim, 4>(layout, n_refine, switch_level, n_subdivisions);
+            hybrid::run<dim, 4>(layout, n_refine, switch_level, coarse_grid, n_smooth);
             break;
         }
     }
