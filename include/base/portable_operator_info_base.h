@@ -37,7 +37,7 @@ namespace Portable
     virtual const ColoredGraph &
     get_colored_graph() const = 0;
 
-    // Null for a non-parallel triangulation, like Portable::MatrixFree.
+    // Null for a non-parallel triangulation, like deal.II's portable matrix-free class.
     virtual const std::shared_ptr<const Utilities::MPI::Partitioner> &
     get_vector_partitioner() const = 0;
 
@@ -49,7 +49,7 @@ namespace Portable
 
   // Stand-alone implementation built from a bare DoFHandler: partitioner from
   // the locally owned and locally relevant DoFs (the same layout
-  // Portable::MatrixFree builds), one color with all locally owned active
+  // deal.II's portable matrix-free class builds), one color with all locally owned active
   // cells in iteration order, no overlap.
   template <int dim>
   class DoFHandlerOperatorInfo : public OperatorInfoBase<dim>
@@ -79,7 +79,7 @@ namespace Portable
 
 
 
-  // Strips deal.II's FilteredIterator wrapper from a Portable::MatrixFree
+  // Strips deal.II's FilteredIterator wrapper from a portable matrix-free
   // colored graph (std::vector<std::vector<CellFilter>>).
   template <int dim, typename FilteredCellIterator>
   typename OperatorInfoBase<dim>::ColoredGraph
