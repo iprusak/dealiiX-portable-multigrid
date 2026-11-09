@@ -82,10 +82,19 @@ namespace Portable
     el(const types::global_dof_index row, const types::global_dof_index col) const override;
 
     const MatrixFree<dim, Number> &
-    get_matrix_free() const override;
+    get_matrix_free() const;
 
     const std::shared_ptr<const Utilities::MPI::Partitioner> &
     get_vector_partitioner() const override;
+
+    const DoFHandler<dim> &
+    get_dof_handler() const override;
+
+    const typename OperatorInfoBase<dim>::ColoredGraph &
+    get_colored_graph() const override;
+
+    bool
+    use_overlap_communication_computation() const override;
 
 
   private:
@@ -106,6 +115,9 @@ namespace Portable
 
 
     MatrixFree<dim, Number> matrix_free;
+
+    // matrix_free's colored graph without the FilteredIterator wrapper
+    typename OperatorInfoBase<dim>::ColoredGraph colored_graph;
 
     ObserverPointer<const AffineConstraints<Number>> constraints;
 
@@ -189,6 +201,7 @@ namespace Portable
     additional_data.overlap_communication_computation = overlap_communication_computation;
 
     matrix_free.reinit(mapping, dof_handler, constraints, *quadrature_1d, additional_data);
+    colored_graph = make_colored_graph<dim>(matrix_free.get_colored_graph());
 
     {
       dealii::internal::MatrixFreeFunctions::ShapeInfo<Number> shape_info(*quadrature_1d,
@@ -895,6 +908,27 @@ namespace Portable
   LaplaceOperatorDG<dim, fe_degree, n_q_points_1d, Number>::get_matrix_free() const
   {
     return matrix_free;
+  }
+
+  template <int dim, int fe_degree, int n_q_points_1d, typename Number>
+  const DoFHandler<dim> &
+  LaplaceOperatorDG<dim, fe_degree, n_q_points_1d, Number>::get_dof_handler() const
+  {
+    return matrix_free.get_dof_handler();
+  }
+
+  template <int dim, int fe_degree, int n_q_points_1d, typename Number>
+  const typename OperatorInfoBase<dim>::ColoredGraph &
+  LaplaceOperatorDG<dim, fe_degree, n_q_points_1d, Number>::get_colored_graph() const
+  {
+    return colored_graph;
+  }
+
+  template <int dim, int fe_degree, int n_q_points_1d, typename Number>
+  bool
+  LaplaceOperatorDG<dim, fe_degree, n_q_points_1d, Number>::use_overlap_communication_computation() const
+  {
+    return matrix_free.use_overlap_communication_computation();
   }
 
   template <int dim, int fe_degree, int n_q_points_1d, typename Number>

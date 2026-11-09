@@ -136,10 +136,19 @@ namespace Portable
     el(const types::global_dof_index row, const types::global_dof_index col) const override;
 
     const MatrixFree<dim, number> &
-    get_matrix_free() const override;
+    get_matrix_free() const;
 
     const std::shared_ptr<const Utilities::MPI::Partitioner> &
     get_vector_partitioner() const override;
+
+    const DoFHandler<dim> &
+    get_dof_handler() const override;
+
+    const typename OperatorInfoBase<dim>::ColoredGraph &
+    get_colored_graph() const override;
+
+    bool
+    use_overlap_communication_computation() const override;
 
   private:
     static constexpr unsigned int n_dofs_per_component = Utilities::pow(fe_degree + 1, dim);
@@ -151,6 +160,9 @@ namespace Portable
       std::max<std::size_t>(1, tensor_core_shmem_per_block / (4 * n_q_points) / sizeof(number));
 
     MatrixFree<dim, number> matrix_free;
+
+    // matrix_free's colored graph without the FilteredIterator wrapper
+    typename OperatorInfoBase<dim>::ColoredGraph colored_graph;
 
     ObserverPointer<const AffineConstraints<number>> constraints;
 
@@ -187,6 +199,7 @@ namespace Portable
 
     const QGauss<1> quadrature_1d(n_q_points_1d);
     matrix_free.reinit(mapping, dof_handler, constraints, quadrature_1d, additional_data);
+    colored_graph = make_colored_graph<dim>(matrix_free.get_colored_graph());
 
     setup_dof_indices_per_color();
 
@@ -679,6 +692,27 @@ namespace Portable
     const
   {
     return matrix_free;
+  }
+
+  template <int dim, int fe_degree, int n_components, typename number, int n_q_points_1d>
+  const DoFHandler<dim> &
+  VectorLaplaceOperator<dim, fe_degree, n_components, number, n_q_points_1d>::get_dof_handler() const
+  {
+    return matrix_free.get_dof_handler();
+  }
+
+  template <int dim, int fe_degree, int n_components, typename number, int n_q_points_1d>
+  const typename OperatorInfoBase<dim>::ColoredGraph &
+  VectorLaplaceOperator<dim, fe_degree, n_components, number, n_q_points_1d>::get_colored_graph() const
+  {
+    return colored_graph;
+  }
+
+  template <int dim, int fe_degree, int n_components, typename number, int n_q_points_1d>
+  bool
+  VectorLaplaceOperator<dim, fe_degree, n_components, number, n_q_points_1d>::use_overlap_communication_computation() const
+  {
+    return matrix_free.use_overlap_communication_computation();
   }
 
   template <int dim, int fe_degree, int n_components, typename number, int n_q_points_1d>

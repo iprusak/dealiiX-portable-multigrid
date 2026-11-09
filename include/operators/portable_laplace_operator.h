@@ -161,7 +161,7 @@ namespace Portable
     el(const types::global_dof_index row, const types::global_dof_index col) const override;
 
     const MatrixFree<dim, number> &
-    get_matrix_free() const override;
+    get_matrix_free() const;
 
     // matrix_free_new's own accessor -- see initialize_dof_vector_new()'s
     // comment for why vmult_dealii_new()'s vectors need matrix_free_new
@@ -171,6 +171,15 @@ namespace Portable
 
     const std::shared_ptr<const Utilities::MPI::Partitioner> &
     get_vector_partitioner() const override;
+
+    const DoFHandler<dim> &
+    get_dof_handler() const override;
+
+    const typename OperatorInfoBase<dim>::ColoredGraph &
+    get_colored_graph() const override;
+
+    bool
+    use_overlap_communication_computation() const override;
 
   private:
     using TeamHandle =
@@ -214,6 +223,9 @@ namespace Portable
 
     MatrixFree<dim, number> matrix_free;
 
+    // matrix_free's colored graph without the FilteredIterator wrapper
+    typename OperatorInfoBase<dim>::ColoredGraph colored_graph;
+
     // Local matrix_free_dealii port of the above, filled identically -- see
     // vmult_dealii_new()/LocalLaplaceOperatorNew.
     Copy::Portable::MatrixFree<dim, number> matrix_free_new;
@@ -250,6 +262,7 @@ namespace Portable
 
     const QGauss<1> quadrature_1d(fe_degree + 1);
     matrix_free.reinit(mapping, dof_handler, constraints, quadrature_1d, additional_data);
+    colored_graph = make_colored_graph<dim>(matrix_free.get_colored_graph());
 
     typename Copy::Portable::MatrixFree<dim, number>::AdditionalData additional_data_new;
     additional_data_new.mapping_update_flags =
@@ -1129,6 +1142,27 @@ namespace Portable
   LaplaceOperator<dim, fe_degree, number>::get_matrix_free() const
   {
     return matrix_free;
+  }
+
+  template <int dim, int fe_degree, typename number>
+  const DoFHandler<dim> &
+  LaplaceOperator<dim, fe_degree, number>::get_dof_handler() const
+  {
+    return matrix_free.get_dof_handler();
+  }
+
+  template <int dim, int fe_degree, typename number>
+  const typename OperatorInfoBase<dim>::ColoredGraph &
+  LaplaceOperator<dim, fe_degree, number>::get_colored_graph() const
+  {
+    return colored_graph;
+  }
+
+  template <int dim, int fe_degree, typename number>
+  bool
+  LaplaceOperator<dim, fe_degree, number>::use_overlap_communication_computation() const
+  {
+    return matrix_free.use_overlap_communication_computation();
   }
 
   template <int dim, int fe_degree, typename number>

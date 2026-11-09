@@ -86,10 +86,19 @@ namespace Portable
     el(const types::global_dof_index row, const types::global_dof_index col) const override;
 
     const MatrixFree<dim, number> &
-    get_matrix_free() const override;
+    get_matrix_free() const;
 
     const std::shared_ptr<const Utilities::MPI::Partitioner> &
     get_vector_partitioner() const override;
+
+    const DoFHandler<dim> &
+    get_dof_handler() const override;
+
+    const typename OperatorInfoBase<dim>::ColoredGraph &
+    get_colored_graph() const override;
+
+    bool
+    use_overlap_communication_computation() const override;
 
     const Kokkos::View<const unsigned int *, MemorySpace::Default::kokkos_space>
     get_interface_dof_indices_subdomain() const override;
@@ -145,6 +154,9 @@ namespace Portable
     static constexpr unsigned int n_local_dofs = Utilities::pow(fe_degree + 1, dim);
 
     MatrixFree<dim, number> matrix_free;
+
+    // matrix_free's colored graph without the FilteredIterator wrapper
+    typename OperatorInfoBase<dim>::ColoredGraph colored_graph;
 
     const SubdomainDoFHandler<dim> *subdomain_dof_handler;
 
@@ -205,6 +217,7 @@ namespace Portable
                        constraints,
                        quadrature_1d,
                        additional_data);
+    colored_graph = make_colored_graph<dim>(matrix_free.get_colored_graph());
 
     matrix_free.initialize_dof_vector(temp_vector_src);
     matrix_free.initialize_dof_vector(temp_vector_dst);
@@ -1345,6 +1358,27 @@ namespace Portable
   SubdomainLaplaceOperator<dim, fe_degree, number>::get_matrix_free() const
   {
     return matrix_free;
+  }
+
+  template <int dim, int fe_degree, typename number>
+  const DoFHandler<dim> &
+  SubdomainLaplaceOperator<dim, fe_degree, number>::get_dof_handler() const
+  {
+    return matrix_free.get_dof_handler();
+  }
+
+  template <int dim, int fe_degree, typename number>
+  const typename OperatorInfoBase<dim>::ColoredGraph &
+  SubdomainLaplaceOperator<dim, fe_degree, number>::get_colored_graph() const
+  {
+    return colored_graph;
+  }
+
+  template <int dim, int fe_degree, typename number>
+  bool
+  SubdomainLaplaceOperator<dim, fe_degree, number>::use_overlap_communication_computation() const
+  {
+    return matrix_free.use_overlap_communication_computation();
   }
 
   template <int dim, int fe_degree, typename number>
