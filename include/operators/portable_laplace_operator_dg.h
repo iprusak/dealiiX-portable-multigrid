@@ -781,6 +781,17 @@ namespace Portable
       auto penalty_parameters_boundary_face_host =
         Kokkos::create_mirror_view(penalty_parameters_boundary_face);
 
+      // The kernels number the quadrature points of a face lexicographically
+      // in the cell's reference coordinates (lower tangential direction
+      // fastest). deal.II's face quadrature does the same except on the
+      // y-normal faces 2 and 3 of a hexahedron, whose face coordinates are
+      // (z, x): remap those to the kernels' order.
+      const auto kernel_face_q = [](const unsigned int face_no, const unsigned int q) {
+        if (dim == 3 && face_no / 2 == 1)
+          return (q % n_q_points_1d) * n_q_points_1d + q / n_q_points_1d;
+        return q;
+      };
+
       for (unsigned int f = 0; f < n_inner_faces; ++f)
         {
           const unsigned int cell_minus = face_info_cpu[0][f][0];
@@ -815,21 +826,24 @@ namespace Portable
                 const Tensor<2, dim, double> inv_jacobian_plus(
                   fe_face_values_neighbor.jacobian(q).covariant_form());
 
-                Tensor<1, dim, double> jac_x_n_minus = inv_jacobian_minus * n_minus;
+                // d_n u = grad_xi u . (J^-1 n); inv_jacobian is the covariant form J^-T
+                Tensor<1, dim, double> jac_x_n_minus = n_minus * inv_jacobian_minus;
 
-                Tensor<1, dim, double> jac_x_n_plus = inv_jacobian_plus * n_minus;
+                Tensor<1, dim, double> jac_x_n_plus = n_minus * inv_jacobian_plus;
 
-                jxw_inner_face_host(f * n_q_points_face + q, 0) = fe_face_values.JxW(q);
+                const unsigned int q_k = kernel_face_q(f_minus, q);
 
-                jxw_inner_face_host(f * n_q_points_face + q, 1) = fe_face_values_neighbor.JxW(q);
+                jxw_inner_face_host(f * n_q_points_face + q_k, 0) = fe_face_values.JxW(q);
+
+                jxw_inner_face_host(f * n_q_points_face + q_k, 1) = fe_face_values_neighbor.JxW(q);
 
                 for (unsigned int d = 0; d < dim; d++)
                   {
                     jacobians_times_normal_inner_face_host(f * dim * n_q_points_face +
-                                                             d * n_q_points_face + q,
+                                                             d * n_q_points_face + q_k,
                                                            0) = jac_x_n_minus[d];
                     jacobians_times_normal_inner_face_host(f * dim * n_q_points_face +
-                                                             d * n_q_points_face + q,
+                                                             d * n_q_points_face + q_k,
                                                            1) = jac_x_n_plus[d];
                   }
               }
@@ -861,14 +875,16 @@ namespace Portable
               const Tensor<2, dim, double> inv_jacobian(
                 fe_face_values.jacobian(q).covariant_form());
 
-              Tensor<1, dim, double> jac_x_n = inv_jacobian * n;
+              Tensor<1, dim, double> jac_x_n = n * inv_jacobian; // J^-1 n, see above
 
-              jxw_boundary_face_host(f * n_q_points_face + q) = fe_face_values.JxW(q);
+              const unsigned int q_k = kernel_face_q(face, q);
+
+              jxw_boundary_face_host(f * n_q_points_face + q_k) = fe_face_values.JxW(q);
 
               for (unsigned int d = 0; d < dim; d++)
                 {
                   jacobians_times_normal_boundary_face_host(f * dim * n_q_points_face +
-                                                            d * n_q_points_face + q) = jac_x_n[d];
+                                                            d * n_q_points_face + q_k) = jac_x_n[d];
                 }
             }
         }
