@@ -26,6 +26,68 @@ namespace BK3
 
     using ExecutionSpace = MemorySpace::Default::kokkos_space::execution_space;
 
+    namespace internal
+    {
+      // Number of compute units the backend can run teams on concurrently:
+      // streaming multiprocessors on CUDA/HIP, hardware threads elsewhere.
+      inline int
+      n_compute_units(const ExecutionSpace &exec)
+      {
+#if defined(KOKKOS_ENABLE_CUDA)
+        if constexpr (std::is_same_v<ExecutionSpace, Kokkos::Cuda>)
+          return exec.cuda_device_prop().multiProcessorCount;
+#endif
+#if defined(KOKKOS_ENABLE_HIP)
+        if constexpr (std::is_same_v<ExecutionSpace, Kokkos::HIP>)
+          return exec.hip_device_prop().multiProcessorCount;
+#endif
+        return std::max(1, exec.concurrency());
+      }
+
+      // Largest batch size whose per-team scratch fits the backend's limit.
+      // shmem_bytes(n) must be monotone in n.
+      template <typename ShmemBytes>
+      int
+      clamp_batch_to_scratch(int nelmtPerBatch, const ShmemBytes &shmem_bytes)
+      {
+        const std::size_t scratch_max = Kokkos::TeamPolicy<ExecutionSpace>::scratch_size_max(0);
+        while (nelmtPerBatch > 1 && shmem_bytes(nelmtPerBatch) > scratch_max)
+          --nelmtPerBatch;
+        return nelmtPerBatch;
+      }
+
+      // Team policy for a batch kernel: the requested team size clamped to
+      // what the backend allows for this functor and scratch size; one team
+      // per batch while that is at most two teams per compute unit, half as
+      // many beyond, unless a league size was requested explicitly.
+      template <typename Functor>
+      Kokkos::TeamPolicy<ExecutionSpace>
+      make_team_policy(const ExecutionSpace &exec,
+                       const Functor        &functor,
+                       const int             n_batches,
+                       const unsigned int    requested_blocks,
+                       const int             requested_team_size,
+                       const std::size_t     shmem_bytes)
+      {
+        Kokkos::TeamPolicy<ExecutionSpace> probe(exec, 1, Kokkos::AUTO);
+        probe.set_scratch_size(0, Kokkos::PerTeam(shmem_bytes));
+        const int team_size_max = probe.team_size_max(functor, Kokkos::ParallelForTag());
+        const int team_size     = std::max(1, std::min(requested_team_size, team_size_max));
+
+        int n_blocks;
+        if (requested_blocks != numbers::invalid_unsigned_int)
+          n_blocks = std::max(1, static_cast<int>(requested_blocks));
+        else if (n_batches <= 2 * n_compute_units(exec))
+          n_blocks = std::max(1, n_batches);
+        else
+          n_blocks = std::max(1, n_batches / 2);
+
+        Kokkos::TeamPolicy<ExecutionSpace> policy(exec, n_blocks, team_size);
+        policy.set_scratch_size(0, Kokkos::PerTeam(shmem_bytes));
+        return policy;
+      }
+    } // namespace internal
+
 
     // Launches on `exec` and returns without fencing; the caller fences
     // before any host or MPI access to d_out.
@@ -60,18 +122,24 @@ namespace BK3
 
       const int nelmt = n_cells;
 
-      const int nelmtPerBatch =
+      // shape values + co-shape gradients + values slot + dim gradients-pool slots
+      const auto shmem_bytes = [](const int n_cells_in_batch) {
+        return static_cast<std::size_t>(n_local_dofs_1d * n_q_points_1d +
+                                        n_q_points_1d * n_q_points_1d +
+                                        n_scratch_arrays * n_cells_in_batch *
+                                          n_quad_points_total) *
+               sizeof(Number);
+      };
+
+      const int nelmtPerBatch = internal::clamp_batch_to_scratch(
         std::max(1,
                  ((n_cells_per_batch == numbers::invalid_unsigned_int) ?
                     static_cast<int>(shmemPerBlock / (n_scratch_arrays * n_quad_points_total) /
                                      sizeof(Number)) :
-                    static_cast<int>(n_cells_per_batch)));
+                    static_cast<int>(n_cells_per_batch))),
+        shmem_bytes);
 
-
-      const int numBlocks = std::max(1,
-                                     ((n_blocks == numbers::invalid_unsigned_int) ?
-                                        ((nelmt + nelmtPerBatch - 1) / nelmtPerBatch / 2) :
-                                        static_cast<int>(n_blocks)));
+      const int n_batches = (nelmt + nelmtPerBatch - 1) / nelmtPerBatch;
 
       const int threadsPerBlock =
         std::max(1,
@@ -80,19 +148,11 @@ namespace BK3
                     static_cast<int>(threads_per_block)));
 
       {
-        const int ssize = n_local_dofs_1d * n_q_points_1d + // shape values
-                          n_q_points_1d * n_q_points_1d +   // co-shape gradients
-                          n_scratch_arrays * nelmtPerBatch *
-                            n_quad_points_total; // values slot + dim gradients-pool slots
-
-        const unsigned int shmem_size = ssize * sizeof(Number);
+        const unsigned int shmem_size = shmem_bytes(nelmtPerBatch);
 
         using member_type = typename Kokkos::TeamPolicy<ExecutionSpace>::member_type;
-        Kokkos::TeamPolicy<ExecutionSpace> policy(exec, numBlocks, threadsPerBlock);
-        policy.set_scratch_size(0, Kokkos::PerTeam(shmem_size));
 
-        Kokkos::parallel_for(
-          policy, KOKKOS_LAMBDA(member_type team_member) {
+        auto functor = KOKKOS_LAMBDA(member_type team_member) {
             Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
             Number *s_shape_values       = scratch;
@@ -193,7 +253,13 @@ namespace BK3
 
                 batchIdx += team_member.league_size();
               }
-          });
+          };
+
+        Kokkos::parallel_for(
+          "vmult_bk3",
+          internal::make_team_policy(
+            exec, functor, n_batches, n_blocks, threadsPerBlock, shmem_size),
+          functor);
       }
     }
 
@@ -293,17 +359,23 @@ namespace BK3
 
         const int nelmt = n_cells;
 
-        const int nelmtPerBatch =
+        // shape values + values slot + scratch slot(s)
+        const auto shmem_bytes = [](const int n_cells_in_batch) {
+          return static_cast<std::size_t>(n_local_dofs_1d * n_q_points_1d +
+                                          n_scratch_arrays * n_cells_in_batch *
+                                            n_quad_points_total) *
+                 sizeof(Number);
+        };
+
+        const int nelmtPerBatch = internal::clamp_batch_to_scratch(
           std::max(1,
                    ((n_cells_per_batch == numbers::invalid_unsigned_int) ?
                       static_cast<int>(shmemPerBlock / (n_scratch_arrays * n_quad_points_total) /
                                        sizeof(Number)) :
-                      static_cast<int>(n_cells_per_batch)));
+                      static_cast<int>(n_cells_per_batch))),
+          shmem_bytes);
 
-        const int numBlocks = std::max(1,
-                                       ((n_blocks == numbers::invalid_unsigned_int) ?
-                                          ((nelmt + nelmtPerBatch - 1) / nelmtPerBatch / 2) :
-                                          static_cast<int>(n_blocks)));
+        const int n_batches = (nelmt + nelmtPerBatch - 1) / nelmtPerBatch;
 
         const int threadsPerBlock =
           std::max(1,
@@ -312,18 +384,11 @@ namespace BK3
                       static_cast<int>(threads_per_block)));
 
         {
-          const int ssize =
-            n_local_dofs_1d * n_q_points_1d +                       // shape values
-            n_scratch_arrays * nelmtPerBatch * n_quad_points_total; // values slot + scratch slot(s)
-
-          const unsigned int shmem_size = ssize * sizeof(Number);
+          const unsigned int shmem_size = shmem_bytes(nelmtPerBatch);
 
           using member_type = typename Kokkos::TeamPolicy<ExecutionSpace>::member_type;
-          Kokkos::TeamPolicy<ExecutionSpace> policy(exec, numBlocks, threadsPerBlock);
-          policy.set_scratch_size(0, Kokkos::PerTeam(shmem_size));
 
-          Kokkos::parallel_for(
-            "compute_rhs_bk3", policy, KOKKOS_LAMBDA(member_type team_member) {
+          auto functor = KOKKOS_LAMBDA(member_type team_member) {
               Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
               Number *s_shape_values = scratch;
@@ -395,7 +460,13 @@ namespace BK3
 
                   batchIdx += team_member.league_size();
                 }
-            });
+            };
+
+          Kokkos::parallel_for(
+            "compute_rhs_bk3",
+            internal::make_team_policy(
+              exec, functor, n_batches, n_blocks, threadsPerBlock, shmem_size),
+            functor);
         }
       }
     } // namespace internal
@@ -490,17 +561,24 @@ namespace BK3
 
       const int nelmt = n_cells;
 
-      const int nelmtPerBatch =
+      // shape values + co-shape gradients + values slot + dim gradients-pool slots
+      const auto shmem_bytes = [](const int n_cells_in_batch) {
+        return static_cast<std::size_t>(n_local_dofs_1d * n_q_points_1d +
+                                        n_q_points_1d * n_q_points_1d +
+                                        n_scratch_arrays * n_cells_in_batch *
+                                          n_quad_points_total) *
+               sizeof(Number);
+      };
+
+      const int nelmtPerBatch = internal::clamp_batch_to_scratch(
         std::max(1,
                  ((n_cells_per_batch == numbers::invalid_unsigned_int) ?
                     static_cast<int>(shmemPerBlock / (n_scratch_arrays * n_quad_points_total) /
                                      sizeof(Number)) :
-                    static_cast<int>(n_cells_per_batch)));
+                    static_cast<int>(n_cells_per_batch))),
+        shmem_bytes);
 
-      const int numBlocks = std::max(1,
-                                     ((n_blocks == numbers::invalid_unsigned_int) ?
-                                        ((nelmt + nelmtPerBatch - 1) / nelmtPerBatch / 2) :
-                                        static_cast<int>(n_blocks)));
+      const int n_batches = (nelmt + nelmtPerBatch - 1) / nelmtPerBatch;
 
       const int threadsPerBlock =
         std::max(1,
@@ -508,22 +586,14 @@ namespace BK3
                     (Utilities::pow(n_q_points_1d, dim - 1) * nelmtPerBatch) :
                     static_cast<int>(threads_per_block)));
 
-      const int ssize = n_local_dofs_1d * n_q_points_1d + // shape values
-                        n_q_points_1d * n_q_points_1d +   // co-shape gradients
-                        n_scratch_arrays * nelmtPerBatch *
-                          n_quad_points_total; // values slot + dim gradients-pool slots
-
-      const unsigned int shmem_size = ssize * sizeof(Number);
+      const unsigned int shmem_size = shmem_bytes(nelmtPerBatch);
 
       // cells of a color are contiguous: no indirection
       const CellRangeIdView cell_range_ids;
 
       using member_type = typename Kokkos::TeamPolicy<ExecutionSpace>::member_type;
-      Kokkos::TeamPolicy<ExecutionSpace> policy(exec, numBlocks, threadsPerBlock);
-      policy.set_scratch_size(0, Kokkos::PerTeam(shmem_size));
 
-      Kokkos::parallel_for(
-        "compute_diagonal_bk3", policy, KOKKOS_LAMBDA(member_type team_member) {
+      auto functor = KOKKOS_LAMBDA(member_type team_member) {
           Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
           Number *s_shape_values       = scratch;
@@ -592,7 +662,13 @@ namespace BK3
 
               batchIdx += team_member.league_size();
             }
-        });
+        };
+
+      Kokkos::parallel_for(
+        "compute_diagonal_bk3",
+        internal::make_team_policy(
+          exec, functor, n_batches, n_blocks, threadsPerBlock, shmem_size),
+        functor);
     }
 
 
