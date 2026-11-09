@@ -431,7 +431,8 @@ namespace Custom
             if (cell_range_ids.size() > 0)
               global_cell_index = cell_range_ids(global_cell_index);
 
-            const int cell_g_offset = global_cell_index * symmetric_tensor_dimension * n_q_points;
+            const std::size_t cell_g_offset =
+              static_cast<std::size_t>(global_cell_index) * symmetric_tensor_dimension * n_q_points;
 
             Kokkos::Array<int, dim - 1> idx_d, stride_d;
             Number                      reg[dim][n_q_points_1d];

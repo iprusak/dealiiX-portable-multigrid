@@ -937,6 +937,9 @@ namespace BK3
                       if (cell_range_ids.size() > 0)
                         global_cell_index = cell_range_ids(global_cell_index);
 
+                      const std::size_t g_base = static_cast<std::size_t>(global_cell_index) *
+                                                 symmetric_tensor_dimension * nq_total;
+
                       if (dim == 2)
                         {
                           const int p = tid % nq;
@@ -957,14 +960,11 @@ namespace BK3
                               qs = 0;
 
                               // Load Geometric Factors, coalesced access
-                              Grr = d_G[global_cell_index * symmetric_tensor_dimension * nq_total +
-                                        0 * nq_total + q * nq + p];
+                              Grr = d_G[g_base + 0 * nq_total + q * nq + p];
 
-                              Grs = d_G[global_cell_index * symmetric_tensor_dimension * nq_total +
-                                        1 * nq_total + q * nq + p];
+                              Grs = d_G[g_base + 1 * nq_total + q * nq + p];
 
-                              Gss = d_G[global_cell_index * symmetric_tensor_dimension * nq_total +
-                                        2 * nq_total + q * nq + p];
+                              Gss = d_G[g_base + 2 * nq_total + q * nq + p];
 
                               // Multiply by D
                               for (int n = 0; n < nq; n++)
@@ -1002,23 +1002,17 @@ namespace BK3
                               qt = 0;
 
                               // Load Geometric Factors, coalesced access
-                              Grr = d_G[global_cell_index * symmetric_tensor_dimension * nq_total +
-                                        0 * nq_total + r * nq * nq + q * nq + p];
+                              Grr = d_G[g_base + 0 * nq_total + r * nq * nq + q * nq + p];
 
-                              Grs = d_G[global_cell_index * symmetric_tensor_dimension * nq_total +
-                                        1 * nq_total + r * nq * nq + q * nq + p];
+                              Grs = d_G[g_base + 1 * nq_total + r * nq * nq + q * nq + p];
 
-                              Grt = d_G[global_cell_index * symmetric_tensor_dimension * nq_total +
-                                        2 * nq_total + r * nq * nq + q * nq + p];
+                              Grt = d_G[g_base + 2 * nq_total + r * nq * nq + q * nq + p];
 
-                              Gss = d_G[global_cell_index * symmetric_tensor_dimension * nq_total +
-                                        3 * nq_total + r * nq * nq + q * nq + p];
+                              Gss = d_G[g_base + 3 * nq_total + r * nq * nq + q * nq + p];
 
-                              Gst = d_G[global_cell_index * symmetric_tensor_dimension * nq_total +
-                                        4 * nq_total + r * nq * nq + q * nq + p];
+                              Gst = d_G[g_base + 4 * nq_total + r * nq * nq + q * nq + p];
 
-                              Gtt = d_G[global_cell_index * symmetric_tensor_dimension * nq_total +
-                                        5 * nq_total + r * nq * nq + q * nq + p];
+                              Gtt = d_G[g_base + 5 * nq_total + r * nq * nq + q * nq + p];
 
                               // Multiply by D
                               for (int n = 0; n < nq; n++)

@@ -5,6 +5,8 @@
 
 #include <deal.II/fe/mapping.h>
 
+#include <deal.II/matrix_free/tools.h>
+
 #include <memory>
 
 #include "base/portable_laplace_operator_base.h"
@@ -621,9 +623,10 @@ namespace Portable
                     ++idx;
                   }
 
+              const std::size_t g_cell_base =
+                static_cast<std::size_t>(cell_id) * symmetric_tensor_dim * n_q_points;
               for (int c = 0; c < symmetric_tensor_dim; ++c)
-                geometry_tensor_host[cell_id * symmetric_tensor_dim * n_q_points + c * n_q_points +
-                                     q] = components[c];
+                geometry_tensor_host[g_cell_base + c * n_q_points + q] = components[c];
             }
         }
 

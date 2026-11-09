@@ -8,6 +8,8 @@
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/solver_cg.h>
 
+#include <deal.II/matrix_free/tools.h>
+
 #include <memory>
 
 #include "base/portable_subdomain_laplace_operator_base.h"
@@ -1289,7 +1291,7 @@ namespace Portable
             G_tensors[color] = Kokkos::View<number *, MemorySpace::Default::kokkos_space>(
               Kokkos::view_alloc("G_tensor_color_" + std::to_string(color),
                                  Kokkos::WithoutInitializing),
-              symmetric_tensor_dim * n_cells * n_q_points);
+              static_cast<std::size_t>(symmetric_tensor_dim) * n_cells * n_q_points);
 
             auto G = G_tensors[color];
 
@@ -1308,17 +1310,16 @@ namespace Portable
                         {
                           number sum = 0;
                           for (int k = 0; k < dim; ++k)
-                            sum += inv_jacobian(q_point, cell_id, k, d1) *
-                                   inv_jacobian(q_point, cell_id, k, d2);
+                            sum += inv_jacobian(q_point, cell_id, d1, k) *
+                                   inv_jacobian(q_point, cell_id, d2, k);
                           components[idx] = JxW(q_point, cell_id) * sum;
                           ++idx;
                         }
 
+                    const std::size_t g_cell_base =
+                      static_cast<std::size_t>(cell_id) * symmetric_tensor_dim * n_q_points;
                     for (int c = 0; c < symmetric_tensor_dim; ++c)
-                      {
-                        G[cell_id * symmetric_tensor_dim * n_q_points + c * n_q_points + q_point] =
-                          components[c];
-                      }
+                      G[g_cell_base + c * n_q_points + q_point] = components[c];
                   }
               });
             Kokkos::fence();

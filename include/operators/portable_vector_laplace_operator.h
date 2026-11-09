@@ -159,6 +159,13 @@ namespace Portable
     static constexpr unsigned int tensor_core_nelmt_per_batch =
       std::max<std::size_t>(1, tensor_core_shmem_per_block / (4 * n_q_points) / sizeof(number));
 
+    // owned + ghost entries, what a DeviceVector over vec.get_values() spans
+    static unsigned int
+    mpi_local_size(const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &vec)
+    {
+      return vec.locally_owned_size() + vec.get_partitioner()->n_ghost_indices();
+    }
+
     MatrixFree<dim, number> matrix_free;
 
     // matrix_free's colored graph without the FilteredIterator wrapper
@@ -193,8 +200,7 @@ namespace Portable
 
     this->constraints = &constraints;
 
-    additional_data.mapping_update_flags =
-      update_gradients | update_JxW_values | update_quadrature_points;
+    additional_data.mapping_update_flags = update_gradients | update_JxW_values;
     additional_data.overlap_communication_computation = overlap_communication_computation;
 
     const QGauss<1> quadrature_1d(n_q_points_1d);
@@ -239,8 +245,8 @@ namespace Portable
   {
     dst = 0.;
 
-    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
-      dst_device(dst.get_values(), dst.locally_owned_size());
+    DeviceVector<number> src_device(src.get_values(), mpi_local_size(src)),
+      dst_device(dst.get_values(), mpi_local_size(dst));
 
     const auto        &colored_graph = matrix_free.get_colored_graph();
     const unsigned int n_colors      = colored_graph.size();
@@ -330,7 +336,7 @@ namespace Portable
   {
     rhs = 0.;
 
-    DeviceVector<number> rhs_device(rhs.get_values(), rhs.locally_owned_size());
+    DeviceVector<number> rhs_device(rhs.get_values(), mpi_local_size(rhs));
 
     const auto        &colored_graph = matrix_free.get_colored_graph();
     const unsigned int n_colors      = colored_graph.size();
@@ -574,8 +580,8 @@ namespace Portable
   {
     dst = 0.;
 
-    DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
-      dst_device(dst.get_values(), dst.locally_owned_size());
+    DeviceVector<number> src_device(src.get_values(), mpi_local_size(src)),
+      dst_device(dst.get_values(), mpi_local_size(dst));
 
     const auto        &colored_graph = matrix_free.get_colored_graph();
     const unsigned int n_colors      = colored_graph.size();
@@ -758,14 +764,15 @@ namespace Portable
   types::global_dof_index
   VectorLaplaceOperator<dim, fe_degree, n_components, number, n_q_points_1d>::m() const
   {
-    return matrix_free.get_vector_partitioner()->size();
+    const auto &partitioner = matrix_free.get_vector_partitioner();
+    return partitioner ? partitioner->size() : matrix_free.get_dof_handler().n_dofs();
   }
 
   template <int dim, int fe_degree, int n_components, typename number, int n_q_points_1d>
   types::global_dof_index
   VectorLaplaceOperator<dim, fe_degree, n_components, number, n_q_points_1d>::n() const
   {
-    return matrix_free.get_vector_partitioner()->size();
+    return m();
   }
 
   template <int dim, int fe_degree, int n_components, typename number, int n_q_points_1d>
@@ -906,7 +913,7 @@ namespace Portable
             G_tensors[color] = Kokkos::View<number *, MemorySpace::Default::kokkos_space>(
               Kokkos::view_alloc("G_tensor_color_" + std::to_string(color),
                                  Kokkos::WithoutInitializing),
-              symmetric_tensor_dim * n_cells * n_q_points);
+              static_cast<std::size_t>(symmetric_tensor_dim) * n_cells * n_q_points);
 
             auto G = G_tensors[color];
 
@@ -931,11 +938,10 @@ namespace Portable
                           ++idx;
                         }
 
+                    const std::size_t g_cell_base =
+                      static_cast<std::size_t>(cell_id) * symmetric_tensor_dim * n_q_points;
                     for (int c = 0; c < symmetric_tensor_dim; ++c)
-                      {
-                        G[cell_id * symmetric_tensor_dim * n_q_points + c * n_q_points + q_point] =
-                          components[c];
-                      }
+                      G[g_cell_base + c * n_q_points + q_point] = components[c];
                   }
               });
             Kokkos::fence();
