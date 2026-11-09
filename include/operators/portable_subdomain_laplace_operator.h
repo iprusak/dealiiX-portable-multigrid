@@ -527,6 +527,7 @@ namespace Portable
               n_interface_cells,
               numBlocks,
               threadsPerBlock,
+              numbers::invalid_unsigned_int, // n_cells_per_batch
               interface_cell_ids_per_color[color]);
 
             Kokkos::fence();
