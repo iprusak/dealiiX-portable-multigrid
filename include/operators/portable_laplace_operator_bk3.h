@@ -40,6 +40,7 @@ namespace Portable
   public:
     using VectorType   = LinearAlgebra::distributed::Vector<number, MemorySpace::Default>;
     using ColoredGraph = typename OperatorInfoBase<dim>::ColoredGraph;
+    using ExecutionSpace = MemorySpace::Default::kokkos_space::execution_space;
 
     LaplaceOperatorBK3(const DoFHandler<dim>           &dof_handler,
                        const AffineConstraints<number> &constraints,
@@ -70,6 +71,13 @@ namespace Portable
     void
     set_constrained_values(const number value, VectorType &vec) const;
 
+    // dst[c] = src[c] on the owned constrained DoFs; public because nvcc
+    // rejects a KOKKOS_LAMBDA inside a private member function
+    void
+    copy_constrained_values(const VectorType     &src,
+                            VectorType           &dst,
+                            const ExecutionSpace &exec) const;
+
     void
     compute_diagonal() override;
 
@@ -98,8 +106,6 @@ namespace Portable
     use_overlap_communication_computation() const override;
 
   private:
-    using ExecutionSpace = MemorySpace::Default::kokkos_space::execution_space;
-
     static constexpr unsigned int n_local_dofs = Utilities::pow(fe_degree + 1, dim);
     static constexpr unsigned int n_q_points   = Utilities::pow(n_q_points_1d, dim);
     static constexpr unsigned int symmetric_tensor_dim = (dim * (dim + 1)) / 2;
@@ -128,11 +134,6 @@ namespace Portable
 
     void
     compute_G_tensors();
-
-    void
-    copy_constrained_values(const VectorType     &src,
-                            VectorType           &dst,
-                            const ExecutionSpace &exec) const;
 
     void
     launch_color(const ExecutionSpace       &exec,
