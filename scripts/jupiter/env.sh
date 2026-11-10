@@ -1,7 +1,7 @@
 #!/bin/bash
 # JUPITER environment for running the GPU binaries (source it, do not execute):
 #
-#   source tests/jupiter_env.sh [DEAL_II_DIR]
+#   source scripts/jupiter/env.sh [DEAL_II_DIR]
 #
 # Loads the module stack the binaries were built with, puts the deal.II
 # install and the Kokkos it was built against first on LD_LIBRARY_PATH
@@ -24,7 +24,7 @@ fi
 
 export DEAL_II_DIR=${1:-${DEAL_II_DIR:-$WORK/dealii/dealii-master}}
 
-module purge
+module --force purge
 module load Stages/2026
 module load nvidia-compilers
 module load OpenMPI # deal.II is built against OpenMPI; ParaStationMPI breaks the ABI
