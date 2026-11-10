@@ -184,7 +184,7 @@ namespace multigrid
             FullMatrix<double> face_matrix(n_iv_dofs, n_iv_dofs);
             for (unsigned int q = 0; q < face_quadrature.size(); ++q)
               {
-                const Tensor<1, dim> &n = fe_iv.normal(q);
+                const Tensor<1, dim> &n = fe_iv.normal_vector(q);
                 for (unsigned int i = 0; i < n_iv_dofs; ++i)
                   for (unsigned int j = 0; j < n_iv_dofs; ++j)
                     {
