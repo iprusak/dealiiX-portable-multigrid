@@ -110,6 +110,16 @@ namespace Portable
     static constexpr unsigned int n_q_points   = Utilities::pow(n_q_points_1d, dim);
     static constexpr unsigned int symmetric_tensor_dim = (dim * (dim + 1)) / 2;
 
+    // Without device-aware MPI, deal.II (9.8 and later) stages the exchange
+    // of MemorySpace::Default vectors through a host buffer: compress_start()
+    // snapshots dst and compress_finish() writes the snapshot back, so no
+    // kernel may add to dst in between.
+#ifdef DEAL_II_MPI_WITH_DEVICE_SUPPORT
+    static constexpr bool buffered_ghost_exchange = false;
+#else
+    static constexpr bool buffered_ghost_exchange = true;
+#endif
+
     // "how many cells' worth of quadrature-point scratch fits in one CUDA
     // team's shared-memory budget" for the tensor-core kernel
     // (bk4_cuda_kernels.cuh), evaluated at compile time.
@@ -190,8 +200,8 @@ namespace Portable
 
 #ifndef DEAL_II_MPI_WITH_DEVICE_SUPPORT
     // The 3-color scheme posts MPI operations on device vectors between
-    // kernels. Without device-aware MPI that is only safe when the "device"
-    // memory is host memory.
+    // kernels. Without device-aware MPI, only host "device" memory is
+    // accepted (as in Portable::MatrixFree); see buffered_ghost_exchange.
     constexpr bool default_memory_is_host =
       std::is_same_v<MemorySpace::Default::kokkos_space, Kokkos::HostSpace>;
     AssertThrow(!overlap_communication_computation || default_memory_is_host,
@@ -667,10 +677,12 @@ namespace Portable
       {
         src.update_ghost_values_start(0);
 
-        // In parallel, it's possible that some processors do not own any
-        // cells.
+        // colors 0 and 2 touch no ghost DoFs; in parallel, some processors
+        // may not own any cells
         if (n_colors > 0)
           launch_color(exec, 0, src_device, dst_device);
+        if (buffered_ghost_exchange && n_colors > 2)
+          launch_color(exec, 2, src_device, dst_device);
 
         src.update_ghost_values_finish();
 
@@ -685,9 +697,7 @@ namespace Portable
           }
 
         dst.compress_start(0, VectorOperation::add);
-        // When the mesh is coarse it is possible that some processors do
-        // not own any cells
-        if (n_colors > 2)
+        if (!buffered_ghost_exchange && n_colors > 2)
           launch_color(exec, 2, src_device, dst_device);
         dst.compress_finish(VectorOperation::add);
       }
@@ -843,6 +853,8 @@ namespace Portable
 
         if (computation_on && n_colors > 0)
           launch_color(exec, 0, src_device, dst_device);
+        if (computation_on && buffered_ghost_exchange && n_colors > 2)
+          launch_color(exec, 2, src_device, dst_device);
 
         if (ghost_exchange_on)
           src.update_ghost_values_finish();
@@ -859,7 +871,7 @@ namespace Portable
         if (ghost_exchange_on)
           dst.compress_start(0, VectorOperation::add);
 
-        if (computation_on && n_colors > 2)
+        if (computation_on && !buffered_ghost_exchange && n_colors > 2)
           launch_color(exec, 2, src_device, dst_device);
 
         if (ghost_exchange_on)
