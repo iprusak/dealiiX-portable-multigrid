@@ -516,44 +516,23 @@ namespace multigrid
   {
     Timer time;
 
-    LinearAlgebra::distributed::Vector<full_number, MemorySpace::Host> system_rhs_host(
-      locally_owned_dofs, locally_relevant_dofs, mpi_communicator);
+    // (f, phi_i) with f = 1, assembled on the device by the fine operator's own
+    // per-cell kernel as tests/bp3 does, instead of a host FEValues loop plus a
+    // host-to-device copy. The kernel skips constrained DoFs, which is what
+    // distribute_local_to_global() with homogeneous constraints did. The fine
+    // operator is always a LaplaceOperatorBK3 (see its construction above); it
+    // is the only operator type that provides compute_rhs().
+    using FineOperator = Portable::LaplaceOperatorBK3<dim, fe_degree, full_number>;
+    const FineOperator *fine_operator = nullptr;
+    if constexpr (std::is_same_v<full_number, vcycle_number>)
+      fine_operator = dynamic_cast<const FineOperator *>(level_matrices.back().get());
+    else
+      fine_operator = dynamic_cast<const FineOperator *>(fine_level_matrix.get());
+    Assert(fine_operator != nullptr,
+           ExcMessage("The fine-level operator is not a LaplaceOperatorBK3."));
 
-    const QGauss<dim> quadrature_formula(fe_degree + 1);
-
-    FEValues<dim> fe_values(fe, quadrature_formula, update_values | update_JxW_values);
-
-    const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
-    const unsigned int n_q_points    = quadrature_formula.size();
-
-    Vector<full_number> cell_rhs(dofs_per_cell);
-
-    std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
-
-    for (const auto &cell : dof_handler.active_cell_iterators())
-      {
-        if (cell->is_locally_owned())
-          {
-            cell_rhs = 0;
-
-            fe_values.reinit(cell);
-
-            for (unsigned int q_index = 0; q_index < n_q_points; ++q_index)
-              for (unsigned int i = 0; i < dofs_per_cell; ++i)
-                cell_rhs(i) += (fe_values.shape_value(i, q_index) * 1.0 * fe_values.JxW(q_index));
-
-            cell->get_dof_indices(local_dof_indices);
-            level_constraints.back().distribute_local_to_global(cell_rhs,
-                                                                local_dof_indices,
-                                                                system_rhs_host);
-          }
-      }
-
-    system_rhs_host.compress(VectorOperation::add);
-    LinearAlgebra::ReadWriteVector<full_number> rw_vector(locally_owned_dofs);
-
-    rw_vector.import_elements(system_rhs_host, VectorOperation::insert);
-    system_rhs_device.import_elements(rw_vector, VectorOperation::insert);
+    fine_operator->compute_rhs(system_rhs_device);
+    Kokkos::fence();
 
     setup_time += time.wall_time();
 
