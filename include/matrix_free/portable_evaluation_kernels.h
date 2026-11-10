@@ -4,6 +4,7 @@
 #include <deal.II/matrix_free/evaluation_flags.h>
 #include <deal.II/matrix_free/portable_matrix_free.h>
 
+#include "base/portable_mapping_data_accessor.h"
 #include "matrix_free/portable_tensor_product_kernels.h"
 
 
@@ -24,9 +25,8 @@ namespace Custom
       const Number *shape_values;
       const Number *co_shape_gradients;
 
-      const Kokkos::View<Number *, MemorySpace::Default::kokkos_space>            &G_tensor;
-      const Kokkos::View<Number **[dim][dim], MemorySpace::Default::kokkos_space> &inv_jacobian;
-      const Kokkos::View<Number **, MemorySpace::Default::kokkos_space>           &JxW;
+      const Kokkos::View<Number *, MemorySpace::Default::kokkos_space> &G_tensor;
+      const Portable::MappingDataAccessor<dim, Number>                 &mapping_data;
 
       const Custom::Parallel::DoFIndicesView &dof_indices;
 

@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "base/portable_laplace_operator_base.h"
+#include "base/portable_mapping_data_accessor.h"
 #include "kernels/bk4_cuda_kernels.cuh"
 #include "kernels/bk4_cuda_plain_kernels.cuh"
 #include "kernels/bk4_kokkos_kernels.h"
@@ -358,7 +359,7 @@ namespace Portable
 
             BK4::Parallel::KokkosRHSAbstracted<dim, fe_degree, n_q_points_1d, n_components, number>(
               precomputed_data.shape_values,
-              precomputed_data.JxW,
+              MappingDataAccessor<dim, number>(precomputed_data),
               rhs_device,
               dof_indices_per_color[color],
               n_cells,
@@ -406,7 +407,7 @@ namespace Portable
                                                           n_components>(
               n_cells,
               precomputed_data.shape_values.data(),
-              precomputed_data.JxW,
+              MappingDataAccessor<dim, number>(precomputed_data),
               rhs.get_values(),
               dof_indices_per_color[color]);
           }
@@ -907,8 +908,7 @@ namespace Portable
             const auto        &precomputed_data = matrix_free.get_data(color);
             const unsigned int n_cells          = precomputed_data.n_cells;
 
-            const auto &inv_jacobian = precomputed_data.inv_jacobian;
-            const auto &JxW          = precomputed_data.JxW;
+            const MappingDataAccessor<dim, number> mapping_data(precomputed_data);
 
             G_tensors[color] = Kokkos::View<number *, MemorySpace::Default::kokkos_space>(
               Kokkos::view_alloc("G_tensor_color_" + std::to_string(color),
@@ -932,9 +932,9 @@ namespace Portable
                         {
                           number sum = 0;
                           for (int k = 0; k < dim; ++k)
-                            sum += inv_jacobian(q_point, cell_id, d1, k) *
-                                   inv_jacobian(q_point, cell_id, d2, k);
-                          components[idx] = JxW(q_point, cell_id) * sum;
+                            sum += mapping_data.inverse_jacobian(cell_id, q_point, d1, k) *
+                                   mapping_data.inverse_jacobian(cell_id, q_point, d2, k);
+                          components[idx] = mapping_data.JxW_value(cell_id, q_point) * sum;
                           ++idx;
                         }
 
