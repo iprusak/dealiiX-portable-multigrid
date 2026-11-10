@@ -813,11 +813,14 @@ namespace Portable
             Kokkos::fence();
           }
 
+        // When the mesh is coarse it is possible that some processors do
+        // not own any cells; see buffered_ghost_exchange for the ordering
+        if (buffered_ghost_exchange && colored_graph.size() > 2 && colored_graph[2].size() > 0)
+          do_color(2);
+
         dst.compress_start(0, VectorOperation::add);
 
-        // When the mesh is coarse it is possible that some processors do
-        // not own any cells
-        if (colored_graph.size() > 2 && colored_graph[2].size() > 0)
+        if (!buffered_ghost_exchange && colored_graph.size() > 2 && colored_graph[2].size() > 0)
           do_color(2);
 
         dst.compress_finish(VectorOperation::add);
@@ -910,11 +913,14 @@ namespace Portable
             Kokkos::fence();
           }
 
+        // When the mesh is coarse it is possible that some processors do
+        // not own any cells; see buffered_ghost_exchange for the ordering
+        if (buffered_ghost_exchange && colored_graph.size() > 2 && colored_graph[2].size() > 0)
+          do_color(2);
+
         dst.compress_start(0, VectorOperation::add);
 
-        // When the mesh is coarse it is possible that some processors do
-        // not own any cells
-        if (colored_graph.size() > 2 && colored_graph[2].size() > 0)
+        if (!buffered_ghost_exchange && colored_graph.size() > 2 && colored_graph[2].size() > 0)
           do_color(2);
 
         dst.compress_finish(VectorOperation::add);

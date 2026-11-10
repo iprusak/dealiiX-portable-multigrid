@@ -110,16 +110,6 @@ namespace Portable
     static constexpr unsigned int n_q_points   = Utilities::pow(n_q_points_1d, dim);
     static constexpr unsigned int symmetric_tensor_dim = (dim * (dim + 1)) / 2;
 
-    // Without device-aware MPI, deal.II (9.8 and later) stages the exchange
-    // of MemorySpace::Default vectors through a host buffer: compress_start()
-    // snapshots dst and compress_finish() writes the snapshot back, so no
-    // kernel may add to dst in between.
-#ifdef DEAL_II_MPI_WITH_DEVICE_SUPPORT
-    static constexpr bool buffered_ghost_exchange = false;
-#else
-    static constexpr bool buffered_ghost_exchange = true;
-#endif
-
     // "how many cells' worth of quadrature-point scratch fits in one CUDA
     // team's shared-memory budget" for the tensor-core kernel
     // (bk4_cuda_kernels.cuh), evaluated at compile time.

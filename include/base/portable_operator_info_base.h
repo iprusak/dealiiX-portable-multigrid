@@ -17,6 +17,17 @@ DEAL_II_NAMESPACE_OPEN
 
 namespace Portable
 {
+  // Without device-aware MPI, deal.II (9.8 and later) stages the exchange of
+  // MemorySpace::Default vectors through a host buffer: compress_start()
+  // snapshots the vector and compress_finish() writes the snapshot back, so
+  // no kernel may add to it in between. The 3-color overlap loops of the
+  // operators and transfers order their colors accordingly.
+#ifdef DEAL_II_MPI_WITH_DEVICE_SUPPORT
+  inline constexpr bool buffered_ghost_exchange = false;
+#else
+  inline constexpr bool buffered_ghost_exchange = true;
+#endif
+
   // The DoF layout of an operator, as the multigrid transfers see it: the
   // DoFHandler, the colored list of locally owned cells the operator loops
   // over, the partitioner its vectors use, and whether the cell loop is
