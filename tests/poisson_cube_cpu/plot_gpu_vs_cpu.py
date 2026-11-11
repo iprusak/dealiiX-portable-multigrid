@@ -11,6 +11,7 @@ import os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
 jobid = sys.argv[1]
 rdir = sys.argv[2] if len(sys.argv) > 2 else "."
@@ -53,23 +54,85 @@ with open(os.path.join(rdir, f"gpu_vs_cpu.{jobid}.csv"), "w") as f:
         for n, mv, mvs, cg in rows:
             f.write(f"{label},{n},{mv},{mvs},{cg},{n/mv:.4g},{n/mvs:.4g},{n/cg:.4g}\n")
 
-fig, axes = plt.subplots(1, 3, figsize=(18, 5.5), sharex=True)
-titles = ["matrix-vector product (fp64)", "smoother matrix-vector product", "CG with multigrid: full solve"]
-for ax, idx, title in zip(axes, (1, 2, 3), titles):
-    for label, legend, color, ls in RUNS:
-        rows = data.get(label)
-        if not rows:
-            continue
-        xs = [r[0] for r in rows]
-        ys = [r[0] / r[idx] for r in rows]
-        ax.loglog(xs, ys, marker="o", ms=3, color=color, ls=ls, lw=1.8, label=legend)
-    ax.set_title(title)
-    ax.set_xlabel("degrees of freedom")
-    ax.grid(True, which="both", alpha=0.3)
-axes[0].set_ylabel("throughput [DoF/s]")
-axes[2].legend(fontsize=7, loc="lower right", ncol=2)
-fig.suptitle(f"Poisson, Q4, 3D, 5+5 Chebyshev smoothing, GH200 node of JUPITER, deal.II dealii-neon (job {jobid})")
-fig.tight_layout()
-out = os.path.join(rdir, f"gpu_vs_cpu.{jobid}.png")
-fig.savefig(out, dpi=150)
-print("wrote", out)
+def units_of(label):  # number of GH200 superchips used: np<k> GPUs, or np<72k> cores
+    n = int(label.split(".np")[1])
+    return n // 72 if n >= 72 else n
+
+for norm, suffix, subtitle, yscale in [
+        (False, "", "absolute", "log"),
+        (True, ".per_superchip", "per GH200 superchip", "log"),
+        (False, ".semilog", "absolute", "linear"),
+        (True, ".per_superchip.semilog", "per GH200 superchip", "linear")]:
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6.5), sharex=True)
+    panels = [  # column index in rows, title, y scale factor, y unit
+        (1, "matrix-vector product (fp64)", 1e-9, "GDoF"),
+        (2, "smoother matrix-vector product", 1e-9, "GDoF"),
+        (3, "CG with multigrid: full solve", 1e-6, "MDoF"),
+    ]
+    for ax, (idx, title, scale, unit) in zip(axes, panels):
+        for label, legend, color, ls in RUNS:
+            rows = data.get(label)
+            if not rows:
+                continue
+            u = units_of(label) if norm else 1
+            xs = [r[0] / u for r in rows]
+            ys = [r[0] / r[idx] / u * scale for r in rows]
+            ax.plot(xs, ys, marker="o", ms=3, color=color, ls=ls, lw=1.8, label=legend)
+        ax.set_title(title)
+        ax.set_xlabel("DoFs / chip" if norm else "DoFs")
+        ax.set_ylabel(f"{unit} / [s x chip]" if norm else f"{unit} / s")
+        ax.set_xscale("log")
+        ax.set_xlim(left=5e3)  # drop the latency-dominated small sizes
+        ax.set_yscale(yscale)
+        if yscale == "log":
+            # plain decimal tick labels on the y axis: 0.01, 0.1, 1, 10, 100
+            ax.yaxis.set_major_locator(LogLocator(base=10, numticks=12))
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+            ax.yaxis.set_minor_formatter(NullFormatter())
+        else:
+            ax.set_ylim(bottom=0)
+        ax.grid(True, which="both", alpha=0.3)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=min(6, len(labels)), fontsize=10, frameon=False,
+               bbox_to_anchor=(0.5, 0.005))
+    fig.suptitle(f"Poisson, Q4, 3D, 5+5 Chebyshev smoothing, GH200 node of JUPITER, deal.II dealii-neon (job {jobid}), {subtitle}; chip = 1 H100 or 72 Grace cores")
+    fig.tight_layout(rect=(0, 0.07, 1, 1))  # leave room for the legend below the panels
+    out = os.path.join(rdir, f"gpu_vs_cpu.{jobid}{suffix}.png")
+    fig.savefig(out, dpi=150)
+    print("wrote", out)
+
+# latency figures: throughput against wall time per operation, each curve parametrized by size;
+# once log-log and once semilog (linear throughput from zero)
+for yscale, suffix in [("log", ".latency"), ("linear", ".latency.semilog")]:
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6.5))
+    panels = [(1, "matrix-vector product (fp64)", 1e-9, "GDoF"),
+              (2, "smoother matrix-vector product", 1e-9, "GDoF"),
+              (3, "CG with multigrid: full solve", 1e-6, "MDoF")]
+    for ax, (idx, title, scale, unit) in zip(axes, panels):
+        for label, legend, color, ls in RUNS:
+            rows = data.get(label)
+            if not rows:
+                continue
+            xs = [r[idx] * 1e3 for r in rows]
+            ys = [r[0] / r[idx] * scale for r in rows]
+            ax.plot(xs, ys, marker="o", ms=3, color=color, ls=ls, lw=1.8, label=legend)
+        ax.set_xscale("log")
+        ax.set_yscale(yscale)
+        ax.set_title(title)
+        ax.set_xlabel("time per operation [ms]")
+        ax.set_ylabel(f"{unit} / s")
+        axes_to_format = (ax.xaxis, ax.yaxis) if yscale == "log" else (ax.xaxis,)
+        for axis in axes_to_format:
+            axis.set_major_locator(LogLocator(base=10, numticks=12))
+            axis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+            axis.set_minor_formatter(NullFormatter())
+        if yscale == "linear":
+            ax.set_ylim(bottom=0)
+        ax.grid(True, which="both", alpha=0.3)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=min(6, len(labels)), fontsize=10, frameon=False, bbox_to_anchor=(0.5, 0.005))
+    fig.suptitle(f"Poisson, Q4, 3D, 5+5 Chebyshev smoothing, GH200 node of JUPITER, deal.II dealii-neon (job {jobid}): throughput against time per operation, points = problem sizes")
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    out = os.path.join(rdir, f"gpu_vs_cpu.{jobid}{suffix}.png")
+    fig.savefig(out, dpi=150)
+    print("wrote", out)
