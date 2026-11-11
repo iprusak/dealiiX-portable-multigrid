@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Parse the result files of run_gpu_vs_cpu.sh and plot throughput (DoF/s).
 
-usage: plot_gpu_vs_cpu.py <jobid> [results_dir]
-reads  <results_dir>/<label>.<jobid>.out for the labels below
-writes <results_dir>/gpu_vs_cpu.<jobid>.png and .csv
+usage: plot_gpu_vs_cpu.py <jobid> [results_dir] [override_jobid]
+reads  <results_dir>/<label>.<jobid>.out for the labels below; when an
+       override job id is given, a label whose file exists for that job id
+       is taken from there instead (e.g. socket-bound CPU reruns)
+writes <results_dir>/gpu_vs_cpu.<jobid>[+<override_jobid>].png and .csv
 """
 import re
 import sys
@@ -15,6 +17,8 @@ from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
 jobid = sys.argv[1]
 rdir = sys.argv[2] if len(sys.argv) > 2 else "."
+override = sys.argv[3] if len(sys.argv) > 3 else None
+tag = f"{jobid}+{override}" if override else jobid
 
 RUNS = [  # label, legend, color, linestyle
     ("gpu64.np1",   "GPU bk3: 1 H100 (fp64)",                "tab:red",    "-"),
@@ -35,6 +39,9 @@ LINE = re.compile(r"^Best timings for ndof =\s*(\d+)\s+mv\s+([0-9.e+-]+)\s+mv sm
 data = {}
 for label, *_ in RUNS:
     path = os.path.join(rdir, f"{label}.{jobid}.out")
+    if override and os.path.exists(os.path.join(rdir, f"{label}.{override}.out")):
+        path = os.path.join(rdir, f"{label}.{override}.out")
+        print(f"{label}: taken from job {override}")
     if not os.path.exists(path):
         print(f"missing: {path}")
         continue
@@ -48,7 +55,7 @@ for label, *_ in RUNS:
     data[label] = rows
     print(f"{label}: {len(rows)} sizes, largest {rows[-1][0] if rows else 0}")
 
-with open(os.path.join(rdir, f"gpu_vs_cpu.{jobid}.csv"), "w") as f:
+with open(os.path.join(rdir, f"gpu_vs_cpu.{tag}.csv"), "w") as f:
     f.write("run,ndofs,mv_s,mv_smooth_s,cg_mg_s,mv_dofs_per_s,smooth_dofs_per_s,cg_mg_dofs_per_s\n")
     for label, rows in data.items():
         for n, mv, mvs, cg in rows:
@@ -95,9 +102,9 @@ for norm, suffix, subtitle, yscale in [
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=min(6, len(labels)), fontsize=10, frameon=False,
                bbox_to_anchor=(0.5, 0.005))
-    fig.suptitle(f"Poisson, Q4, 3D, 5+5 Chebyshev smoothing, GH200 node of JUPITER, deal.II dealii-neon (job {jobid}), {subtitle}; chip = 1 H100 or 72 Grace cores")
+    fig.suptitle(f"Poisson, Q4, 3D, 5+5 Chebyshev smoothing, GH200 node of JUPITER, deal.II dealii-neon (job {tag}), {subtitle}; chip = 1 H100 or 72 Grace cores")
     fig.tight_layout(rect=(0, 0.07, 1, 1))  # leave room for the legend below the panels
-    out = os.path.join(rdir, f"gpu_vs_cpu.{jobid}{suffix}.png")
+    out = os.path.join(rdir, f"gpu_vs_cpu.{tag}{suffix}.png")
     fig.savefig(out, dpi=150)
     print("wrote", out)
 
@@ -131,8 +138,8 @@ for yscale, suffix in [("log", ".latency"), ("linear", ".latency.semilog")]:
         ax.grid(True, which="both", alpha=0.3)
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=min(6, len(labels)), fontsize=10, frameon=False, bbox_to_anchor=(0.5, 0.005))
-    fig.suptitle(f"Poisson, Q4, 3D, 5+5 Chebyshev smoothing, GH200 node of JUPITER, deal.II dealii-neon (job {jobid}): throughput against time per operation, points = problem sizes")
+    fig.suptitle(f"Poisson, Q4, 3D, 5+5 Chebyshev smoothing, GH200 node of JUPITER, deal.II dealii-neon (job {tag}): throughput against time per operation, points = problem sizes")
     fig.tight_layout(rect=(0, 0.07, 1, 1))
-    out = os.path.join(rdir, f"gpu_vs_cpu.{jobid}{suffix}.png")
+    out = os.path.join(rdir, f"gpu_vs_cpu.{tag}{suffix}.png")
     fig.savefig(out, dpi=150)
     print("wrote", out)
