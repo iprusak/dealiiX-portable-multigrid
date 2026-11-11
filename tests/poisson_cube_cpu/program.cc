@@ -31,6 +31,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <type_traits>
 
 #include "operators/cpu_laplace_operator.h"
 #include "portable_multigrid_solver.h"
@@ -54,8 +55,12 @@ namespace multigrid
   // We also select a mixed-precision approach as default. You can
   // independently change the number type for the outer iteration via
   // full_number and the number type for the multigrid v-cycle.
+#ifdef VCYCLE_DOUBLE
+  using vcycle_number = double;
+#else
   using vcycle_number = float;
-  using full_number   = double;
+#endif
+  using full_number = double;
 
 
 
@@ -938,6 +943,8 @@ main(int argc, char *argv[])
                   << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) << std::endl
                   << "Vectorization:                         "
                   << Utilities::System::get_current_vectorization_level() << std::endl
+                  << "V-cycle number type:                   "
+                  << (std::is_same_v<vcycle_number, double> ? "double" : "float") << std::endl
                   << "Polynomial degree:                     " << degree << std::endl
                   << "Minimum size:                          " << minsize << std::endl
                   << "Maximum size:                          " << maxsize << std::endl
