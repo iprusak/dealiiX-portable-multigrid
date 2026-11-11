@@ -143,3 +143,44 @@ for yscale, suffix in [("log", ".latency"), ("linear", ".latency.semilog")]:
     out = os.path.join(rdir, f"gpu_vs_cpu.{tag}{suffix}.png")
     fig.savefig(out, dpi=150)
     print("wrote", out)
+
+# node-level figure: the four full-node runs only (4 H100 vs 288 Grace cores), total DoFs
+NODE_RUNS = [
+    ("gpu64.np4",   "GPU node: 4 H100, fp64 V-cycle",          "tab:red",    "-"),
+    ("gpu32.np4",   "GPU node: 4 H100, fp32 V-cycle",          "tab:orange", "-"),
+    ("cpu64.np288", "CPU node: 288 Grace cores, fp64 V-cycle", "tab:blue",   "-"),
+    ("cpu32.np288", "CPU node: 288 Grace cores, fp32 V-cycle", "tab:green",  "-"),
+]
+for yscale, suffix in [("log", ".node"), ("linear", ".node.semilog")]:
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6.2))
+    panels = [(1, "matrix-vector product (fp64)", 1e-9, "GDoF"),
+              (2, "smoother matrix-vector product", 1e-9, "GDoF"),
+              (3, "CG with multigrid: full solve", 1e-6, "MDoF")]
+    for ax, (idx, title, scale, unit) in zip(axes, panels):
+        for label, legend, color, ls in NODE_RUNS:
+            rows = data.get(label)
+            if not rows:
+                continue
+            xs = [r[0] for r in rows]
+            ys = [r[0] / r[idx] * scale for r in rows]
+            ax.plot(xs, ys, marker="o", ms=4, color=color, ls=ls, lw=2.2, label=legend)
+        ax.set_xscale("log")
+        ax.set_yscale(yscale)
+        ax.set_xlim(left=5e3)
+        ax.set_title(title)
+        ax.set_xlabel("DoFs")
+        ax.set_ylabel(f"{unit} / s")
+        if yscale == "log":
+            ax.yaxis.set_major_locator(LogLocator(base=10, numticks=12))
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+            ax.yaxis.set_minor_formatter(NullFormatter())
+        else:
+            ax.set_ylim(bottom=0)
+        ax.grid(True, which="both", alpha=0.3)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=11, frameon=False, bbox_to_anchor=(0.5, 0.005))
+    fig.suptitle(f"Poisson, Q4, 3D, 5+5 Chebyshev smoothing, one GH200 node of JUPITER (4 H100 + 4 x 72 Grace cores), deal.II dealii-neon (job {tag})")
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    out = os.path.join(rdir, f"gpu_vs_cpu.{tag}{suffix}.png")
+    fig.savefig(out, dpi=150)
+    print("wrote", out)
