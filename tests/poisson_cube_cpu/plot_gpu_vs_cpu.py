@@ -166,7 +166,8 @@ for yscale, suffix in [("log", ".node"), ("linear", ".node.semilog")]:
             ax.plot(xs, ys, marker="o", ms=4, color=color, ls=ls, lw=2.2, label=legend)
         ax.set_xscale("log")
         ax.set_yscale(yscale)
-        ax.set_xlim(left=5e3)
+        if yscale == "linear":
+            ax.set_xlim(left=5e3)  # the log-log node figure keeps the full size range
         ax.set_title(title)
         ax.set_xlabel("DoFs")
         ax.set_ylabel(f"{unit} / s")
