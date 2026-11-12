@@ -20,7 +20,7 @@
 //                comm_world (default 8000), level 0 if there is none
 //                (switch_dofs = 0: all levels on the GPUs).
 // cpu_only_dofs: a cycle whose fine level has at most that many DoFs per rank
-//                runs on the CPUs only, on all ranks (default 32000, 0: never)
+//                runs on the CPUs only, on all ranks (default 50000, 0: never)
 // Both thresholds can be comma-separated lists: the cycles are then run once
 // per entry in the same program run (start-up is paid once). cpu_only_dofs
 // has one entry for all or as many as switch_dofs.
@@ -421,7 +421,7 @@ main(int argc, char **argv)
       const std::vector<types::global_dof_index> switch_dofs =
         parse_list(argc > 8 ? argv[8] : "8000");
       std::vector<types::global_dof_index> cpu_only_dofs =
-        parse_list(argc > 9 ? argv[9] : "32000");
+        parse_list(argc > 9 ? argv[9] : "50000");
       AssertThrow(degree >= 1 && degree <= 4, ExcMessage("degree has to be 1..4."));
       AssertThrow(n_pre_smooth == n_post_smooth,
                   ExcMessage("n_pre_smooth and n_post_smooth have to be equal."));
