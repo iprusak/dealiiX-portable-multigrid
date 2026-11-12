@@ -46,19 +46,27 @@ run() {
   echo "=============== k=$k: ./program $k $*"
   echo "placement:"
   srun $common bash -c 'echo "rank $SLURM_PROCID $(hostname) gpu=$CUDA_VISIBLE_DEVICES $(grep Cpus_allowed_list /proc/self/status)"' | sort -V
-  timeout 400 srun $common ./program $k "$@"
+  # start-up: the program prints the time from here to main() and its MPI + Kokkos
+  # initialization time
+  export HYBRID_LAUNCH_EPOCH=$(date +%s.%N)
+  local t0=$SECONDS
+  timeout 2400 srun $common ./program $k "$@"
+  echo "srun elapsed: $((SECONDS - t0)) s"
 }
 
-# args after k: degree minsize maxsize n_pre n_post mesh switch_dofs
+# args after k: degree minsize maxsize n_pre n_post mesh switch_dofs cpu_only_dofs
 # Q4, 24 cells/dir (912673 DoFs). Levels and their DoFs: 0..3 = Q1 h-levels (64, 343,
-# 2197, 15625), 4 = Q2 (117649), 5 = Q4 (fine, 912673). The switch level is the finest
-# level with at most switch_dofs DoFs per rank; here switch_dofs is set to select each
-# level in turn: 0 = full GPU hierarchy (regression), the fine level = CPU only.
+# 2197, 15625), 4 = Q2 (117649), 5 = Q4 (fine, 912673). One program run per k with
+# six pairs of thresholds (DoFs per rank): switch_dofs selects the levels 0..4 in
+# turn (0 = full GPU hierarchy, regression) with cpu_only_dofs = 0, the last pair
+# runs the cycle on the CPUs only.
 # 5 pre + 5 post smoothing steps (the October sweep, job 2320320, used 3 + 3).
 # k has to divide 72 (72/k cores per rank): 4k = 4 .. 288 ranks on the node.
 for k in 1 4 12 18 24 36 72; do
   ranks=$((4 * k))
-  for level_dofs in 0 343 2197 15625 117649 912673; do
-    run $k 4 900000 1000000 5 5 s $(((level_dofs + ranks - 1) / ranks))
+  switch_dofs=0
+  for level_dofs in 343 2197 15625 117649; do
+    switch_dofs=$switch_dofs,$(((level_dofs + ranks - 1) / ranks))
   done
+  run $k 4 900000 1000000 5 5 s $switch_dofs,0 0,0,0,0,0,1000000
 done

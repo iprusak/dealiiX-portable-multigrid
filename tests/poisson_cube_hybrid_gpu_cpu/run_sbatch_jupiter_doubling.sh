@@ -46,28 +46,35 @@ run() {
   echo "=============== k=$k: ./program $k $*"
   echo "placement:"
   srun $common bash -c 'echo "rank $SLURM_PROCID $(hostname) gpu=$CUDA_VISIBLE_DEVICES $(grep Cpus_allowed_list /proc/self/status)"' | sort -V
-  timeout 1500 srun $common ./program $k "$@"
+  # start-up: the program prints the time from here to main() and its MPI + Kokkos
+  # initialization time
+  export HYBRID_LAUNCH_EPOCH=$(date +%s.%N)
+  local t0=$SECONDS
+  timeout 6000 srun $common ./program $k "$@"
+  echo "srun elapsed: $((SECONDS - t0)) s"
 }
 
 # The usual doubling-mesh test: Q4, 5 pre + 5 post Chebyshev steps, cycles 12..20 of
-# poisson_cube_bk3's sequence (274625 .. 67M DoFs) in one run per k and switch_dofs.
+# poisson_cube_bk3's sequence (274625 .. 67M DoFs). One program run per k goes
+# through the cycles once per pair of thresholds, so start-up is paid once.
 # Compare with the GPU-only and CPU-only runs
 #   ./program 4 200000 70000000 5 5 d 0
-# args after k: degree minsize maxsize n_pre n_post mesh switch_dofs
+# args after k: degree minsize maxsize n_pre n_post mesh switch_dofs cpu_only_dofs
 #
-# The switch level of a cycle is its finest level with at most switch_dofs DoFs per
-# rank (4k ranks on the node): 0 = full GPU hierarchy (regression); cycles whose fine
-# level has at most that many run on the CPUs only. Yesterday's matvec crossover
-# (4 GPUs against 288 cores, job 2843214) is about 3500 DoFs per core.
+# Both thresholds are DoFs per rank (4k ranks on the node), comma-separated lists
+# of the same length. switch_dofs: the switch level is the finest level below the
+# fine one with at most that many (0 = all levels on the GPUs). cpu_only_dofs: a
+# cycle whose fine level has at most that many runs on the CPUs only (0 = never).
+# Default: all on GPUs; hybrid with 2000; hybrid with 8000; hybrid with 8000 and
+# CPU-only up to 150000 per rank, to find where CPU-only stops paying off (rounds
+# 1 and 2 only reached 30000).
 # k has to divide 72 (72/k cores per rank): 4k = 4 .. 288 ranks on the node.
-# Override the lists with K_LIST="..." SWITCH_DOFS="..." sbatch. All seven k do not fit
-# into one job; submit one job per k:
+# Override with K_LIST="..." SWITCH_DOFS="..." CPU_ONLY_DOFS="..." sbatch. One job per k:
 #   for k in 1 4 12 18 24 36 72; do K_LIST=$k sbatch --job-name=hybrid-dbl-k$k <this script>; done
 K_LIST=${K_LIST:-"1 4 12 18 24 36 72"}
-SWITCH_DOFS=${SWITCH_DOFS:-"0 2000 8000 32000"}
+SWITCH_DOFS=${SWITCH_DOFS:-"0,2000,8000,8000"}
+CPU_ONLY_DOFS=${CPU_ONLY_DOFS:-"0,0,0,150000"}
 
 for k in $K_LIST; do
-  for switch_dofs in $SWITCH_DOFS; do
-    run $k 4 200000 70000000 5 5 d $switch_dofs
-  done
+  run $k 4 200000 70000000 5 5 d $SWITCH_DOFS $CPU_ONLY_DOFS
 done

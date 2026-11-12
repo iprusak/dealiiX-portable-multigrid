@@ -6,19 +6,26 @@
 //
 //   mpirun -n <ranks> ./program ranks_per_gpu degree [min_size] [max_size]
 //                               [n_pre_smooth] [n_post_smooth] [mesh] [switch_dofs]
+//                               [cpu_only_dofs]
 //
-// As poisson_cube_bk3 with ranks_per_gpu in front and switch_dofs at the end:
+// As poisson_cube_bk3 with ranks_per_gpu in front and the two thresholds at the end:
 // ranks_per_gpu = k: one GPU rank + k-1 CPU-only ranks per GPU.
 // degree:        polynomial degree of the fine level, 1..4
 // min_size, max_size: the refinement cycles with that many DoFs are run
 // n_pre_smooth, n_post_smooth: Chebyshev degree of the smoother (default 3,
 //                both have to be equal)
 // mesh:          d (default): doubling mesh, s: cube meshes of poisson_cube_*
-// switch_dofs:   the switch level of a cycle is its finest level with at most
-//                that many DoFs per MPI rank of comm_world (default 8000),
-//                level 0 if there is none (switch_dofs = 0: all levels on the
-//                GPUs). If it is the fine level, the cycle runs on the CPUs
-//                only, on all ranks.
+// switch_dofs:   the switch level of a cycle is its finest level below the
+//                fine one with at most that many DoFs per MPI rank of
+//                comm_world (default 8000), level 0 if there is none
+//                (switch_dofs = 0: all levels on the GPUs).
+// cpu_only_dofs: a cycle whose fine level has at most that many DoFs per rank
+//                runs on the CPUs only, on all ranks (default 32000, 0: never)
+// Both thresholds can be comma-separated lists: the cycles are then run once
+// per entry in the same program run (start-up is paid once). cpu_only_dofs
+// has one entry for all or as many as switch_dofs.
+// HYBRID_LAUNCH_EPOCH=$(date +%s.%N) set before the launch: the time from
+// there to main() is printed next to the MPI + Kokkos initialization time.
 // Mixed precision as poisson_cube_bk3: V-cycle in float (both sides), outer CG
 // in double.
 // The tables at the end of each cycle are those of poisson_cube_bk3, with the
@@ -29,10 +36,13 @@
 #include <deal.II/base/utilities.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <sstream>
+#include <string>
 #include <tuple>
 #include <type_traits>
 #include <vector>
@@ -255,10 +265,17 @@ namespace hybrid
              const std::size_t             max_size,
              const unsigned int            n_smooth,
              const bool                    use_doubling_mesh,
-             const types::global_dof_index switch_dofs)
+             const types::global_dof_index switch_dofs,
+             const types::global_dof_index cpu_only_dofs)
   {
     const bool         is_root = Utilities::MPI::this_mpi_process(layout.comm_world) == 0;
     const unsigned int n_ranks = Utilities::MPI::n_mpi_processes(layout.comm_world);
+
+    // per-rank threshold -> global number of DoFs, without overflow
+    const auto global_limit = [n_ranks](const types::global_dof_index per_rank) {
+      const types::global_dof_index max = std::numeric_limits<types::global_dof_index>::max();
+      return per_rank > max / n_ranks ? max : per_rank * n_ranks;
+    };
 
     if (is_root)
       std::cout << "Testing FE_Q<" << dim << ">(" << fe_degree << ")" << std::endl;
@@ -309,8 +326,12 @@ namespace hybrid
             break;
           }
 
-        const unsigned int fine_level   = n_dofs.size() - 1;
-        const unsigned int switch_level = find_switch_level(n_dofs, switch_dofs * n_ranks);
+        // CPU-only if the fine level is small enough; else switch below it
+        const unsigned int fine_level = n_dofs.size() - 1;
+        const bool cpu_only = fine_level == 0 || n_dofs.back() <= global_limit(cpu_only_dofs);
+        const unsigned int switch_level =
+          cpu_only ? fine_level :
+                     std::min(find_switch_level(n_dofs, global_limit(switch_dofs)), fine_level - 1);
 
         if (is_root)
           {
@@ -353,9 +374,18 @@ main(int argc, char **argv)
 {
   using namespace dealii;
 
+  // seconds since the epoch, comparable with `date +%s.%N` of the job script
+  const auto epoch_now = []() {
+    return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch())
+      .count();
+  };
+  const double time_main = epoch_now();
+
   // starts MPI and Kokkos, 1 thread per rank; shuts both down at the end of
   // main, after `layout` below has freed its communicators
   Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
+
+  const double time_ready = epoch_now();
 
   try
     {
@@ -366,7 +396,8 @@ main(int argc, char **argv)
         {
           if (is_root)
             std::cout << "Usage: mpirun -n <ranks> ./program ranks_per_gpu degree [min_size] "
-                         "[max_size] [n_pre_smooth] [n_post_smooth] [mesh] [switch_dofs]"
+                         "[max_size] [n_pre_smooth] [n_post_smooth] [mesh] [switch_dofs] "
+                         "[cpu_only_dofs]"
                       << std::endl;
           return 1;
         }
@@ -379,28 +410,43 @@ main(int argc, char **argv)
       const unsigned int n_pre_smooth      = argc > 5 ? std::atoi(argv[5]) : 3;
       const unsigned int n_post_smooth     = argc > 6 ? std::atoi(argv[6]) : n_pre_smooth;
       const bool         use_doubling_mesh = argc > 7 ? argv[7][0] == 'd' : true;
-      const types::global_dof_index switch_dofs = argc > 8 ? std::atoll(argv[8]) : 8000;
+      // comma-separated list of thresholds
+      const auto parse_list = [](const std::string &text) {
+        std::vector<types::global_dof_index> values;
+        std::stringstream                    stream(text);
+        for (std::string entry; std::getline(stream, entry, ',');)
+          values.push_back(std::atoll(entry.c_str()));
+        return values;
+      };
+      const std::vector<types::global_dof_index> switch_dofs =
+        parse_list(argc > 8 ? argv[8] : "8000");
+      std::vector<types::global_dof_index> cpu_only_dofs =
+        parse_list(argc > 9 ? argv[9] : "32000");
       AssertThrow(degree >= 1 && degree <= 4, ExcMessage("degree has to be 1..4."));
       AssertThrow(n_pre_smooth == n_post_smooth,
                   ExcMessage("n_pre_smooth and n_post_smooth have to be equal."));
+      AssertThrow(!switch_dofs.empty() && !cpu_only_dofs.empty(),
+                  ExcMessage("Empty threshold list."));
+      if (cpu_only_dofs.size() == 1)
+        cpu_only_dofs.resize(switch_dofs.size(), cpu_only_dofs[0]);
+      AssertThrow(cpu_only_dofs.size() == switch_dofs.size(),
+                  ExcMessage("cpu_only_dofs needs one entry or as many as switch_dofs."));
 
-      if (is_root)
-        std::cout << "Settings of parameters:                " << std::endl
-                  << "Number of MPI ranks:                   "
-                  << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) << std::endl
-                  << "Ranks per GPU:                         " << ranks_per_gpu << std::endl
-                  << "V-cycle number type:                   "
-                  << (std::is_same_v<hybrid::GpuSide<3, 1>::vcycle_number, float> ? "float" :
-                                                                                     "double")
-                  << std::endl
-                  << "Polynomial degree:                     " << degree << std::endl
-                  << "Minimum size:                          " << min_size << std::endl
-                  << "Maximum size:                          " << max_size << std::endl
-                  << "Number of pre-smoother iters:          " << n_pre_smooth << std::endl
-                  << "Number of post-smoother iters:         " << n_post_smooth << std::endl
-                  << "Use doubling mesh:                     " << use_doubling_mesh << std::endl
-                  << "Switch level, DoFs per rank:           " << switch_dofs << std::endl
-                  << std::endl;
+      // start-up times, slowest rank
+      {
+        const char  *launch      = std::getenv("HYBRID_LAUNCH_EPOCH");
+        const double launch_time = Utilities::MPI::max(
+          launch != nullptr ? time_main - std::atof(launch) : 0., MPI_COMM_WORLD);
+        const double init_time = Utilities::MPI::max(time_ready - time_main, MPI_COMM_WORLD);
+        if (is_root)
+          {
+            std::cout << "Start-up, slowest rank: ";
+            if (launch != nullptr)
+              std::cout << "launch to main() " << launch_time << " s, ";
+            std::cout << "MPI + Kokkos initialization " << init_time << " s" << std::endl
+                      << std::endl;
+          }
+      }
 
       // build the communicators, print the table, verify
       hybrid::MPILayout layout(MPI_COMM_WORLD, ranks_per_gpu);
@@ -424,26 +470,69 @@ main(int argc, char **argv)
           std::cout << "MPI layout checks passed." << std::endl << std::endl;
         }
 
-      // degree known at run time, templates need it at compile time
+      // one pass over the cycles per pair of thresholds; degree known at run
+      // time, templates need it at compile time
       constexpr int dim = 3;
-      switch (degree)
+      for (unsigned int i = 0; i < switch_dofs.size(); ++i)
         {
-          case 1:
-            hybrid::run_cycles<dim, 1>(
-              layout, min_size, max_size, n_pre_smooth, use_doubling_mesh, switch_dofs);
-            break;
-          case 2:
-            hybrid::run_cycles<dim, 2>(
-              layout, min_size, max_size, n_pre_smooth, use_doubling_mesh, switch_dofs);
-            break;
-          case 3:
-            hybrid::run_cycles<dim, 3>(
-              layout, min_size, max_size, n_pre_smooth, use_doubling_mesh, switch_dofs);
-            break;
-          case 4:
-            hybrid::run_cycles<dim, 4>(
-              layout, min_size, max_size, n_pre_smooth, use_doubling_mesh, switch_dofs);
-            break;
+          if (is_root)
+            std::cout << "Settings of parameters:                " << std::endl
+                      << "Number of MPI ranks:                   "
+                      << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) << std::endl
+                      << "Ranks per GPU:                         " << ranks_per_gpu << std::endl
+                      << "V-cycle number type:                   "
+                      << (std::is_same_v<hybrid::GpuSide<3, 1>::vcycle_number, float> ? "float" :
+                                                                                         "double")
+                      << std::endl
+                      << "Polynomial degree:                     " << degree << std::endl
+                      << "Minimum size:                          " << min_size << std::endl
+                      << "Maximum size:                          " << max_size << std::endl
+                      << "Number of pre-smoother iters:          " << n_pre_smooth << std::endl
+                      << "Number of post-smoother iters:         " << n_post_smooth << std::endl
+                      << "Use doubling mesh:                     " << use_doubling_mesh << std::endl
+                      << "Switch level, DoFs per rank:           " << switch_dofs[i] << std::endl
+                      << "CPU-only cycle, DoFs per rank:         " << cpu_only_dofs[i] << std::endl
+                      << std::endl;
+
+          switch (degree)
+            {
+              case 1:
+                hybrid::run_cycles<dim, 1>(layout,
+                                           min_size,
+                                           max_size,
+                                           n_pre_smooth,
+                                           use_doubling_mesh,
+                                           switch_dofs[i],
+                                           cpu_only_dofs[i]);
+                break;
+              case 2:
+                hybrid::run_cycles<dim, 2>(layout,
+                                           min_size,
+                                           max_size,
+                                           n_pre_smooth,
+                                           use_doubling_mesh,
+                                           switch_dofs[i],
+                                           cpu_only_dofs[i]);
+                break;
+              case 3:
+                hybrid::run_cycles<dim, 3>(layout,
+                                           min_size,
+                                           max_size,
+                                           n_pre_smooth,
+                                           use_doubling_mesh,
+                                           switch_dofs[i],
+                                           cpu_only_dofs[i]);
+                break;
+              case 4:
+                hybrid::run_cycles<dim, 4>(layout,
+                                           min_size,
+                                           max_size,
+                                           n_pre_smooth,
+                                           use_doubling_mesh,
+                                           switch_dofs[i],
+                                           cpu_only_dofs[i]);
+                break;
+            }
         }
     }
   catch (std::exception &exc)

@@ -64,11 +64,13 @@ run() {
   echo "=============== k=$k: $bin $*"
   echo "placement:"
   srun $common bash -c 'echo "rank $SLURM_PROCID $(hostname) gpu=$CUDA_VISIBLE_DEVICES $(grep Cpus_allowed_list /proc/self/status)"' | sort -V
+  export HYBRID_LAUNCH_EPOCH=$(date +%s.%N)
   timeout 400 srun $common $bin "$@"
 }
 
 # poisson_cube_{bk3,cpu}: degree minsize maxsize n_pre n_post [s=non-doubling mesh] overlap
-# hybrid:                 k degree minsize maxsize n_pre n_post [s] switch_dofs (per rank)
+# hybrid:                 k degree minsize maxsize n_pre n_post [s] switch_dofs cpu_only_dofs
+#                         (both thresholds in DoFs per rank)
 # min/max pick the one cycle with 24 cells/dir (sizes 20 and 28 give 531441 and 1442897)
 MESH="900000 1000000 5 5 s"
 
@@ -78,9 +80,9 @@ run 1 $BK3_BIN 4 $MESH 0
 echo "######## 2. CPU only"
 run 1 $CPU_BIN 4 $MESH 0
 
-echo "######## 3. hybrid, switch_dofs=0 (full GPU hierarchy)"
-run 1 $HYBRID_BIN 1 4 $MESH 0
-run 4 $HYBRID_BIN 4 4 $MESH 0
+echo "######## 3. hybrid, switch_dofs=0, cpu_only_dofs=0 (full GPU hierarchy)"
+run 1 $HYBRID_BIN 1 4 $MESH 0 0
+run 4 $HYBRID_BIN 4 4 $MESH 0 0
 
-echo "######## 4. hybrid, switch_dofs above the fine level's DoFs per rank (CPU-only cycle)"
-run 4 $HYBRID_BIN 4 4 $MESH 1000000
+echo "######## 4. hybrid, cpu_only_dofs above the fine level's DoFs per rank (CPU-only cycle)"
+run 4 $HYBRID_BIN 4 4 $MESH 0 1000000

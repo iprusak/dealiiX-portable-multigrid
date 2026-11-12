@@ -3,7 +3,8 @@
 
   parse_hybrid.py out1.out [out2.out ...] > summary.csv
 
-A file is split into program runs at their "Settings of parameters:" blocks.
+A file is split into program runs at their "Settings of parameters:" blocks (one
+per pair of thresholds when the hybrid program is given lists).
 Hybrid runs (those with a "Ranks per GPU:" line) give one row per refinement
 cycle; kind = cpu_only for the cycles that ran on the CPUs only.
 poisson_cube_bk3 / poisson_cube_cpu runs (the "n_proc cells dofs mv_outer
@@ -28,6 +29,7 @@ DEGREE = re.compile(r"^Polynomial degree:\s+(\d+)", re.M)
 N_SMOOTH = re.compile(r"^Number of pre-smoother iters:\s+(\d+)", re.M)
 DOUBLING = re.compile(r"^Use doubling mesh:\s+(\d+)", re.M)
 SWITCH_DOFS = re.compile(r"^Switch level, DoFs per rank:\s+(\d+)", re.M)
+CPU_ONLY_DOFS = re.compile(r"^CPU-only cycle, DoFs per rank:\s+(\d+)", re.M)
 CYCLE = re.compile(r"^Cycle (\d+)\s*$", re.M)
 SWITCH_LEVEL = re.compile(r"^Switch level (\d+) of 0\.\.(\d+) with (\d+) DoFs \(", re.M)
 CG = re.compile(
@@ -47,7 +49,7 @@ BK3_ROW = re.compile(
 
 FIELDS = [
     "file", "kind", "k", "degree", "n_refine", "stretch", "cycle", "switch_level", "switch_level_dofs",
-    "switch_dofs_per_rank", "n_smooth", "dofs", "its",
+    "switch_dofs_per_rank", "cpu_only_dofs_per_rank", "n_smooth", "dofs", "its",
     "reduction", "cg_min", "cg_median", "gpu_prec", "cpu_prec", "cpu_part", "d2h", "h2d", "bcast",
     "gpu_levels", "cpu_levels",
 ]
@@ -67,6 +69,8 @@ def hybrid_rows(name, run):
     n_smooth = int(N_SMOOTH.search(run).group(1))
     doubling = DOUBLING.search(run).group(1) == "1"
     switch_dofs = int(SWITCH_DOFS.search(run).group(1))
+    cpu_only = CPU_ONLY_DOFS.search(run)  # missing before the second threshold existed
+    cpu_only_dofs = int(cpu_only.group(1)) if cpu_only else switch_dofs
 
     heads = list(CYCLE.finditer(run))
     for i, h in enumerate(heads):
@@ -96,7 +100,8 @@ def hybrid_rows(name, run):
             "file": name, "kind": "cpu_only" if switch == fine else "hybrid", "k": k, "degree": degree,
             "n_refine": cycle // 3 if doubling else "", "stretch": cycle % 3 if doubling else -1,
             "cycle": cycle, "switch_level": switch, "switch_level_dofs": level.group(3),
-            "switch_dofs_per_rank": switch_dofs, "n_smooth": n_smooth, "dofs": cg[0][0], "its": cg[0][1],
+            "switch_dofs_per_rank": switch_dofs, "cpu_only_dofs_per_rank": cpu_only_dofs,
+            "n_smooth": n_smooth, "dofs": cg[0][0], "its": cg[0][1],
             "reduction": cg[0][2], "cg_min": min(times), "cg_median": statistics.median(times),
             "gpu_prec": gp.group(3) if gp else "", "cpu_prec": cp.group(3) if cp else "",
             "cpu_part": sw.group(4) if sw else "", "d2h": sw.group(3) if sw else "",

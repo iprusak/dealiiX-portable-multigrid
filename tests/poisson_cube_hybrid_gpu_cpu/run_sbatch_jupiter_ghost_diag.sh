@@ -53,10 +53,10 @@ run() {
   local label=$1 k=$2; shift 2
   local common="--mpi=pspmix --ntasks=$((4 * k)) --cpus-per-task=$((72 / k)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
   echo
-  echo "=============== $label: k=$k $*: ./program $k 4 16000000 17000000 5 5 d 0"
+  echo "=============== $label: k=$k $*: ./program $k 4 16000000 17000000 5 5 d 0 0"
   env "$@" timeout 600 srun $common bash -c \
     'if [ "$SLURM_PROCID" = 0 ]; then export UCX_PROTO_INFO=y; fi; exec "$@"' bash \
-    ./program $k 4 16000000 17000000 5 5 d 0 2>&1 | tee $OUT/$label.out
+    ./program $k 4 16000000 17000000 5 5 d 0 0 2>&1 | tee $OUT/$label.out
 }
 
 echo "######## A. where is the step"
