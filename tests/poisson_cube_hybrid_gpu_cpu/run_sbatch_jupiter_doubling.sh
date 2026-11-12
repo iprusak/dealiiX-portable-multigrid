@@ -41,7 +41,7 @@ echo "SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"
 run() {
   local k=$1; shift
   if [ $((72 % k)) -ne 0 ]; then echo "k=$k does not divide the 72 cores of a Grace, skipped"; return; fi
-  local common="--mpi=pspmix --ntasks=$((4 * k)) --cpus-per-task=$((72 / k)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
+  local common="--mpi=pspmix --nodes=$NODES --ntasks=$((4 * k * NODES)) --ntasks-per-node=$((4 * k)) --cpus-per-task=$((72 / k)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
   echo
   echo "=============== k=$k: ./program $k $*"
   echo "placement:"
@@ -75,6 +75,11 @@ K_LIST=${K_LIST:-"1 4 12 18 24 36 72"}
 SWITCH_DOFS=${SWITCH_DOFS:-"0,2000,8000,8000"}
 CPU_ONLY_DOFS=${CPU_ONLY_DOFS:-"0,0,0,150000"}
 
+# Several nodes: sbatch --nodes=<N> <this script>. Every run then uses all N nodes,
+# with 4k ranks on each (k per Grace and GPU).
+NODES=${SLURM_JOB_NUM_NODES:-1}
+# The size range grows with the node count: 2 nodes run the cycles 13..21, each
+# with the DoFs per rank of the cycle before it on 1 node (weak scaling).
 for k in $K_LIST; do
-  run $k 4 200000 70000000 5 5 d $SWITCH_DOFS $CPU_ONLY_DOFS
+  run $k 4 $((200000 * NODES)) $((70000000 * NODES)) 5 5 d $SWITCH_DOFS $CPU_ONLY_DOFS
 done

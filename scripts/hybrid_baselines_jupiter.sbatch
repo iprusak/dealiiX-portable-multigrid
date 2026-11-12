@@ -7,14 +7,16 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --threads-per-core=1
 #SBATCH --gres=gpu:4
-#SBATCH --time=00:20:00
+#SBATCH --time=00:40:00
 #SBATCH --output=hybrid-base-%j.out
 
-# Three small checks before any big hybrid run, all on the same mesh:
+# Small checks before any big hybrid run, all on the same mesh (ranks per node):
 #   1. GPU only    (poisson_cube_bk3)           4 ranks, 1 per GPU
 #   2. CPU only    (poisson_cube_cpu)           4 ranks, 1 per Grace
 #   3. hybrid regression (all levels on GPUs)   4 ranks (k=1) and 16 ranks (k=4)
 #   4. hybrid, CPU-only cycle                   16 ranks (k=4)
+# In run 1, rank 0 prints UCX's protocol tables: with several nodes the "inter-node"
+# table for messages from cuda memory shows how GPU buffers travel between nodes.
 # Mesh: 3x3x3 coarse cells, 3 refinements = 24 cells/dir, Q4 -> 97^3 = 912673 DoFs.
 # 5 pre + 5 post Chebyshev smoothing steps everywhere. Mixed precision only: float
 # V-cycle under double CG in all three programs (poisson_cube_cpu built without
@@ -28,6 +30,10 @@ BUILD=${BUILD:-build-neon}
 BK3_BIN=$REPO/poisson_cube_bk3/$BUILD/program
 CPU_BIN=$REPO/poisson_cube_cpu/$BUILD/program
 HYBRID_BIN=$REPO/poisson_cube_hybrid_gpu_cpu/$BUILD/program
+
+# Several nodes: sbatch --nodes=<N> <this script>. Every run then uses all N nodes,
+# with 4k ranks on each (k per Grace and GPU).
+NODES=${SLURM_JOB_NUM_NODES:-1}
 
 module --force purge
 module load Stages/2026 nvidia-compilers OpenMPI FlexiBLAS
@@ -59,13 +65,15 @@ echo "SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"
 # cores of one Grace only and ranks were left unpinned (~50 ms MPI latency).
 run() {
   local k=$1 bin=$2; shift 2
-  local common="--mpi=pspmix --ntasks=$((4 * k)) --cpus-per-task=$((72 / k)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
+  local common="--mpi=pspmix --nodes=$NODES --ntasks=$((4 * k * NODES)) --ntasks-per-node=$((4 * k)) --cpus-per-task=$((72 / k)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
   echo
   echo "=============== k=$k: $bin $*"
   echo "placement:"
   srun $common bash -c 'echo "rank $SLURM_PROCID $(hostname) gpu=$CUDA_VISIBLE_DEVICES $(grep Cpus_allowed_list /proc/self/status)"' | sort -V
   export HYBRID_LAUNCH_EPOCH=$(date +%s.%N)
-  timeout 400 srun $common $bin "$@"
+  timeout 400 srun $common bash -c \
+    'if [ "$SLURM_PROCID" = 0 ] && [ -n "$PROTO_INFO" ]; then export UCX_PROTO_INFO=y; fi; exec "$@"' bash \
+    $bin "$@"
 }
 
 # poisson_cube_{bk3,cpu}: degree minsize maxsize n_pre n_post [s=non-doubling mesh] overlap
@@ -75,7 +83,7 @@ run() {
 MESH="900000 1000000 5 5 s"
 
 echo "######## 1. GPU only"
-run 1 $BK3_BIN 4 $MESH 0
+PROTO_INFO=1 run 1 $BK3_BIN 4 $MESH 0
 
 echo "######## 2. CPU only"
 run 1 $CPU_BIN 4 $MESH 0
