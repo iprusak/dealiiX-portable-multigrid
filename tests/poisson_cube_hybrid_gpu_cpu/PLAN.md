@@ -8,8 +8,13 @@ Code: `tests/poisson_cube_hybrid_gpu_cpu/`, branch `cpu-tests`, last commit `b1f
 Design D2: k ranks per GPU (1 GPU rank + k-1 CPU-only). GPU ranks run levels `s..M`, all ranks run the CPU
 V-cycle on levels `0..s` (`s` = `switch_level`, level `s` exists on both sides). Permutation P moves level `s`.
 
-CLI: `./program k degree n_refine switch_level n_subdivisions [n_smooth=3] [stretch=-1]`
-(`stretch` 0/1/2 = bk3 doubling mesh, cycle = 3*n_refine + stretch).
+CLI (since 2026-11-12): `./program k degree min_size max_size n_pre n_post mesh switch_dofs`, the arguments of
+`poisson_cube_bk3` with `k` in front and `switch_dofs` at the end. The program loops over the refinement cycles
+like bk3 and prints bk3's tables after each. Per cycle the switch level is the finest level with at most
+`switch_dofs` DoFs per MPI rank of comm_world (0 = all levels on the GPUs); if that is the fine level, the
+cycle runs on the CPUs only.
+The results below were obtained with the old CLI `k degree n_refine switch_level n_subdivisions [n_smooth]
+[stretch]` (one mesh per run, explicit switch level).
 
 Verified on JUPITER (1 node, 4 GH200, `dealii-mg-transfer`, CPU side scalar = no NEON):
 

@@ -4,21 +4,25 @@
 // solve on the switch level is one V-cycle on the CPU levels; the CPU-only
 // ranks join it through the command loop.
 //
-//   mpirun -n <ranks> ./program ranks_per_gpu degree [n_refine] [switch_level]
-//                               [n_subdivisions] [n_smooth] [stretch]
+//   mpirun -n <ranks> ./program ranks_per_gpu degree [min_size] [max_size]
+//                               [n_pre_smooth] [n_post_smooth] [mesh] [switch_dofs]
 //
+// As poisson_cube_bk3 with ranks_per_gpu in front and switch_dofs at the end:
 // ranks_per_gpu = k: one GPU rank + k-1 CPU-only ranks per GPU.
 // degree:        polynomial degree of the fine level, 1..4
-// n_refine:      refinements of the coarse grid for the fine mesh (default 2)
-// switch_level:  finest CPU level, index in the ph-hierarchy: 0..n_refine are
-//                the Q1 h-levels, then the p-levels of the fine mesh; at most
-//                one below the fine level (default n_refine - 1)
-// n_subdivisions: coarse grid n x n x n cells (default 3); the fine mesh is
-//                poisson_cube_bk3's non-doubling mesh of size n * 2^n_refine
-// n_smooth:      Chebyshev degree of the pre- and post-smoother (default 3)
-// stretch:       -1 (default): the n_subdivisions cube above. 0, 1, 2: the
-//                doubling mesh of poisson_cube_*, cycle = 3 * n_refine + stretch
-//                (n_subdivisions is ignored)
+// min_size, max_size: the refinement cycles with that many DoFs are run
+// n_pre_smooth, n_post_smooth: Chebyshev degree of the smoother (default 3,
+//                both have to be equal)
+// mesh:          d (default): doubling mesh, s: cube meshes of poisson_cube_*
+// switch_dofs:   the switch level of a cycle is its finest level with at most
+//                that many DoFs per MPI rank of comm_world (default 8000),
+//                level 0 if there is none (switch_dofs = 0: all levels on the
+//                GPUs). If it is the fine level, the cycle runs on the CPUs
+//                only, on all ranks.
+// Mixed precision as poisson_cube_bk3: V-cycle in float (both sides), outer CG
+// in double.
+// The tables at the end of each cycle are those of poisson_cube_bk3, with the
+// switch level and its number of DoFs as two more columns.
 // Without a GPU, HYBRID_SIMULATED_RANKS_PER_NODE=<n> mimics nodes of n ranks.
 
 #include <deal.II/base/mpi.h>
@@ -27,9 +31,13 @@
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
+#include <tuple>
+#include <type_traits>
 #include <vector>
 
+#include "hybrid_benchmark.h"
 #include "hybrid_coarse_solver.h"
 #include "hybrid_cpu_side.h"
 #include "hybrid_gpu_side.h"
@@ -80,9 +88,9 @@ namespace hybrid
 
   // Driver on the GPU ranks: set up the GPU levels switch_level.. and the
   // CPU levels 0..switch_level (with P from the GPU side's switch level),
-  // then solve with CG on the fine level.
+  // solve with CG on the fine level, then time the levels of both sides.
   template <int dim, int fe_degree, typename CpuSideType>
-  void
+  CycleResult
   run_driver(const MPILayout          &layout,
              GpuSide<dim, fe_degree> &gpu_side,
              CpuSideType             &cpu_side,
@@ -100,24 +108,68 @@ namespace hybrid
 
     // every V-cycle of the CG solve runs one coarse solve on all ranks;
     // timers of all parts are reset per solve, printed for the last one
+    CycleResult result;
+    result.time_cg = 1e10;
     for (unsigned int i = 0; i < 10; ++i)
       {
         coarse_solver.reset_times();
         cpu_side.reset_times();
-        gpu_side.solve();
+        result.cg      = gpu_side.solve();
+        result.time_cg = std::min(result.time_cg, gpu_side.last_solve_time());
       }
     gpu_side.print_level_times();
     cpu_side.print_times();
     coarse_solver.print_times(std::cout);
 
+    // levels above the switch level on the GPUs, the others on the CPUs
+    const unsigned int n_calls = n_calls_per_batch(gpu_side.n_fine_dofs());
+    std::tie(result.best_mv, result.best_mv_smooth) = gpu_side.benchmark_matvec(n_calls);
+    result.levels                                   = gpu_side.benchmark_levels(n_calls);
+
+    send_command(layout, Command::benchmark_levels, n_calls);
+    const std::vector<LevelTimes> cpu_levels = cpu_side.benchmark_levels(n_calls);
+    std::copy(cpu_levels.begin(), cpu_levels.end(), result.levels.begin());
+
     send_command(layout, Command::stop);
+    return result;
+  }
+
+
+
+  // Driver on the GPU ranks of a CPU-only cycle: all levels and the CG solve
+  // on comm_world.
+  template <typename CpuSideType>
+  CycleResult
+  run_cpu_only_driver(const MPILayout &layout, CpuSideType &cpu_side, const unsigned int fine_level)
+  {
+    send_command(layout, Command::setup_cpu_only, fine_level);
+    cpu_side.setup(fine_level, true);
+
+    CycleResult result;
+    result.time_cg = 1e10;
+    for (unsigned int i = 0; i < 10; ++i)
+      {
+        send_command(layout, Command::solve_cg);
+        result.cg      = cpu_side.solve();
+        result.time_cg = std::min(result.time_cg, cpu_side.last_solve_time());
+      }
+    cpu_side.print_level_times();
+
+    const unsigned int n_calls = n_calls_per_batch(cpu_side.n_top_dofs());
+    send_command(layout, Command::benchmark_matvec, n_calls);
+    std::tie(result.best_mv, result.best_mv_smooth) = cpu_side.benchmark_matvec(n_calls);
+    send_command(layout, Command::benchmark_levels, n_calls);
+    result.levels = cpu_side.benchmark_levels(n_calls);
+
+    send_command(layout, Command::stop);
+    return result;
   }
 
 
 
   // cpu_degree: degree of the switch level, the top CPU level
   template <int dim, int fe_degree, int cpu_degree>
-  void
+  CycleResult
   run_hybrid(const MPILayout   &layout,
              const unsigned int n_refine,
              const unsigned int switch_level,
@@ -134,16 +186,37 @@ namespace hybrid
     // commands.
     CpuSide<dim, cpu_degree> cpu_side(layout, coarse_grid, n_smooth, n_refine, fe_degree);
     if (layout.is_gpu_rank)
-      run_driver(layout, *gpu_side, cpu_side, n_refine, switch_level);
-    else
-      run_service_loop(layout, cpu_side);
+      return run_driver(layout, *gpu_side, cpu_side, n_refine, switch_level);
+
+    run_service_loop(layout, cpu_side);
+    return {};
   }
 
 
 
-  // dispatches the degree of the switch level (known at run time)
+  // all levels on the CPUs
   template <int dim, int fe_degree>
-  void
+  CycleResult
+  run_cpu_only(const MPILayout   &layout,
+               const unsigned int n_refine,
+               const unsigned int fine_level,
+               const CoarseGrid  &coarse_grid,
+               const unsigned int n_smooth)
+  {
+    CpuSide<dim, fe_degree> cpu_side(layout, coarse_grid, n_smooth, n_refine, fe_degree);
+    if (layout.is_gpu_rank)
+      return run_cpu_only_driver(layout, cpu_side, fine_level);
+
+    run_service_loop(layout, cpu_side);
+    return {};
+  }
+
+
+
+  // One cycle. Dispatches the degree of the switch level (known at run
+  // time); switch_level = fine level: CPU-only cycle.
+  template <int dim, int fe_degree>
+  CycleResult
   run(const MPILayout   &layout,
       const unsigned int n_refine,
       const unsigned int switch_level,
@@ -151,16 +224,124 @@ namespace hybrid
       const unsigned int n_smooth)
   {
     const std::vector<unsigned int> degrees = ph_level_degrees(n_refine + 1, fe_degree);
-    AssertThrow(switch_level + 1 < degrees.size(),
-                ExcMessage("The switch level has to be below the fine level."));
+    AssertThrow(switch_level < degrees.size(),
+                ExcMessage("The switch level is above the fine level."));
+
+    if (switch_level + 1 == degrees.size())
+      return run_cpu_only<dim, fe_degree>(layout, n_refine, switch_level, coarse_grid, n_smooth);
 
     // below Q4 the p-levels are 4 -> 2 -> 1, 3 -> 1, 2 -> 1
     if (degrees[switch_level] == 1)
-      run_hybrid<dim, fe_degree, 1>(layout, n_refine, switch_level, coarse_grid, n_smooth);
-    else if constexpr (fe_degree > 2)
+      return run_hybrid<dim, fe_degree, 1>(layout, n_refine, switch_level, coarse_grid, n_smooth);
+
+    if constexpr (fe_degree > 2)
       {
         AssertThrow(degrees[switch_level] == 2, ExcNotImplemented());
-        run_hybrid<dim, fe_degree, 2>(layout, n_refine, switch_level, coarse_grid, n_smooth);
+        return run_hybrid<dim, fe_degree, 2>(
+          layout, n_refine, switch_level, coarse_grid, n_smooth);
+      }
+
+    AssertThrow(false, ExcInternalError());
+    return {};
+  }
+
+
+
+  // The refinement cycles of poisson_cube_bk3 with min_size..max_size DoFs.
+  template <int dim, int fe_degree>
+  void
+  run_cycles(const MPILayout              &layout,
+             const std::size_t             min_size,
+             const std::size_t             max_size,
+             const unsigned int            n_smooth,
+             const bool                    use_doubling_mesh,
+             const types::global_dof_index switch_dofs)
+  {
+    const bool         is_root = Utilities::MPI::this_mpi_process(layout.comm_world) == 0;
+    const unsigned int n_ranks = Utilities::MPI::n_mpi_processes(layout.comm_world);
+
+    if (is_root)
+      std::cout << "Testing FE_Q<" << dim << ">(" << fe_degree << ")" << std::endl;
+
+    const unsigned int sizes[] = {1,   2,   3,   4,   5,   6,   7,   8,   10,  12,   14,   16,  20,
+                                  24,  28,  32,  40,  48,  56,  64,  80,  96,  112,  128,  160, 192,
+                                  224, 256, 320, 384, 448, 512, 640, 768, 896, 1024, 1280, 1536};
+
+    CycleTables tables;
+
+    for (unsigned int cycle = 0; cycle < sizeof(sizes) / sizeof(unsigned int); ++cycle)
+      {
+        if (is_root)
+          std::cout << "Cycle " << cycle << std::endl;
+
+        // doubling mesh: cycle = 3 * n_refine + stretch; else the coarse grid
+        // has the odd factor of sizes[cycle] cells per direction
+        unsigned int n_refine = 0;
+        CoarseGrid   coarse_grid;
+        if (use_doubling_mesh)
+          {
+            n_refine    = cycle / 3;
+            coarse_grid = CoarseGrid{1, static_cast<int>(cycle % 3)};
+          }
+        else
+          {
+            unsigned int n_subdivisions = sizes[cycle];
+            while (n_subdivisions > 1 && n_subdivisions % 2 == 0)
+              {
+                ++n_refine;
+                n_subdivisions /= 2;
+              }
+            coarse_grid = CoarseGrid{n_subdivisions, -1};
+          }
+
+        const std::vector<types::global_dof_index> n_dofs =
+          ph_level_n_dofs<dim>(coarse_grid, n_refine, fe_degree);
+
+        if (n_dofs.back() < min_size)
+          continue;
+
+        if (n_dofs.back() > max_size)
+          {
+            if (is_root)
+              std::cout << "Projected size " << n_dofs.back()
+                        << " higher than max size, terminating." << std::endl
+                        << std::endl;
+            break;
+          }
+
+        const unsigned int fine_level   = n_dofs.size() - 1;
+        const unsigned int switch_level = find_switch_level(n_dofs, switch_dofs * n_ranks);
+
+        if (is_root)
+          {
+            std::cout << "Number of degrees of freedom: " << n_dofs.back() << std::endl
+                      << "Switch level " << switch_level << " of 0.." << fine_level << " with "
+                      << n_dofs[switch_level] << " DoFs (" << n_dofs[switch_level] / n_ranks
+                      << " per rank): ";
+            if (switch_level == fine_level)
+              std::cout << "CPU-only cycle" << std::endl;
+            else
+              std::cout << "levels 0.." << switch_level << " on the CPUs, " << switch_level + 1
+                        << ".." << fine_level << " on the GPUs" << std::endl;
+          }
+
+        const CycleResult result =
+          run<dim, fe_degree>(layout, n_refine, switch_level, coarse_grid, n_smooth);
+
+        if (is_root)
+          {
+            types::global_cell_index n_cells = 1;
+            for (unsigned int d = 0; d < dim; ++d)
+              n_cells *= types::global_cell_index(n_coarse_cells(coarse_grid, d)) << n_refine;
+
+            std::cout << std::endl;
+            tables.add_cycle(n_ranks,
+                             n_cells,
+                             switch_level,
+                             result,
+                             std::cout);
+            tables.print(std::cout);
+          }
       }
   }
 } // namespace hybrid
@@ -184,21 +365,42 @@ main(int argc, char **argv)
       if (argc < 3)
         {
           if (is_root)
-            std::cout << "Usage: mpirun -n <ranks> ./program ranks_per_gpu degree [n_refine] "
-                         "[switch_level] [n_subdivisions] [n_smooth] [stretch]"
+            std::cout << "Usage: mpirun -n <ranks> ./program ranks_per_gpu degree [min_size] "
+                         "[max_size] [n_pre_smooth] [n_post_smooth] [mesh] [switch_dofs]"
                       << std::endl;
           return 1;
         }
 
       const unsigned int ranks_per_gpu = std::atoi(argv[1]);
       const unsigned int degree        = std::atoi(argv[2]);
-      const unsigned int n_refine      = argc > 3 ? std::atoi(argv[3]) : 2;
-      const unsigned int switch_level   = argc > 4 ? std::atoi(argv[4]) : n_refine - 1;
-      const unsigned int n_subdivisions = argc > 5 ? std::atoi(argv[5]) : 3;
-      const unsigned int n_smooth       = argc > 6 ? std::atoi(argv[6]) : 3;
-      const int          stretch        = argc > 7 ? std::atoi(argv[7]) : -1;
-      const hybrid::CoarseGrid coarse_grid{n_subdivisions, stretch};
+      const std::size_t  min_size      = argc > 3 ? std::atoll(argv[3]) : 1;
+      const std::size_t  max_size =
+        argc > 4 ? std::atoll(argv[4]) : std::numeric_limits<std::size_t>::max();
+      const unsigned int n_pre_smooth      = argc > 5 ? std::atoi(argv[5]) : 3;
+      const unsigned int n_post_smooth     = argc > 6 ? std::atoi(argv[6]) : n_pre_smooth;
+      const bool         use_doubling_mesh = argc > 7 ? argv[7][0] == 'd' : true;
+      const types::global_dof_index switch_dofs = argc > 8 ? std::atoll(argv[8]) : 8000;
       AssertThrow(degree >= 1 && degree <= 4, ExcMessage("degree has to be 1..4."));
+      AssertThrow(n_pre_smooth == n_post_smooth,
+                  ExcMessage("n_pre_smooth and n_post_smooth have to be equal."));
+
+      if (is_root)
+        std::cout << "Settings of parameters:                " << std::endl
+                  << "Number of MPI ranks:                   "
+                  << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) << std::endl
+                  << "Ranks per GPU:                         " << ranks_per_gpu << std::endl
+                  << "V-cycle number type:                   "
+                  << (std::is_same_v<hybrid::GpuSide<3, 1>::vcycle_number, float> ? "float" :
+                                                                                     "double")
+                  << std::endl
+                  << "Polynomial degree:                     " << degree << std::endl
+                  << "Minimum size:                          " << min_size << std::endl
+                  << "Maximum size:                          " << max_size << std::endl
+                  << "Number of pre-smoother iters:          " << n_pre_smooth << std::endl
+                  << "Number of post-smoother iters:         " << n_post_smooth << std::endl
+                  << "Use doubling mesh:                     " << use_doubling_mesh << std::endl
+                  << "Switch level, DoFs per rank:           " << switch_dofs << std::endl
+                  << std::endl;
 
       // build the communicators, print the table, verify
       hybrid::MPILayout layout(MPI_COMM_WORLD, ranks_per_gpu);
@@ -227,16 +429,20 @@ main(int argc, char **argv)
       switch (degree)
         {
           case 1:
-            hybrid::run<dim, 1>(layout, n_refine, switch_level, coarse_grid, n_smooth);
+            hybrid::run_cycles<dim, 1>(
+              layout, min_size, max_size, n_pre_smooth, use_doubling_mesh, switch_dofs);
             break;
           case 2:
-            hybrid::run<dim, 2>(layout, n_refine, switch_level, coarse_grid, n_smooth);
+            hybrid::run_cycles<dim, 2>(
+              layout, min_size, max_size, n_pre_smooth, use_doubling_mesh, switch_dofs);
             break;
           case 3:
-            hybrid::run<dim, 3>(layout, n_refine, switch_level, coarse_grid, n_smooth);
+            hybrid::run_cycles<dim, 3>(
+              layout, min_size, max_size, n_pre_smooth, use_doubling_mesh, switch_dofs);
             break;
           case 4:
-            hybrid::run<dim, 4>(layout, n_refine, switch_level, coarse_grid, n_smooth);
+            hybrid::run_cycles<dim, 4>(
+              layout, min_size, max_size, n_pre_smooth, use_doubling_mesh, switch_dofs);
             break;
         }
     }

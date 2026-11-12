@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --threads-per-core=1
 #SBATCH --gres=gpu:4
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=hybrid-%j.out
 
 module --force purge
@@ -35,6 +35,7 @@ echo "SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"
 # cores of one Grace only and ranks were left unpinned (~50 ms MPI latency).
 run() {
   local k=$1; shift
+  if [ $((72 % k)) -ne 0 ]; then echo "k=$k does not divide the 72 cores of a Grace, skipped"; return; fi
   local common="--mpi=pspmix --ntasks=$((4 * k)) --cpus-per-task=$((72 / k)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
   echo
   echo "=============== k=$k: ./program $k $*"
@@ -43,12 +44,16 @@ run() {
   timeout 400 srun $common ./program $k "$@"
 }
 
-# args after k: degree n_refine switch_level n_subdivisions n_smooth
-# Q4, 24 cells/dir (912673 DoFs). Levels: 0..3 = Q1 h-levels, 4 = Q2, 5 = Q4 (fine);
-# switch_level = finest level on the CPUs, 0 = full GPU hierarchy (regression).
+# args after k: degree minsize maxsize n_pre n_post mesh switch_dofs
+# Q4, 24 cells/dir (912673 DoFs). Levels and their DoFs: 0..3 = Q1 h-levels (64, 343,
+# 2197, 15625), 4 = Q2 (117649), 5 = Q4 (fine, 912673). The switch level is the finest
+# level with at most switch_dofs DoFs per rank; here switch_dofs is set to select each
+# level in turn: 0 = full GPU hierarchy (regression), the fine level = CPU only.
 # 5 pre + 5 post smoothing steps (the October sweep, job 2320320, used 3 + 3).
-for k in 1 4 18; do
-  for s in 0 1 2 3 4; do
-    run $k 4 3 $s 3 5
+# k has to divide 72 (72/k cores per rank): 4k = 4 .. 288 ranks on the node.
+for k in 1 4 12 18 24 36 72; do
+  ranks=$((4 * k))
+  for level_dofs in 0 343 2197 15625 117649 912673; do
+    run $k 4 900000 1000000 5 5 s $(((level_dofs + ranks - 1) / ranks))
   done
 done

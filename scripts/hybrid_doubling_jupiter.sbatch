@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --threads-per-core=1
 #SBATCH --gres=gpu:4
-#SBATCH --time=02:00:00
+#SBATCH --time=03:00:00
 #SBATCH --output=hybrid-dbl-%j.out
 
 module --force purge
@@ -33,51 +33,36 @@ echo "SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"
 # different Graces and all GPU ranks on GPU 0 (k=4 baselines run: 36x
 # slower). --ntasks-per-socket must NOT be combined with it: the step then got
 # cores of one Grace only and ranks were left unpinned (~50 ms MPI latency).
-placement_k=""
 run() {
   local k=$1; shift
+  if [ $((72 % k)) -ne 0 ]; then echo "k=$k does not divide the 72 cores of a Grace, skipped"; return; fi
   local common="--mpi=pspmix --ntasks=$((4 * k)) --cpus-per-task=$((72 / k)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
   echo
   echo "=============== k=$k: ./program $k $*"
-  if [ "$k" != "$placement_k" ]; then
-    placement_k=$k
-    echo "placement:"
-    srun $common bash -c 'echo "rank $SLURM_PROCID $(hostname) gpu=$CUDA_VISIBLE_DEVICES $(grep Cpus_allowed_list /proc/self/status)"' | sort -V
-  fi
-  timeout 900 srun $common ./program $k "$@"
+  echo "placement:"
+  srun $common bash -c 'echo "rank $SLURM_PROCID $(hostname) gpu=$CUDA_VISIBLE_DEVICES $(grep Cpus_allowed_list /proc/self/status)"' | sort -V
+  timeout 1500 srun $common ./program $k "$@"
 }
 
-# The usual doubling-mesh test: Q4, Chebyshev degree 5 (5 pre + 5 post), cycle c of
-# poisson_cube_bk3's sequence: n_refine = c / 3, stretch = c % 3, coarse cells 2^stretch.
-# Compare switch_level=0 (full GPU hierarchy) with the GPU-only run of poisson_cube_bk3
-#   ./program 4 <min> <max> 5 5 d 0
-# args after k: degree n_refine switch_level n_subdivisions(unused) n_smooth stretch
+# The usual doubling-mesh test: Q4, 5 pre + 5 post Chebyshev steps, cycles 12..20 of
+# poisson_cube_bk3's sequence (274625 .. 67M DoFs) in one run per k and switch_dofs.
+# Compare with the GPU-only and CPU-only runs
+#   ./program 4 200000 70000000 5 5 d 0
+# args after k: degree minsize maxsize n_pre n_post mesh switch_dofs
 #
-# Cells of Q1 level l: 2^stretch * 8^l. The CPU switch levels tried are the finest
-# level with at most ~2200 cells (best at k=1 on the 24^3 mesh: 1728 cells) and with
-# at most ~20000 (13824 cells, was slower with one scalar core per rank).
-CELLS_A=2200
-CELLS_B=20000
-N_SMOOTH=5
+# The switch level of a cycle is its finest level with at most switch_dofs DoFs per
+# rank (4k ranks on the node): 0 = full GPU hierarchy (regression); cycles whose fine
+# level has at most that many run on the CPUs only. Yesterday's matvec crossover
+# (4 GPUs against 288 cores, job 2843214) is about 3500 DoFs per core.
+# k has to divide 72 (72/k cores per rank): 4k = 4 .. 288 ranks on the node.
+# Override the lists with K_LIST="..." SWITCH_DOFS="..." sbatch. All seven k do not fit
+# into one job; submit one job per k:
+#   for k in 1 4 12 18 24 36 72; do K_LIST=$k sbatch --job-name=hybrid-dbl-k$k <this script>; done
+K_LIST=${K_LIST:-"1 4 12 18 24 36 72"}
+SWITCH_DOFS=${SWITCH_DOFS:-"0 2000 8000 32000"}
 
-# finest Q1 level with at most $2 cells on the coarse grid with $1 cells
-finest_level() {
-  local l=0 cells=$1
-  while [ $((cells * 8)) -le $2 ]; do cells=$((cells * 8)); l=$((l + 1)); done
-  echo $l
-}
-
-for k in 4 18; do
-  for c in 12 13 14 15 16 17 18 19 20; do
-    nr=$((c / 3)); st=$((c % 3)); cells0=$((1 << st))
-    sa=$(finest_level $cells0 $CELLS_A); sb=$(finest_level $cells0 $CELLS_B)
-    seen=" "
-    for s in 0 $sa $sb; do
-      case "$seen" in *" $s "*) continue ;; esac
-      seen="$seen$s "
-      [ $s -le $nr ] || continue
-      echo "######## cycle $c: n_refine=$nr stretch=$st switch_level=$s"
-      run $k 4 $nr $s 3 $N_SMOOTH $st
-    done
+for k in $K_LIST; do
+  for switch_dofs in $SWITCH_DOFS; do
+    run $k 4 200000 70000000 5 5 d $switch_dofs
   done
 done

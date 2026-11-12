@@ -81,6 +81,52 @@ namespace hybrid
 
 
 
+  // Cells of the coarse grid in direction d.
+  inline unsigned int
+  n_coarse_cells(const CoarseGrid &grid, const unsigned int d)
+  {
+    if (grid.stretch < 0)
+      return grid.n_subdivisions;
+    return d < static_cast<unsigned int>(grid.stretch) ? 2 : 1;
+  }
+
+
+
+  // Global number of DoFs of every level of the ph-hierarchy on the coarse
+  // grid refined up to n_refine times.
+  template <int dim>
+  std::vector<types::global_dof_index>
+  ph_level_n_dofs(const CoarseGrid  &grid,
+                  const unsigned int n_refine,
+                  const unsigned int fe_degree)
+  {
+    const std::vector<unsigned int> degrees = ph_level_degrees(n_refine + 1, fe_degree);
+
+    std::vector<types::global_dof_index> n_dofs(degrees.size(), 1);
+    for (unsigned int l = 0; l < degrees.size(); ++l)
+      for (unsigned int d = 0; d < dim; ++d)
+        n_dofs[l] *=
+          (types::global_dof_index(n_coarse_cells(grid, d)) << std::min(l, n_refine)) * degrees[l] +
+          1;
+    return n_dofs;
+  }
+
+
+
+  // Finest level with at most max_dofs DoFs (global count), level 0 if there
+  // is none. The levels up to it run on the CPUs.
+  inline unsigned int
+  find_switch_level(const std::vector<types::global_dof_index> &n_dofs,
+                    const types::global_dof_index               max_dofs)
+  {
+    unsigned int level = 0;
+    while (level + 1 < n_dofs.size() && n_dofs[level + 1] <= max_dofs)
+      ++level;
+    return level;
+  }
+
+
+
   // Mesh hierarchy of one side on its communicator, built as in
   // poisson_cube_*: levels[l] = coarse grid refined l times.
   template <int dim>

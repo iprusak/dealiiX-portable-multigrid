@@ -13,9 +13,12 @@
 # Three small checks before any big hybrid run, all on the same mesh:
 #   1. GPU only    (poisson_cube_bk3)           4 ranks, 1 per GPU
 #   2. CPU only    (poisson_cube_cpu)           4 ranks, 1 per Grace
-#   3. hybrid regression (switch_level=0)       4 ranks (k=1) and 16 ranks (k=4)
+#   3. hybrid regression (all levels on GPUs)   4 ranks (k=1) and 16 ranks (k=4)
+#   4. hybrid, CPU-only cycle                   16 ranks (k=4)
 # Mesh: 3x3x3 coarse cells, 3 refinements = 24 cells/dir, Q4 -> 97^3 = 912673 DoFs.
-# 5 pre + 5 post Chebyshev smoothing steps everywhere.
+# 5 pre + 5 post Chebyshev smoothing steps everywhere. Mixed precision only: float
+# V-cycle under double CG in all three programs (poisson_cube_cpu built without
+# -DVCYCLE_DOUBLE; it and the hybrid print their "V-cycle number type").
 # CG iterations and reductions of 1, 2 and 3 must agree (CPU may differ in the
 # 3rd digit of the reduction: Chebyshev eigenvalue estimates).
 
@@ -60,16 +63,19 @@ run() {
 }
 
 # poisson_cube_{bk3,cpu}: degree minsize maxsize n_pre n_post [s=non-doubling mesh] overlap
+# hybrid:                 k degree minsize maxsize n_pre n_post [s] switch_dofs (per rank)
 # min/max pick the one cycle with 24 cells/dir (sizes 20 and 28 give 531441 and 1442897)
-MESH="900000 1000000 5 5 s 0"
+MESH="900000 1000000 5 5 s"
 
 echo "######## 1. GPU only"
-run 1 $BK3_BIN 4 $MESH
+run 1 $BK3_BIN 4 $MESH 0
 
 echo "######## 2. CPU only"
-run 1 $CPU_BIN 4 $MESH
+run 1 $CPU_BIN 4 $MESH 0
 
-echo "######## 3. hybrid, switch_level=0 (full GPU hierarchy)"
-# args after k: degree n_refine switch_level n_subdivisions n_smooth
-run 1 $HYBRID_BIN 1 4 3 0 3 5
-run 4 $HYBRID_BIN 4 4 3 0 3 5
+echo "######## 3. hybrid, switch_dofs=0 (full GPU hierarchy)"
+run 1 $HYBRID_BIN 1 4 $MESH 0
+run 4 $HYBRID_BIN 4 4 $MESH 0
+
+echo "######## 4. hybrid, switch_dofs above the fine level's DoFs per rank (CPU-only cycle)"
+run 4 $HYBRID_BIN 4 4 $MESH 1000000

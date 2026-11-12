@@ -3,28 +3,34 @@
 #include <deal.II/base/function.h>
 #include <deal.II/base/mg_level_object.h>
 #include <deal.II/base/mpi.h>
+#include <deal.II/base/quadrature_lib.h>
 #include <deal.II/base/timer.h>
 
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
 
 #include <deal.II/fe/fe_q.h>
+#include <deal.II/fe/fe_values.h>
 
 #include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/la_parallel_vector.h>
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/solver_control.h>
+#include <deal.II/lac/vector.h>
 
 #include <deal.II/multigrid/mg_transfer_global_coarsening.h>
 
 #include <deal.II/numerics/vector_tools.h>
 
 #include <algorithm>
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <utility>
 #include <vector>
 
+#include "hybrid_benchmark.h"
 #include "hybrid_mpi_layout.h"
 #include "hybrid_switch_permutation.h"
 #include "hybrid_triangulations.h"
@@ -92,9 +98,45 @@ namespace hybrid
     }
 
     // Collective on comm_world: build the CPU levels 0..switch_level (index
-    // in the full ph-hierarchy).
+    // in the full ph-hierarchy). with_rhs: also assemble f = 1 on the top
+    // level, for solve() in a CPU-only cycle.
     void
-    setup(const unsigned int switch_level);
+    setup(const unsigned int switch_level, const bool with_rhs = false);
+
+    // Collective on comm_world, CPU-only cycle: CG on the top level,
+    // preconditioned by the V-cycle. Returns iterations and reduction per
+    // iteration.
+    std::pair<unsigned int, double>
+    solve();
+
+    // Wall time of the last solve(), maximum over the ranks.
+    double
+    last_solve_time() const
+    {
+      return solve_time;
+    }
+
+    // Collective on comm_world: best times of the operators and transfers of
+    // the CPU levels (entry l = level l).
+    std::vector<LevelTimes>
+    benchmark_levels(const unsigned int n_calls);
+
+    // Collective on comm_world, CPU-only cycle: best times of the top-level
+    // matvec in double and in the V-cycle number type.
+    std::pair<double, double>
+    benchmark_matvec(const unsigned int n_calls)
+    {
+      return time_fine_matvecs(layout.comm_world,
+                               *hierarchy->solver,
+                               hierarchy->dof_handlers.back().n_dofs(),
+                               n_calls);
+    }
+
+    types::global_dof_index
+    n_top_dofs() const
+    {
+      return hierarchy->dof_handlers.back().n_dofs();
+    }
 
     // Collective on comm_world: one V-cycle (zero initial guess) on the CPU
     // levels. Input and output are the switch-level values in GPU numbering
@@ -130,6 +172,15 @@ namespace hybrid
         std::cout << "P down " << p_times[0] << " P up " << p_times[1] << std::endl;
     }
 
+    // World rank 0, CPU-only cycle: per-level times of the last solve().
+    void
+    print_level_times()
+    {
+      if (Utilities::MPI::this_mpi_process(layout.comm_world) == 0)
+        std::cout << "==== CPU side levels, rank 0, last solve" << std::endl;
+      hierarchy->solver->print_wall_times();
+    }
+
   private:
     // Everything one setup() builds. Members are destroyed in reverse order:
     // solver first, mesh last.
@@ -151,7 +202,7 @@ namespace hybrid
       std::unique_ptr<TopMatrixType>                  top_matrix; // switch level, double
       MGLevelObject<std::unique_ptr<TransferType>>    transfers;
       MGLevelObject<SmootherType>                     smoothers;
-      VectorType                                      rhs; // unused, MultigridSolver needs one
+      VectorType                                      rhs; // f = 1 in a CPU-only cycle, else unused
       std::unique_ptr<MGSolverType>                   solver;
 
       // switch-level values in CPU numbering, for coarse_solve()
@@ -183,6 +234,9 @@ namespace hybrid
     void
     setup_operators(Hierarchy &h) const;
 
+    void
+    compute_rhs(Hierarchy &h) const;
+
     const MPILayout   &layout;
     const CoarseGrid coarse_grid;
     const unsigned int n_smooth;
@@ -194,6 +248,7 @@ namespace hybrid
     std::vector<vcycle_number> gpu_switch_values;
 
     double p_times[2] = {0., 0.}; // P down, P up
+    double solve_time = 0.;
 
     std::unique_ptr<Hierarchy> hierarchy;
   };
@@ -202,7 +257,7 @@ namespace hybrid
 
   template <int dim, int top_degree>
   void
-  CpuSide<dim, top_degree>::setup(const unsigned int switch_level)
+  CpuSide<dim, top_degree>::setup(const unsigned int switch_level, const bool with_rhs)
   {
     Timer time;
 
@@ -252,6 +307,8 @@ namespace hybrid
 
     // buffers for coarse_solve(), in the MatrixFree layout of the switch level
     h.top_matrix->initialize_dof_vector(h.rhs);
+    if (with_rhs)
+      compute_rhs(h);
     h.top_matrix->initialize_dof_vector(h.cpu_rhs);
     h.top_matrix->initialize_dof_vector(h.cpu_solution);
     h.cpu_values.resize(h.cpu_rhs.locally_owned_size());
@@ -381,6 +438,93 @@ namespace hybrid
 
         h.smoothers[l].initialize(*h.matrices[l], smoother_data);
       }
+  }
+
+
+
+  // f = 1 on the top level (as poisson_cube_cpu's compute_rhs())
+  template <int dim, int top_degree>
+  void
+  CpuSide<dim, top_degree>::compute_rhs(Hierarchy &h) const
+  {
+    const DoFHandler<dim>    &dof_handler = h.dof_handlers.back();
+    const FiniteElement<dim> &fe          = dof_handler.get_fe();
+
+    VectorType rhs_ghosted(dof_handler.locally_owned_dofs(),
+                           DoFTools::extract_locally_relevant_dofs(dof_handler),
+                           layout.comm_world);
+
+    const QGauss<dim> quadrature(fe.degree + 1);
+    FEValues<dim>     fe_values(fe, quadrature, update_values | update_JxW_values);
+
+    Vector<full_number>                  cell_rhs(fe.n_dofs_per_cell());
+    std::vector<types::global_dof_index> dof_indices(fe.n_dofs_per_cell());
+
+    for (const auto &cell : dof_handler.active_cell_iterators())
+      if (cell->is_locally_owned())
+        {
+          fe_values.reinit(cell);
+          cell_rhs = 0;
+          for (unsigned int q = 0; q < quadrature.size(); ++q)
+            for (unsigned int i = 0; i < fe.n_dofs_per_cell(); ++i)
+              cell_rhs(i) += fe_values.shape_value(i, q) * fe_values.JxW(q);
+
+          cell->get_dof_indices(dof_indices);
+          h.top_constraints.distribute_local_to_global(cell_rhs, dof_indices, rhs_ghosted);
+        }
+    rhs_ghosted.compress(VectorOperation::add);
+
+    h.rhs.copy_locally_owned_data_from(rhs_ghosted);
+  }
+
+
+
+  template <int dim, int top_degree>
+  std::pair<unsigned int, double>
+  CpuSide<dim, top_degree>::solve()
+  {
+    Assert(hierarchy, ExcMessage("solve() before setup()."));
+
+    Timer time;
+    const std::pair<unsigned int, double> cg = hierarchy->solver->solve_cg();
+
+    solve_time = Utilities::MPI::max(time.wall_time(), layout.comm_world);
+    if (Utilities::MPI::this_mpi_process(layout.comm_world) == 0)
+      std::cout << "CG on the fine level (" << hierarchy->dof_handlers.back().n_dofs()
+                << " DoFs): " << cg.first << " iterations, reduction " << std::setprecision(4)
+                << cg.second << " per iteration, " << solve_time << " s" << std::endl;
+
+    return cg;
+  }
+
+
+
+  template <int dim, int top_degree>
+  std::vector<LevelTimes>
+  CpuSide<dim, top_degree>::benchmark_levels(const unsigned int n_calls)
+  {
+    Assert(hierarchy, ExcMessage("benchmark_levels() before setup()."));
+    Hierarchy &h = *hierarchy;
+
+    std::vector<LevelTimes> times(h.dof_handlers.max_level() + 1);
+    for (unsigned int l = 0; l <= h.dof_handlers.max_level(); ++l)
+      {
+        times[l].n_dofs = h.dof_handlers[l].n_dofs();
+
+        VectorTypeMG dst, src;
+        h.matrices[l]->initialize_dof_vector(dst);
+        h.matrices[l]->initialize_dof_vector(src);
+        time_level_operator(layout.comm_world, *h.matrices[l], dst, src, n_calls, times[l]);
+
+        if (l > 0)
+          {
+            VectorTypeMG vec_coarse;
+            h.matrices[l - 1]->initialize_dof_vector(vec_coarse);
+            time_level_transfer(
+              layout.comm_world, *h.transfers[l], vec_coarse, dst, n_calls, times[l]);
+          }
+      }
+    return times;
   }
 
 

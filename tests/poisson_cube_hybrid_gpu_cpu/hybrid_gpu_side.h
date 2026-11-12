@@ -31,6 +31,7 @@
 #include <utility>
 #include <vector>
 
+#include "hybrid_benchmark.h"
 #include "hybrid_mpi_layout.h"
 #include "hybrid_triangulations.h"
 #include "multigrid/portable_geometric_transfer.h"
@@ -91,6 +92,33 @@ namespace hybrid
     // by the V-cycle. Returns iterations and reduction per iteration.
     std::pair<unsigned int, double>
     solve();
+
+    // Wall time of the last solve(), maximum over the ranks.
+    double
+    last_solve_time() const
+    {
+      return solve_time;
+    }
+
+    types::global_dof_index
+    n_fine_dofs() const
+    {
+      return hierarchy->dof_handlers.back().n_dofs();
+    }
+
+    // Collective on comm_gpu: best times of the fine-level matvec in double
+    // and in the V-cycle number type.
+    std::pair<double, double>
+    benchmark_matvec(const unsigned int n_calls)
+    {
+      return time_fine_matvecs(layout.comm_gpu, *hierarchy->solver, n_fine_dofs(), n_calls);
+    }
+
+    // Collective on comm_gpu: best times of the operators and transfers of
+    // the GPU levels above the lowest one (entry l = level l; the levels up
+    // to the lowest one are left empty).
+    std::vector<LevelTimes>
+    benchmark_levels(const unsigned int n_calls);
 
     // Rank 0: per-level times of the last solve() (MultigridSolver's timers).
     void
@@ -181,6 +209,8 @@ namespace hybrid
     const MPILayout   &layout;
     const CoarseGrid coarse_grid;
     const unsigned int n_smooth;
+
+    double solve_time = 0.;
 
     std::unique_ptr<Hierarchy> hierarchy;
   };
@@ -404,12 +434,38 @@ namespace hybrid
     const std::pair<unsigned int, double> cg = hierarchy->solver->solve_cg();
     Kokkos::fence();
 
-    const double solve_time = Utilities::MPI::max(time.wall_time(), layout.comm_gpu);
+    solve_time = Utilities::MPI::max(time.wall_time(), layout.comm_gpu);
     if (Utilities::MPI::this_mpi_process(layout.comm_gpu) == 0)
       std::cout << "CG on the fine level (" << hierarchy->dof_handlers.back().n_dofs()
                 << " DoFs): " << cg.first << " iterations, reduction " << std::setprecision(4)
                 << cg.second << " per iteration, " << solve_time << " s" << std::endl;
 
     return cg;
+  }
+
+
+
+  template <int dim, int fe_degree>
+  std::vector<LevelTimes>
+  GpuSide<dim, fe_degree>::benchmark_levels(const unsigned int n_calls)
+  {
+    Assert(hierarchy, ExcMessage("benchmark_levels() before setup()."));
+    Hierarchy &h = *hierarchy;
+
+    std::vector<LevelTimes> times(h.dof_handlers.max_level() + 1);
+    for (unsigned int l = h.dof_handlers.min_level() + 1; l <= h.dof_handlers.max_level(); ++l)
+      {
+        times[l].n_dofs = h.dof_handlers[l].n_dofs();
+        times[l].on_gpu = true;
+
+        VectorTypeMG dst, src, vec_coarse;
+        h.matrices[l]->initialize_dof_vector(dst);
+        h.matrices[l]->initialize_dof_vector(src);
+        h.matrices[l - 1]->initialize_dof_vector(vec_coarse);
+
+        time_level_operator(layout.comm_gpu, *h.matrices[l], dst, src, n_calls, times[l]);
+        time_level_transfer(layout.comm_gpu, *h.transfers[l], vec_coarse, dst, n_calls, times[l]);
+      }
+    return times;
   }
 } // namespace hybrid
