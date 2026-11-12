@@ -7,13 +7,15 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --threads-per-core=1
 #SBATCH --gres=gpu:4
-#SBATCH --time=01:00:00
+#SBATCH --time=02:30:00
 #SBATCH --output=cpu-sockets-%j.out
 
-# Repeat the 72- and 144-core CPU runs of run_gpu_vs_cpu.sh with the ranks packed
-# onto whole sockets (--distribution=block:block) instead of Slurm's default cyclic
-# placement over the four Grace sockets. Same labels, so plot_gpu_vs_cpu.py can
-# overlay them on the main job: plot_gpu_vs_cpu.py <main jobid> . <this jobid>
+# Repeat the CPU runs of run_gpu_vs_cpu.sh with the ranks packed onto whole sockets
+# (--distribution=block:block) instead of Slurm's default cyclic placement over the
+# four Grace sockets. That also matters at 288 cores: with the default, neighbouring
+# subdomains sit on different Graces and the CG solve is 3 - 5 ms slower at every
+# size (job 2861438). Same labels, so plot_gpu_vs_cpu.py can overlay them on the
+# main job: plot_gpu_vs_cpu.py <main jobid> . <this jobid>
 
 module --force purge
 module load Stages/2026 nvidia-compilers OpenMPI FlexiBLAS
@@ -50,7 +52,9 @@ run() {
 
 run cpu64.np72     "$SRUN_CPU --ntasks=72"  $CPU64 100000000 0
 run cpu64.np144    "$SRUN_CPU --ntasks=144" $CPU64 200000000 0
+run cpu64.np288    "$SRUN_CPU --ntasks=288" $CPU64 400000000 0
 run cpu32.np72     "$SRUN_CPU --ntasks=72"  $CPU32 100000000 0
 run cpu32.np144    "$SRUN_CPU --ntasks=144" $CPU32 200000000 0
+run cpu32.np288    "$SRUN_CPU --ntasks=288" $CPU32 400000000 0
 
 echo "===== done ====="

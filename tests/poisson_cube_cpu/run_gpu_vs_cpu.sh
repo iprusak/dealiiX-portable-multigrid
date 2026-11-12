@@ -35,7 +35,11 @@ hostname; nproc; nvidia-smi -L
 for p in $GPU32 $GPU64 $CPU32 $CPU64; do echo "--- $p"; ldd $p | grep -E "libdeal_II|libkokkoscore"; done
 
 SRUN_GPU="srun --mpi=pspmix --cpu-bind=cores --gpu-bind=closest --mem-bind=local --gpus-per-task=1 --cpus-per-task=72"
-SRUN_CPU="srun --mpi=pspmix --cpu-bind=cores --mem-bind=local --cpus-per-task=1"
+# --distribution=block:block: the default spreads consecutive ranks over the four
+# Graces (rank 0 on core 0, rank 1 on core 72, ...), also at 288 ranks; neighbouring
+# subdomains then exchange ghosts across sockets and the CG solve is 3 - 5 ms slower
+# at every size (job 2861438). The CPU runs of job 2843214 were launched without it.
+SRUN_CPU="srun --mpi=pspmix --distribution=block:block --cpu-bind=cores --mem-bind=local --cpus-per-task=1"
 
 echo "===== launch check ====="
 $SRUN_CPU --ntasks=4 $CPU32 4 1 1000 3 3 d 0 > results/launch_check.$SLURM_JOB_ID.out 2>&1
