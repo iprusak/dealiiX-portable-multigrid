@@ -10,14 +10,11 @@
 #SBATCH --time=02:00:00
 #SBATCH --output=hybrid-dbl-%j.out
 
-module purge
-module load Stages/2026
-module load nvidia-compilers
-module load OpenMPI
-module load FlexiBLAS
+module --force purge
+module load Stages/2026 nvidia-compilers OpenMPI FlexiBLAS
 
-# no NEON yet: plain dealii-mg-transfer, just checking that the hybrid runs
-export LD_LIBRARY_PATH=/e/project1/dealii-x/ivan/sw/dealii/dealii-mg-transfer/lib:$WORK/sw/lib:$WORK/sw/lib64:$LD_LIBRARY_PATH
+# dealii-neon: NEON on the Grace side, shared Kokkos 5.2.2 (clean exit)
+export LD_LIBRARY_PATH=/e/project1/dealii-x/ivan/sw/dealii/dealii-neon/lib:/e/project1/dealii-x/ivan/sw/kokkos/kokkos-5.2.2/lib64:$WORK/sw/lib:$WORK/sw/lib64:$LD_LIBRARY_PATH
 
 export OMP_NUM_THREADS=1
 export KOKKOS_NUM_THREADS=1
@@ -25,10 +22,7 @@ export OMP_PROC_BIND=close
 export OMP_PLACES=cores
 export NVCOMPILER_OMP_DISABLE_WARNINGS=true
 
-# exit-time abort (static Kokkos linked twice), skip the core files
-ulimit -c 0
-
-ldd ./program | grep libdeal_II
+ldd ./program | grep -E 'libdeal_II|libkokkoscore'
 nvidia-smi --query-gpu=index,compute_mode --format=csv,noheader
 echo "SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"
 
@@ -42,7 +36,7 @@ echo "SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"
 placement_k=""
 run() {
   local k=$1; shift
-  local common="--ntasks=$((4 * k)) --cpus-per-task=$((72 / k)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
+  local common="--mpi=pspmix --ntasks=$((4 * k)) --cpus-per-task=$((72 / k)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
   echo
   echo "=============== k=$k: ./program $k $*"
   if [ "$k" != "$placement_k" ]; then
@@ -50,9 +44,7 @@ run() {
     echo "placement:"
     srun $common bash -c 'echo "rank $SLURM_PROCID $(hostname) gpu=$CUDA_VISIBLE_DEVICES $(grep Cpus_allowed_list /proc/self/status)"' | sort -V
   fi
-  # drop the stack traces of the exit-time abort (static Kokkos), keep real errors
-  timeout 900 srun $common ./program $k "$@" 2> >(grep -vE '^\[[^]]+\] \[ *[0-9]+\]|End of error message' >&2)
-  wait
+  timeout 900 srun $common ./program $k "$@"
 }
 
 # The usual doubling-mesh test: Q4, Chebyshev degree 5 (5 pre + 5 post), cycle c of
