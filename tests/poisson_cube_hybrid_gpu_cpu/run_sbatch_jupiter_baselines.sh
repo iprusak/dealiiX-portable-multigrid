@@ -41,6 +41,11 @@ export OMP_PROC_BIND=close
 export OMP_PLACES=cores
 export NVCOMPILER_OMP_DISABLE_WARNINGS=true
 
+# With 32 or more processes on the node UCX 1.19 stops using cuda_ipc for messages
+# from GPU memory and stages them through host shared memory: the ghost exchange of
+# the GPU ranks gets ~10x slower (job 2859067). Tell it there are 4 per node.
+export UCX_NUM_PPN=4
+
 ldd $HYBRID_BIN | grep -E 'libdeal_II|libkokkoscore'
 nvidia-smi --query-gpu=index,compute_mode --format=csv,noheader
 echo "SLURM_GPUS_ON_NODE=$SLURM_GPUS_ON_NODE"
