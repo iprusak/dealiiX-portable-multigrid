@@ -39,8 +39,10 @@ SWITCH = re.compile(
 )
 PREC = re.compile(r"Coarse solver (\d+) times: (" + NUM + r") tot prec (" + NUM + r")")
 LEVEL = re.compile(r"^L(\d+)\s+(" + NUM + r")\s+(" + NUM + r")\s+(" + NUM + r")\s+(" + NUM + r")\s*$", re.M)
+# n_proc is missing in poisson_cube_cpu's table
 BK3_ROW = re.compile(
-    r"^(\d+)\s+(\d+)\s+(\d+)\s+(" + NUM + r")\s+(" + NUM + r")\s+(" + NUM + r")\s+(\d+)\s+(" + NUM + r")\s*$", re.M
+    r"^(?:(\d+)[ \t]+)?(\d+)[ \t]+(\d+)[ \t]+(" + NUM + r")[ \t]+(" + NUM + r")[ \t]+(" + NUM + r")[ \t]+(\d+)[ \t]+("
+    + NUM + r")[ \t]*$", re.M
 )
 
 FIELDS = [
