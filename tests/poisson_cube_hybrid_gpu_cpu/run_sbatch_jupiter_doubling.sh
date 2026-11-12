@@ -80,6 +80,11 @@ CPU_ONLY_DOFS=${CPU_ONLY_DOFS:-"0,0,0,150000"}
 NODES=${SLURM_JOB_NUM_NODES:-1}
 # The size range grows with the node count: 2 nodes run the cycles 13..21, each
 # with the DoFs per rank of the cycle before it on 1 node (weak scaling).
+# MIN_PER_NODE / MAX_PER_NODE (DoFs) change the range, e.g. for the large cycles up
+# to 67M DoFs per GPU, where no cycle is CPU-only any more:
+#   MIN_PER_NODE=60000000 MAX_PER_NODE=280000000 SWITCH_DOFS=0,2000,8000 CPU_ONLY_DOFS=0
+MIN_PER_NODE=${MIN_PER_NODE:-200000}
+MAX_PER_NODE=${MAX_PER_NODE:-70000000}
 for k in $K_LIST; do
-  run $k 4 $((200000 * NODES)) $((70000000 * NODES)) 5 5 d $SWITCH_DOFS $CPU_ONLY_DOFS
+  run $k 4 $((MIN_PER_NODE * NODES)) $((MAX_PER_NODE * NODES)) 5 5 d $SWITCH_DOFS $CPU_ONLY_DOFS
 done

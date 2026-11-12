@@ -15,7 +15,8 @@
 #   2. poisson_cube_cpu, 1 rank per core (288 per node), block placement
 # Q4, doubling mesh, 5 + 5 smoothing, float V-cycle, the cycles of the hybrid
 # doubling job (run_sbatch_jupiter_doubling.sh) for the same number of nodes.
-# Several nodes: sbatch --nodes=<N> <this script>.
+# Several nodes: sbatch --nodes=<N> <this script>. MIN_PER_NODE / MAX_PER_NODE (DoFs)
+# change the size range as in the doubling job.
 
 # cpu-tests checkout and build directory name, override with REPO=... BUILD=... sbatch
 REPO=${REPO:-$HOME/codes/dealiiX-cpu-tests/tests}
@@ -38,7 +39,9 @@ export NVCOMPILER_OMP_DISABLE_WARNINGS=true
 
 ldd $CPU_BIN | grep -E 'libdeal_II|libkokkoscore'
 
-ARGS="4 $((200000 * NODES)) $((70000000 * NODES)) 5 5 d 0"
+MIN_PER_NODE=${MIN_PER_NODE:-200000}
+MAX_PER_NODE=${MAX_PER_NODE:-70000000}
+ARGS="4 $((MIN_PER_NODE * NODES)) $((MAX_PER_NODE * NODES)) 5 5 d 0"
 
 # run <label> <srun options> <program and arguments>; the first and last 4 ranks
 # show the placement
