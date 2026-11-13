@@ -22,6 +22,8 @@
 #   3. for the doubling sizes that bk3 solved: hybrid, and poisson_cube_cpu on 288
 #      ranks with block placement
 # The summary at the end lists every run: solved or not, peak GPU memory, CG time.
+# Quick variant, bk3 on one GPU only, ladder in DoFs on that GPU:
+#   GPUS=1 LADDER_ONLY=1 LADDER="135005697:d 269748225:d 454756609:s 538970625:d 721734273:s 1076890625:d" sbatch <this script>
 
 # cpu-tests checkout and build directory name, override with REPO=... BUILD=... sbatch
 REPO=${REPO:-$HOME/codes/dealiiX-cpu-tests/tests}
@@ -30,6 +32,8 @@ CPU_BIN=$REPO/poisson_cube_cpu/$BUILD/program
 BK3_BIN=$REPO/poisson_cube_bk3/$BUILD/program
 HYB_BIN=$REPO/poisson_cube_hybrid_gpu_cpu/$BUILD/program
 K=${K:-18}
+GPUS=${GPUS:-4}
+LADDER_ONLY=${LADDER_ONLY:-0}
 
 module --force purge
 module load Stages/2026 nvidia-compilers OpenMPI FlexiBLAS
@@ -49,7 +53,7 @@ free -g
 OUT=$PWD/mg-largest-$SLURM_JOB_ID
 mkdir -p $OUT
 
-GPU_OPTS="--mpi=pspmix --ntasks=4 --cpus-per-task=72 --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
+GPU_OPTS="--mpi=pspmix --ntasks=$GPUS --cpus-per-task=72 --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
 HYB_OPTS="--mpi=pspmix --ntasks=$((4 * K)) --cpus-per-task=$((72 / K)) --distribution=block:block --cpu-bind=cores --gpu-bind=closest --mem-bind=local"
 CPU_OPTS="--mpi=pspmix --ntasks=288 --cpus-per-task=1 --distribution=block:block --cpu-bind=cores --mem-bind=local"
 
@@ -79,18 +83,20 @@ solved() { grep -q -E "^ *([0-9]+ +)?[0-9]+ +$2 +[0-9.e+-]+ +[0-9.e+-]+ +[0-9.e+
 
 LADDER=${LADDER:-"538970625:d 721734273:s 1076890625:d 2152730625:d 3630961153:s"}
 
-echo "######## 1. bk3 until a run fails"
+echo "######## 1. bk3 on $GPUS GPU(s) until a run fails"
 FIT=""
 for rung in $LADDER; do
   dofs=${rung%:*}
   mesh=${rung#*:}
   run bk3-$dofs "$GPU_OPTS" $BK3_BIN 4 $(size $dofs) 5 5 $mesh 0
   if ! solved bk3-$dofs $dofs; then
-    echo "######## bk3 did not solve $dofs DoFs ($((dofs / 4)) per GPU), stopping the ladder"
+    echo "######## bk3 did not solve $dofs DoFs ($((dofs / GPUS)) per GPU), stopping the ladder"
     break
   fi
   if [ $mesh = d ]; then FIT="$FIT $dofs"; fi
 done
+
+if [ "$LADDER_ONLY" != 1 ]; then
 
 hybrid() { UCX_NUM_PPN=4 run hybrid-$1 "$HYB_OPTS" $HYB_BIN $K 4 $(size $1) 5 5 d 8000 0; }
 
@@ -103,6 +109,8 @@ for dofs in $FIT; do
   hybrid $dofs
   run cpu-$dofs "$CPU_OPTS" $CPU_BIN 4 $(size $dofs) 5 5 d 0
 done
+
+fi
 
 echo
 echo "######## summary: run, solved or not, peak GPU memory [MiB], row of the final table"
