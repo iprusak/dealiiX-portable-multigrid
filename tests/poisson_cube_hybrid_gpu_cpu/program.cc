@@ -492,6 +492,11 @@ main(int argc, char **argv)
                       << "Use doubling mesh:                     " << use_doubling_mesh << std::endl
                       << "Switch level, DoFs per rank:           " << switch_dofs[i] << std::endl
                       << "CPU-only cycle, DoFs per rank:         " << cpu_only_dofs[i] << std::endl
+                      << "Wait of the CPU-only ranks:            "
+                      << (hybrid::idle_sleep_microseconds() == 0 ?
+                            std::string("blocking (busy)") :
+                            "sleep " + std::to_string(hybrid::idle_sleep_microseconds()) + " us")
+                      << std::endl
                       << std::endl;
 
           switch (degree)
