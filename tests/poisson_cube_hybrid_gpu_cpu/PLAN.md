@@ -169,3 +169,29 @@ review of the math before any code. Details: `project_static_condensation_arr.md
 - Queue wait; use short jobs first.
 - Do not run `make` in a directory while a job uses its binary; use a second build directory.
 - Every SSH or scp needs an explicit go-ahead from you.
+
+## Status after the November 2026 rounds, and what is next
+
+Written 2026-11-12. Details and numbers: results folders `results_jupiter*/` and the outputs listed there.
+
+What the level-split hybrid is: a latency fix. It moves the levels that are too small for the GPUs to the
+CPUs. Its saving per solve is fixed (20 - 27 ms on one node, 28 - 30 ms on two), so the gain over GPU-only
+fades as the fine level grows: 2x at 275k DoFs, 1.2x at 68M, about 1.07x expected at 270M (one node).
+Thresholds, both per MPI rank and roughly independent of k and of the node count: switch level at 2000 - 8000
+DoFs, CPU-only cycle up to about 50000 fine-level DoFs.
+
+### Near term
+
+| # | Item | Why |
+|---|---|---|
+| N1 | Idle CPU-only ranks wait without spinning. Low priority after job 2880860 | Cause confirmed: busy neighbouring cores slow the GPU rank's host side (GPU-only program with busy loops on the other cores: +6 - 9 ms per solve with 70 busy cores per socket, +8 - 12 ms with 71; the number of cores of the GPU rank itself does not matter). This covers the slowdown at k=36 and about half of it at k=72. But the extra time is spread evenly over the levels, and the hybrid keeps only 1 - 3 of them on the GPUs: there it is 1 - 2 ms at k=36 and 1 - 5 ms at k=72, so the hybrid would gain 1 - 4%. |
+| N2 | Use fewer ranks than k for the CPU levels of a hybrid cycle | The CPU part is latency-bound as well: the same 6 levels cost 11.1 / 9.2 / 8.8 ms at k = 12 / 18 / 24. Best k for hybrid cycles is 18 - 24, for CPU-only cycles 72; with N1 one launch could serve both. |
+| N3 | Done 2026-11-13: overnight runs of 2026-11-12 evaluated | Gain over GPU-only at equal DoFs per GPU is the same on 1, 2, 4 nodes at large sizes (34M: 1.11 - 1.13x, 67M: 1.04 - 1.07x). CPU-only is fastest up to about 60000 DoFs per core on every node count, the hybrid above. k = 18 and 36 are equivalent, k = 72 is never the best hybrid. |
+
+### Long term
+
+| # | Item | Why |
+|---|---|---|
+| L1 | Weighted split of the fine levels between CPU and GPU ranks | In the throughput-bound regime the CPU cores idle while the GPUs smooth the fine level. One Grace socket has about a third of the matvec throughput of one H100, so sharing the fine level by weight has a ceiling of about 1.3 - 1.4x over GPU-only. Needs weighted partitioning, ghost exchange between host and device vectors on one level, and a smoother across both. Moving more levels to the CPUs is not an alternative: one level above the switch already costs 20 - 30%. |
+| L2 | Move the hybrid test onto the refactor-enes base | Its bk3 has 6.5 ms less latency per solve (constant); the hybrid would gain about 2 ms, GPU-only all of it. |
+| L3 | CPU-only ranks from a host-only build (`srun --multi-prog`) | Start-up costs 1.2 s per process and node (CUDA runtime), 6 min at k=72; MPS does not help and allows at most 60 processes per GPU. |
