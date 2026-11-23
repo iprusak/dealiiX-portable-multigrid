@@ -40,6 +40,9 @@
 # and UCX settings in the environment of sbatch, e.g. without the mapping cache of
 # the direct GPU-to-GPU transport and with 10 repetitions:
 #   UCX_CUDA_IPC_CACHE=n VEC_ARGS="67108864 65536 10" RUNS="vec" sbatch --time=00:15:00 <this script>
+# The reproducer for a range of ghost-layer sizes (message sizes from 128 KiB to
+# 32 MiB in double), 2 repetitions each; the transport may treat them differently:
+#   RUNS="vec-sweep" sbatch --time=00:20:00 <this script>
 # With NVIDIA MPS, where the processes of a GPU share one context (default runs
 # then: the two hybrid ones, and hy-270 gets the long timeout):
 #   MPS=1 sbatch <this script>
@@ -127,6 +130,10 @@ for r in $RUNS; do
     mg-270) run $r 2400 "$gpu_only" $MG_BIN 4 $S270 5 5 d 0 ;;
     hy-17) run $r 1200 "$hybrid" $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
     hy-17-noucx) run $r 1200 "$hybrid" bash -c "$no_ucx_cuda" bash $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
+    vec-sweep)
+      for g in ${VEC_GHOSTS:-"16384 65536 131072 262144 524288 1048576 2097152 4194304"}; do
+        run vec-g$g 600 "$gpu_only" $VEC_BIN 67108864 $g 2
+      done ;;
     vec) run $r 600 "$gpu_only" $VEC_BIN $VEC_ARGS ;;
     vec-noipc) run $r 600 "$gpu_only" bash -c 'export UCX_TLS=^cuda_ipc; exec "$@"' bash $VEC_BIN $VEC_ARGS ;;
     hy-2small) run $r 1200 "$hybrid" $HYBRID_BIN $K 4 $S17_34 5 5 d 8000 0 ;;
