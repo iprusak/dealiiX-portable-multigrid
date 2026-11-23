@@ -28,6 +28,10 @@
 # are released. The second run has no cuda_ipc transport (GPU buffers between ranks
 # of a node then go through the host):
 #   RUNS="hy-2cycles hy-2cycles-noipc" sbatch --time=01:30:00 <this script>
+# The same question on two small cycles (17M and 34M DoFs per GPU, a few minutes, no
+# risk of running out of memory); the program also lists its live Kokkos allocations
+# at the end of a cycle and after the cycle is destroyed:
+#   RUNS="hy-2small" sbatch --time=00:30:00 <this script>
 # With NVIDIA MPS, where the processes of a GPU share one context (default runs
 # then: the two hybrid ones, and hy-270 gets the long timeout):
 #   MPS=1 sbatch <this script>
@@ -64,6 +68,7 @@ S17="16973593 16975593"
 S135="538969625 538971625"
 S270="1076889625 1076891625"
 S135_270="538969625 1076891625"
+S17_34="67633433 135006697"
 
 # run <label> <timeout in s> <srun options> <program and arguments>
 run() {
@@ -79,7 +84,7 @@ run() {
   kill $sampler_gpu $sampler_apps
   wait $sampler_gpu $sampler_apps 2> /dev/null
   echo "--- $label: GPU memory lines of the program"
-  grep "GPU memory in use" $OUT/$label.log
+  grep -A22 "GPU memory in use" $OUT/$label.log | grep "GPU memory in use\|Live Kokkos\| MiB "
   echo "--- $label: peak per GPU"
   awk -F', ' '{if ($2 + 0 > m[$1]) m[$1] = $2 + 0} END {for (g in m) printf "GPU %s: %d MiB\n", g, m[g]}' $OUT/$label.gpu | sort
   echo "--- $label: processes per GPU (peak of each process)"
@@ -113,6 +118,7 @@ for r in $RUNS; do
     mg-270) run $r 2400 "$gpu_only" $MG_BIN 4 $S270 5 5 d 0 ;;
     hy-17) run $r 1200 "$hybrid" $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
     hy-17-noucx) run $r 1200 "$hybrid" bash -c "$no_ucx_cuda" bash $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
+    hy-2small) run $r 1200 "$hybrid" $HYBRID_BIN $K 4 $S17_34 5 5 d 8000 0 ;;
     hy-2cycles) run $r 1800 "$hybrid" $HYBRID_BIN $K 4 $S135_270 5 5 d 8000 0 ;;
     hy-2cycles-noipc) run $r 1800 "$hybrid" bash -c 'export UCX_TLS=^cuda_ipc; exec "$@"' bash $HYBRID_BIN $K 4 $S135_270 5 5 d 8000 0 ;;
     hy-135) run $r 2400 "$hybrid" $HYBRID_BIN $K 4 $S135 5 5 d 8000 0 ;;

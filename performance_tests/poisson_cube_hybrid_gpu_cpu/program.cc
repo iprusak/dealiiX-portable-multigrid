@@ -143,6 +143,8 @@ namespace hybrid
     std::copy(cpu_levels.begin(), cpu_levels.end(), result.levels.begin());
 
     multigrid::print_device_memory("end of the cycle", layout.comm_gpu, std::cout);
+    if (Utilities::MPI::this_mpi_process(layout.comm_gpu) == 0)
+      multigrid::print_live_kokkos_allocations("end of the cycle", std::cout, 20);
 
     send_command(layout, Command::stop);
     return result;
@@ -357,6 +359,8 @@ namespace hybrid
         if (layout.is_gpu_rank)
           {
             multigrid::print_device_memory("cycle destroyed", layout.comm_gpu, std::cout);
+            if (is_root)
+              multigrid::print_live_kokkos_allocations("cycle destroyed", std::cout);
             multigrid::release_device_vector_pools();
             multigrid::print_device_memory("vector pools released", layout.comm_gpu, std::cout);
           }
@@ -396,6 +400,7 @@ main(int argc, char **argv)
   // starts MPI and Kokkos, 1 thread per rank; shuts both down at the end of
   // main, after `layout` below has freed its communicators
   Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
+  multigrid::track_kokkos_allocations();
 
   const double time_ready = epoch_now();
 
