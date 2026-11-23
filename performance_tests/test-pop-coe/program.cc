@@ -796,9 +796,13 @@ main(int argc, char *argv[])
 
       Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
 
+      // one doubling-mesh cycle, the largest that fits: 270M DoFs per GPU
+      const std::size_t n_ranks =
+        Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+
       unsigned int degree            = 4;
-      std::size_t  maxsize           = 200000000;
-      std::size_t  minsize           = 100000000;
+      std::size_t  maxsize           = 280000000 * n_ranks;
+      std::size_t  minsize           = maxsize / 2;
       unsigned int n_pre_smooth      = 5;
       unsigned int n_post_smooth     = 5;
       bool         use_doubling_mesh = true;
