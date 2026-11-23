@@ -1,6 +1,9 @@
 #ifndef portable_geometric_transfer_h
 #define portable_geometric_transfer_h
 
+#include <multigrid/transfer_timing_tmp.h>
+#include <deal.II/base/timer.h>
+#include <chrono>
 #include <deal.II/dofs/dof_handler.h>
 
 #include <deal.II/matrix_free/constraint_info.h>
@@ -891,6 +894,9 @@ namespace Portable
              (this->mg_level_coarse + 1 == this->mg_level_fine),
            ExcNotImplemented());
 
+    Kokkos::fence();
+    Timer twt_reinit;
+
     this->constraints_coarse = &constraints_coarse;
     this->constraints_fine   = &constraints_fine;
 
@@ -907,6 +913,18 @@ namespace Portable
         *this->dof_handler_coarse,
         this->mg_level_fine,
         this->mg_level_coarse);
+
+    // TEMPORARY timers: sections of reinit() and buckets inside the index pass
+    Timer        twt_sec;
+    const double twt_t_view = twt_reinit.wall_time();
+    double       twt_t_count = 0, twt_t_misc = 0, twt_t_ci_reinit = 0, twt_t_index_pass = 0,
+           twt_t_fin_coarse = 0, twt_t_fin_fine = 0, twt_t_vec = 0, twt_t_prolong = 0;
+    double twt_b_read_coarse = 0, twt_b_get_fine = 0, twt_b_read_fine = 0;
+    using twt_clock = std::chrono::steady_clock;
+    const auto twt_since = [](const twt_clock::time_point t0)
+      {
+        return std::chrono::duration<double>(twt_clock::now() - t0).count();
+      };
 
     const auto reference_cell = this->dof_handler_fine->get_fe().reference_cell();
 
@@ -998,6 +1016,7 @@ namespace Portable
 
     std::uint8_t current_refinement_case = static_cast<std::uint8_t>(-1);
 
+    twt_sec.restart();
     // count coarse cells for each scheme (0, 1, ...)
     {
       // count by looping over all coarse cells
@@ -1025,6 +1044,9 @@ namespace Portable
                                       ExcNotImplemented());
                       });
     }
+
+    twt_t_count = twt_sec.wall_time();
+    twt_sec.restart();
 
     const auto cell_local_children_indices =
       dealii::internal::get_child_offsets<dim>(transfer_schemes[0].n_dofs_per_cell_coarse,
@@ -1081,6 +1103,9 @@ namespace Portable
       for (const auto &scheme : transfer_schemes)
         n_coarse_cells_total += scheme.n_coarse_cells;
 
+      twt_t_misc = twt_sec.wall_time();
+      twt_sec.restart();
+
       this->constraint_info_coarse.reinit(*this->dof_handler_coarse,
                                           n_coarse_cells_total,
                                           constraints_coarse.n_constraints() > 0);
@@ -1097,6 +1122,9 @@ namespace Portable
       std::vector<unsigned int> cell_no(transfer_schemes.size(), 0);
       for (unsigned int i = 1; i < transfer_schemes.size(); ++i)
         cell_no[i] = cell_no[i - 1] + transfer_schemes[i - 1].n_coarse_cells;
+
+      twt_t_ci_reinit = twt_sec.wall_time();
+      twt_sec.restart();
 
       process_cells(
         [&](const auto &cell_coarse, const auto &cell_fine)
@@ -1129,11 +1157,13 @@ namespace Portable
             // parent (only once at the beginning)
             if (c == 0)
               {
+                const auto twt_t0 = twt_clock::now();
                 this->constraint_info_coarse.read_dof_indices(cell_no[refinement_case],
                                                               this->mg_level_coarse,
                                                               cell_coarse,
                                                               constraints_coarse,
                                                               {});
+                twt_b_read_coarse += twt_since(twt_t0);
 
                 level_dof_indices_fine.assign(level_dof_indices_fine.size(),
                                               numbers::invalid_dof_index);
@@ -1141,7 +1171,9 @@ namespace Portable
 
             // child
             {
+              const auto twt_t0 = twt_clock::now();
               cell_fine.get_dof_indices(local_dof_indices);
+              twt_b_get_fine += twt_since(twt_t0);
               for (unsigned int i = 0; i < transfer_schemes[refinement_case].n_dofs_per_cell_coarse;
                    ++i)
                 {
@@ -1158,24 +1190,35 @@ namespace Portable
             // move pointers (only once at the end)
             if (c + 1 == GeometryInfo<dim>::max_children_per_cell)
               {
+                const auto twt_t0 = twt_clock::now();
                 this->constraint_info_fine.read_dof_indices(cell_no[refinement_case],
                                                             level_dof_indices_fine,
                                                             {});
+                twt_b_read_fine += twt_since(twt_t0);
 
                 ++cell_no[refinement_case];
               }
           });
     }
 
+    twt_t_index_pass = twt_sec.wall_time();
+    twt_sec.restart();
     {
       this->partitioner_coarse =
         this->constraint_info_coarse.finalize(this->dof_handler_coarse->get_mpi_communicator());
+      twt_t_fin_coarse = twt_sec.wall_time();
+      twt_sec.restart();
 
       this->partitioner_fine =
         this->constraint_info_fine.finalize(this->dof_handler_fine->get_mpi_communicator());
+      twt_t_fin_fine = twt_sec.wall_time();
+      twt_sec.restart();
 
       this->vec_coarse.reinit(this->partitioner_coarse);
       this->vec_fine.reinit(this->partitioner_fine);
+      Kokkos::fence();
+      twt_t_vec = twt_sec.wall_time();
+      twt_sec.restart();
 
 
       // if constexpr (running_in_debug_mode())
@@ -1270,20 +1313,55 @@ namespace Portable
         }
     }
 
+    Kokkos::fence();
+    twt_t_prolong = twt_sec.wall_time();
+    Timer twt_dof;
     setup_dof_indices();
+    Kokkos::fence();
+    const double twt_t_dof = twt_dof.wall_time();
 
+    Timer twt_w;
     setup_weights();
+    Kokkos::fence();
+    const double twt_t_w = twt_w.wall_time();
+
+    TransferTimingTmp::print(this->dof_handler_fine->get_mpi_communicator(),
+                             "geo-reinit",
+                             "dofs_fine=" + std::to_string(this->partitioner_fine->size()),
+                             {{"reinit", twt_reinit.wall_time()},
+                              {"fine_view", twt_t_view},
+                              {"count_pass", twt_t_count},
+                              {"misc", twt_t_misc},
+                              {"ci_reinit", twt_t_ci_reinit},
+                              {"index_pass", twt_t_index_pass},
+                              {"ip_read_coarse", twt_b_read_coarse},
+                              {"ip_get_fine", twt_b_get_fine},
+                              {"ip_read_fine", twt_b_read_fine},
+                              {"finalize_coarse", twt_t_fin_coarse},
+                              {"finalize_fine", twt_t_fin_fine},
+                              {"vec_reinit", twt_t_vec},
+                              {"prolongation_matrix", twt_t_prolong},
+                              {"setup_dof_indices", twt_t_dof},
+                              {"setup_weights", twt_t_w}});
   }
 
   template <int dim, int fe_degree, typename number>
   void
   GeometricTransfer<dim, fe_degree, number>::setup_weights()
   {
+    Kokkos::fence();
+    Timer  twt;
+    double twt_s[5] = {0, 0, 0, 0, 0};
+
     LinearAlgebra::distributed::Vector<number> weight_vector;
     weight_vector.reinit(this->partitioner_fine);
+    twt_s[0] = twt.wall_time();
+    twt.restart();
 
     for (const auto i : constraint_info_fine.dof_indices)
       weight_vector.local_element(i) += 1.0;
+    twt_s[1] = twt.wall_time();
+    twt.restart();
 
     weight_vector.compress(VectorOperation::add);
 
@@ -1297,11 +1375,13 @@ namespace Portable
         weight_vector[constrained_dofs.index] = 0.0;
 
     weight_vector.update_ghost_values();
+    twt_s[2] = twt.wall_time();
 
     unsigned int cell_counter = 0;
     unsigned int scheme_index = 0;
     for (auto &scheme : transfer_schemes)
       {
+        twt.restart();
         scheme.weights = Kokkos::View<number **, MemorySpace::Default::kokkos_space>(
           Kokkos::view_alloc("weights_h_transer_scheme_" + std::to_string(scheme_index),
                              Kokkos::WithoutInitializing),
@@ -1324,10 +1404,35 @@ namespace Portable
               }
             ++cell_counter;
           }
+        twt_s[3] += twt.wall_time();
+        twt.restart();
 
         Kokkos::deep_copy(scheme.weights, weights_view_host);
         Kokkos::fence();
+        twt_s[4] += twt.wall_time();
       }
+
+    {
+      const MPI_Comm comm = this->dof_handler_fine->get_mpi_communicator();
+      unsigned long long n_cells = 0;
+      for (const auto &scheme : transfer_schemes)
+        n_cells += static_cast<unsigned long long>(scheme.n_coarse_cells) *
+                   (&scheme == &transfer_schemes[0] ? 1 : GeometryInfo<dim>::max_children_per_cell);
+      n_cells = Utilities::MPI::sum(n_cells, comm);
+      TransferTimingTmp::print(comm,
+                               "geo-weights",
+                               "cells_fine=" + std::to_string(n_cells) +
+                                 " dofs_fine=" + std::to_string(this->partitioner_fine->size()) +
+                                 " entries=" +
+                                 std::to_string(Utilities::MPI::sum<unsigned long long>(
+                                   constraint_info_fine.dof_indices.size(), comm)),
+                               {{"s1_alloc", twt_s[0]},
+                                {"s2_count", twt_s[1]},
+                                {"s3_compress_invert_ghost", twt_s[2]},
+                                {"s4_gather", twt_s[3]},
+                                {"s5_deep_copy", twt_s[4]},
+                                {"sum", twt_s[0] + twt_s[1] + twt_s[2] + twt_s[3] + twt_s[4]}});
+    }
   }
 
   template <int dim, int fe_degree, typename number>

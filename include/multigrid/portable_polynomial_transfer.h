@@ -1,6 +1,8 @@
 #ifndef portable_polynomial_transfer_h
 #define portable_polynomial_transfer_h
 
+#include <multigrid/transfer_timing_tmp.h>
+#include <deal.II/base/timer.h>
 #include <deal.II/dofs/dof_handler.h>
 
 #include <deal.II/matrix_free/constraint_info.h>
@@ -949,6 +951,9 @@ namespace Portable
     const AffineConstraints<number> &constraints_coarse,
     const AffineConstraints<number> &constraints_fine)
   {
+    Kokkos::fence();
+    Timer twt_reinit;
+
     this->operator_info_coarse = &op_coarse;
     this->operator_info_fine   = &op_fine;
 
@@ -1011,12 +1016,24 @@ namespace Portable
     Kokkos::fence();
 
     setup_weights_and_dof_indices();
+    Kokkos::fence();
+    TransferTimingTmp::print(op_fine.get_dof_handler().get_mpi_communicator(),
+                             "poly-reinit",
+                             "p=" + std::to_string(p_coarse) + "->" + std::to_string(p_fine) +
+                               " dofs_fine=" + std::to_string(op_fine.get_dof_handler().n_dofs()),
+                             {{"reinit", twt_reinit.wall_time()}});
   }
 
   template <int dim, int p_coarse, int p_fine, typename number>
   void
   PolynomialTransfer<dim, p_coarse, p_fine, number>::setup_weights_and_dof_indices()
   {
+    Kokkos::fence();
+    Timer  twt;
+    double twt_idx = 0, twt_fin = 0, twt_coarse = 0, twt_plain = 0;
+    double twt_s[5] = {0, 0, 0, 0, 0};
+    unsigned long long twt_cells = 0;
+
     const auto &dof_handler_fine   = operator_info_fine->get_dof_handler();
     const auto &dof_handler_coarse = operator_info_coarse->get_dof_handler();
     const auto &fe_fine            = dof_handler_fine.get_fe();
@@ -1076,6 +1093,8 @@ namespace Portable
 
       // the fine cells are visited once; the later loops read these indices
       fine_indices_lex.resize(static_cast<std::size_t>(n_cells_fine) * n_dofs_per_cell_fine);
+      twt_cells = n_cells_fine;
+      twt.restart();
 
       int cell_counter = 0;
 
@@ -1095,15 +1114,23 @@ namespace Portable
             constraint_info_fine.read_dof_indices(cell_counter, local_dof_indices_lex_fine, {});
             ++cell_counter;
           }
+      twt_idx = twt.wall_time();
+      twt.restart();
 
       std::shared_ptr<const Utilities::MPI::Partitioner> partitioner_fine =
         constraint_info_fine.finalize(dof_handler_fine.get_mpi_communicator());
+      twt_fin = twt.wall_time();
+      twt.restart();
 
       LinearAlgebra::distributed::Vector<number> weight_vector;
       weight_vector.reinit(partitioner_fine);
+      twt_s[0] = twt.wall_time();
+      twt.restart();
 
       for (const auto i : constraint_info_fine.dof_indices)
         weight_vector.local_element(i) += 1.0;
+      twt_s[1] = twt.wall_time();
+      twt.restart();
 
       weight_vector.compress(VectorOperation::add);
 
@@ -1117,6 +1144,7 @@ namespace Portable
           weight_vector[constrained_dofs.index] = 0.0;
 
       weight_vector.update_ghost_values();
+      twt_s[2] = twt.wall_time();
 
       weights_view_kokkos.clear();
       weights_view_kokkos.resize(n_colors);
@@ -1127,6 +1155,7 @@ namespace Portable
           if (colored_graph_fine[color].size() > 0)
             {
               const auto &graph = colored_graph_fine[color];
+              twt.restart();
 
               weights_view_kokkos[color] =
                 Kokkos::View<number **, MemorySpace::Default::kokkos_space>(
@@ -1141,13 +1170,17 @@ namespace Portable
                 for (unsigned int i = 0; i < n_dofs_per_cell_fine; ++i)
                   weights_view_host(i, cell_id) =
                     weight_vector[fine_indices_lex[(first_cell + cell_id) * n_dofs_per_cell_fine + i]];
+              twt_s[3] += twt.wall_time();
+              twt.restart();
               Kokkos::deep_copy(weights_view_kokkos[color], weights_view_host);
               Kokkos::fence();
+              twt_s[4] += twt.wall_time();
             }
           first_cell += colored_graph_fine[color].size();
         }
     }
     // setup coarse dof indices
+    twt.restart();
     {
       std::vector<types::global_dof_index> local_dof_indices_coarse(n_dofs_per_cell_coarse);
       std::vector<types::global_dof_index> subdomain_dof_indices_coarse(n_dofs_per_cell_coarse);
@@ -1208,6 +1241,9 @@ namespace Portable
         }
     }
 
+    Kokkos::fence();
+    twt_coarse = twt.wall_time();
+    twt.restart();
     // setup fine plain dof indices
     {
       this->plain_dof_indices_fine.clear();
@@ -1246,6 +1282,28 @@ namespace Portable
             }
           first_cell += colored_graph_fine[color].size();
         }
+    }
+    Kokkos::fence();
+    twt_plain = twt.wall_time();
+    {
+      const MPI_Comm comm = dof_handler_fine.get_mpi_communicator();
+      twt_cells           = Utilities::MPI::sum(twt_cells, comm);
+      TransferTimingTmp::print(comm,
+                               "poly-weights",
+                               "p=" + std::to_string(p_coarse) + "->" + std::to_string(p_fine) +
+                                 " cells_fine=" + std::to_string(twt_cells) +
+                                 " dofs_fine=" + std::to_string(dof_handler_fine.n_dofs()) +
+                                 " entries=" + std::to_string(twt_cells * n_dofs_per_cell_fine),
+                               {{"idx_pass_shared", twt_idx},
+                                {"finalize", twt_fin},
+                                {"s1_alloc", twt_s[0]},
+                                {"s2_count", twt_s[1]},
+                                {"s3_compress_invert_ghost", twt_s[2]},
+                                {"s4_gather", twt_s[3]},
+                                {"s5_deep_copy", twt_s[4]},
+                                {"sum", twt_s[0] + twt_s[1] + twt_s[2] + twt_s[3] + twt_s[4]},
+                                {"coarse_indices", twt_coarse},
+                                {"plain_fine_indices", twt_plain}});
     }
   }
 

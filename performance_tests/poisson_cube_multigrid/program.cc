@@ -1045,6 +1045,13 @@ namespace multigrid
 
         setup_mg_transfers();
 
+        // TEMPORARY: skip the solve, go to the next cycle
+        if (std::getenv("TWT_STOP") != nullptr)
+          {
+            pcout << "TWT driver n_dofs=" << projected_size << std::endl;
+            continue;
+          }
+
         setup_smoothers(n_pre_smooth, n_post_smooth);
 
         compute_rhs();
