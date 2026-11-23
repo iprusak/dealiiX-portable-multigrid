@@ -18,6 +18,10 @@
 # memory per process on each GPU. Printed after the run: the peak per GPU, and per
 # GPU the largest process (the GPU rank) and what the other processes hold (the
 # CUDA contexts of the CPU-only ranks).
+# What do the CPU-only ranks hold on the GPU? Their memory does not depend on the
+# problem size, so two short runs at 17M DoFs are enough: as usual, and with the CUDA
+# transports of UCX switched off on the CPU-only ranks (UCX_TLS=^cuda):
+#   RUNS="hy-17 hy-17-noucx" sbatch --time=00:30:00 <this script>
 # With NVIDIA MPS, where the processes of a GPU share one context (default runs
 # then: the two hybrid ones, and hy-270 gets the long timeout):
 #   MPS=1 sbatch <this script>
@@ -50,6 +54,7 @@ gpu_only="$common --ntasks=4 --ntasks-per-node=4 --cpus-per-task=72"
 hybrid="$common --ntasks=$((4 * K)) --ntasks-per-node=$((4 * K)) --cpus-per-task=$((72 / K))"
 
 # one cycle: min and max size around the DoFs of the cycle
+S17="16973593 16975593"
 S135="538969625 538971625"
 S270="1076889625 1076891625"
 
@@ -90,10 +95,15 @@ if [ "$MPS" = 1 ]; then
   if [ $mps_exit -ne 0 ]; then echo "MPS did not start, stopping"; exit 1; fi
 fi
 
+# in front of the program: the GPU rank is the first of each block of K ranks
+no_ucx_cuda='if [ $((SLURM_PROCID % '$K')) -ne 0 ]; then export UCX_TLS=^cuda; fi; exec "$@"'
+
 for r in $RUNS; do
   case $r in
     mg-135) run $r 2400 "$gpu_only" $MG_BIN 4 $S135 5 5 d 0 ;;
     mg-270) run $r 2400 "$gpu_only" $MG_BIN 4 $S270 5 5 d 0 ;;
+    hy-17) run $r 1200 "$hybrid" $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
+    hy-17-noucx) run $r 1200 "$hybrid" bash -c "$no_ucx_cuda" bash $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
     hy-135) run $r 2400 "$hybrid" $HYBRID_BIN $K 4 $S135 5 5 d 8000 0 ;;
     hy-270) run $r $HY270_TIMEOUT "$hybrid" $HYBRID_BIN $K 4 $S270 5 5 d 8000 0 ;;
     *) echo "unknown run $r" ;;
