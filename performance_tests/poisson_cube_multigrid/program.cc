@@ -52,6 +52,7 @@
 
 #include "portable_multigrid_solver.h"
 #include "coarsening_sequence.h"
+#include "device_memory.h"
 
 
 namespace multigrid
@@ -1050,6 +1051,7 @@ namespace multigrid
         compute_rhs();
 
         pcout << "Total setup time: " << setup_time << std::endl;
+        print_device_memory("after the setup", mpi_communicator, std::cout);
 
         solve(n_pre_smooth, n_post_smooth);
         pcout << std::endl;
@@ -1057,6 +1059,7 @@ namespace multigrid
         pcout << std::endl;
         pcout << std::endl;
         matvec_ghost_timing();
+        print_device_memory("end of the cycle", mpi_communicator, std::cout);
         pcout << std::endl;
         pcout << std::endl;
 

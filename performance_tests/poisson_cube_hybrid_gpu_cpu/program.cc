@@ -47,6 +47,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "device_memory.h"
 #include "hybrid_benchmark.h"
 #include "hybrid_coarse_solver.h"
 #include "hybrid_cpu_side.h"
@@ -115,6 +116,7 @@ namespace hybrid
     cpu_side.set_gpu_switch_dofs(&gpu_side.level_dofs(switch_level));
     send_command(layout, Command::setup, switch_level);
     cpu_side.setup(switch_level);
+    multigrid::print_device_memory("after the setup", layout.comm_gpu, std::cout);
 
     // every V-cycle of the CG solve runs one coarse solve on all ranks;
     // timers of all parts are reset per solve, printed for the last one
@@ -139,6 +141,8 @@ namespace hybrid
     send_command(layout, Command::benchmark_levels, n_calls);
     const std::vector<LevelTimes> cpu_levels = cpu_side.benchmark_levels(n_calls);
     std::copy(cpu_levels.begin(), cpu_levels.end(), result.levels.begin());
+
+    multigrid::print_device_memory("end of the cycle", layout.comm_gpu, std::cout);
 
     send_command(layout, Command::stop);
     return result;
@@ -348,6 +352,14 @@ namespace hybrid
 
         const CycleResult result =
           run<dim, fe_degree>(layout, n_refine, switch_level, coarse_grid, n_smooth);
+
+        // everything the cycle built is destroyed here
+        if (layout.is_gpu_rank)
+          {
+            multigrid::print_device_memory("cycle destroyed", layout.comm_gpu, std::cout);
+            multigrid::release_device_vector_pools();
+            multigrid::print_device_memory("vector pools released", layout.comm_gpu, std::cout);
+          }
 
         if (is_root)
           {
