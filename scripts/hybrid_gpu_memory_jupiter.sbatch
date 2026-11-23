@@ -32,6 +32,10 @@
 # risk of running out of memory); the program also lists its live Kokkos allocations
 # at the end of a cycle and after the cycle is destroyed:
 #   RUNS="hy-2small" sbatch --time=00:30:00 <this script>
+# The smallest case: performance_tests/device_vector_memory, one distributed device
+# vector at a time on 4 ranks (1 per GPU), created, used and destroyed; with the
+# direct GPU-to-GPU transport and without it:
+#   RUNS="vec vec-noipc" sbatch --time=00:15:00 <this script>
 # With NVIDIA MPS, where the processes of a GPU share one context (default runs
 # then: the two hybrid ones, and hy-270 gets the long timeout):
 #   MPS=1 sbatch <this script>
@@ -40,6 +44,7 @@ REPO=${REPO:-$HOME/codes/dealiiX-coarse-levels-one-gpu}
 DEAL_II=${DEAL_II:-/e/project1/dealii-x/ivan/sw/dealii/dealii-neon}
 MG_BIN=${MG_BIN:-$REPO/performance_tests/poisson_cube_multigrid/build-neon/poisson_cube_bk3}
 HYBRID_BIN=${HYBRID_BIN:-$REPO/performance_tests/poisson_cube_hybrid_gpu_cpu/build-neon/program}
+VEC_BIN=${VEC_BIN:-$REPO/performance_tests/device_vector_memory/build-neon/program}
 K=${K:-18}
 MPS=${MPS:-0}
 SAMPLE_MS=${SAMPLE_MS:-200}
@@ -118,6 +123,8 @@ for r in $RUNS; do
     mg-270) run $r 2400 "$gpu_only" $MG_BIN 4 $S270 5 5 d 0 ;;
     hy-17) run $r 1200 "$hybrid" $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
     hy-17-noucx) run $r 1200 "$hybrid" bash -c "$no_ucx_cuda" bash $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
+    vec) run $r 600 "$gpu_only" $VEC_BIN ;;
+    vec-noipc) run $r 600 "$gpu_only" bash -c 'export UCX_TLS=^cuda_ipc; exec "$@"' bash $VEC_BIN ;;
     hy-2small) run $r 1200 "$hybrid" $HYBRID_BIN $K 4 $S17_34 5 5 d 8000 0 ;;
     hy-2cycles) run $r 1800 "$hybrid" $HYBRID_BIN $K 4 $S135_270 5 5 d 8000 0 ;;
     hy-2cycles-noipc) run $r 1800 "$hybrid" bash -c 'export UCX_TLS=^cuda_ipc; exec "$@"' bash $HYBRID_BIN $K 4 $S135_270 5 5 d 8000 0 ;;
