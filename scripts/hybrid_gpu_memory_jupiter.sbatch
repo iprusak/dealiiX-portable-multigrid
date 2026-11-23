@@ -52,6 +52,7 @@ DEAL_II=${DEAL_II:-/e/project1/dealii-x/ivan/sw/dealii/dealii-neon}
 MG_BIN=${MG_BIN:-$REPO/performance_tests/poisson_cube_multigrid/build-neon/poisson_cube_bk3}
 HYBRID_BIN=${HYBRID_BIN:-$REPO/performance_tests/poisson_cube_hybrid_gpu_cpu/build-neon/program}
 VEC_BIN=${VEC_BIN:-$REPO/performance_tests/device_vector_memory/build-neon/program}
+VEC_GHOSTS=${VEC_GHOSTS:-"16384 65536 131072 262144 524288 1048576 2097152 4194304"}
 K=${K:-18}
 MPS=${MPS:-0}
 SAMPLE_MS=${SAMPLE_MS:-200}
@@ -131,7 +132,7 @@ for r in $RUNS; do
     hy-17) run $r 1200 "$hybrid" $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
     hy-17-noucx) run $r 1200 "$hybrid" bash -c "$no_ucx_cuda" bash $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
     vec-sweep)
-      for g in ${VEC_GHOSTS:-"16384 65536 131072 262144 524288 1048576 2097152 4194304"}; do
+      for g in $VEC_GHOSTS; do
         run vec-g$g 600 "$gpu_only" $VEC_BIN 67108864 $g 2
       done ;;
     vec) run $r 600 "$gpu_only" $VEC_BIN $VEC_ARGS ;;
