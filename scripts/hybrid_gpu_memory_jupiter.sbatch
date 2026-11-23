@@ -36,6 +36,10 @@
 # vector at a time on 4 ranks (1 per GPU), created, used and destroyed; with the
 # direct GPU-to-GPU transport and without it:
 #   RUNS="vec vec-noipc" sbatch --time=00:15:00 <this script>
+# Its arguments (owned entries, ghost entries, repetitions) can be given in VEC_ARGS,
+# and UCX settings in the environment of sbatch, e.g. without the mapping cache of
+# the direct GPU-to-GPU transport and with 10 repetitions:
+#   UCX_CUDA_IPC_CACHE=n VEC_ARGS="67108864 65536 10" RUNS="vec" sbatch --time=00:15:00 <this script>
 # With NVIDIA MPS, where the processes of a GPU share one context (default runs
 # then: the two hybrid ones, and hy-270 gets the long timeout):
 #   MPS=1 sbatch <this script>
@@ -79,7 +83,7 @@ S17_34="67633433 135006697"
 run() {
   local label=$1 limit=$2 opts=$3; shift 3
   echo
-  echo "=============== $label (MPS=$MPS, sampling $SAMPLE_MS ms): srun $opts $*"
+  echo "=============== $label (MPS=$MPS, sampling $SAMPLE_MS ms, UCX_CUDA_IPC_CACHE=${UCX_CUDA_IPC_CACHE:-default}): srun $opts $*"
   nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits -lms $SAMPLE_MS > $OUT/$label.gpu &
   local sampler_gpu=$!
   nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory,process_name --format=csv,noheader,nounits -lms $SAMPLE_MS > $OUT/$label.apps &
@@ -123,8 +127,8 @@ for r in $RUNS; do
     mg-270) run $r 2400 "$gpu_only" $MG_BIN 4 $S270 5 5 d 0 ;;
     hy-17) run $r 1200 "$hybrid" $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
     hy-17-noucx) run $r 1200 "$hybrid" bash -c "$no_ucx_cuda" bash $HYBRID_BIN $K 4 $S17 5 5 d 8000 0 ;;
-    vec) run $r 600 "$gpu_only" $VEC_BIN ;;
-    vec-noipc) run $r 600 "$gpu_only" bash -c 'export UCX_TLS=^cuda_ipc; exec "$@"' bash $VEC_BIN ;;
+    vec) run $r 600 "$gpu_only" $VEC_BIN $VEC_ARGS ;;
+    vec-noipc) run $r 600 "$gpu_only" bash -c 'export UCX_TLS=^cuda_ipc; exec "$@"' bash $VEC_BIN $VEC_ARGS ;;
     hy-2small) run $r 1200 "$hybrid" $HYBRID_BIN $K 4 $S17_34 5 5 d 8000 0 ;;
     hy-2cycles) run $r 1800 "$hybrid" $HYBRID_BIN $K 4 $S135_270 5 5 d 8000 0 ;;
     hy-2cycles-noipc) run $r 1800 "$hybrid" bash -c 'export UCX_TLS=^cuda_ipc; exec "$@"' bash $HYBRID_BIN $K 4 $S135_270 5 5 d 8000 0 ;;
