@@ -134,6 +134,13 @@ namespace Portable
     vmult_bk3(LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
               const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
 
+    // vmult_bk3() with register blocking in 3d: one thread per pencil, the
+    // flux along the pencil kept in registers
+    void
+    vmult_bk3_registers(
+      LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+      const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
+
     void
     vmult_bk3_abstracted(
       LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
@@ -253,6 +260,11 @@ namespace Portable
       Kokkos::View<number **,
                    MemorySpace::Default::kokkos_space::execution_space::scratch_memory_space,
                    Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+
+    template <bool register_blocking>
+    void
+    vmult_bk3_impl(LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+                   const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const;
 
     void
     cell_loop(const LocalLaplaceOperator<dim, fe_degree, fe_degree + 1, number>      &cell_operator,
@@ -413,6 +425,25 @@ namespace Portable
     LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
     const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
   {
+    vmult_bk3_impl<false>(dst, src);
+  }
+
+  template <int dim, int fe_degree, typename number>
+  void
+  LaplaceOperator<dim, fe_degree, number>::vmult_bk3_registers(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  {
+    vmult_bk3_impl<true>(dst, src);
+  }
+
+  template <int dim, int fe_degree, typename number>
+  template <bool register_blocking>
+  void
+  LaplaceOperator<dim, fe_degree, number>::vmult_bk3_impl(
+    LinearAlgebra::distributed::Vector<number, MemorySpace::Default>       &dst,
+    const LinearAlgebra::distributed::Vector<number, MemorySpace::Default> &src) const
+  {
     dst = 0.;
 
     DeviceVector<number> src_device(src.get_values(), src.locally_owned_size()),
@@ -444,7 +475,7 @@ namespace Portable
           {
             const auto &precomputed_data = matrix_free.get_data(color);
 
-            BK3::Parallel::KokkosKernel<dim, fe_degree + 1, fe_degree + 1, number>(
+            BK3::Parallel::KokkosKernel<dim, fe_degree + 1, fe_degree + 1, number, register_blocking>(
               precomputed_data.shape_values,
               precomputed_data.co_shape_gradients,
               G_tensors[color],

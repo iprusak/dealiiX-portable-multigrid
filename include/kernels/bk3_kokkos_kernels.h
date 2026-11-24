@@ -670,7 +670,12 @@ namespace BK3
 
 
 
-    template <int dim, int nm, int nq, typename Number>
+    // register_blocking (3d, device backends): one thread per pencil, and what
+    // a thread computes along its own pencil stays in its registers: the values
+    // of step 4 for step 5, the t-fluxes of step 5 for step 6 (instead of
+    // s_rqt), the integrated gradients of step 6 for step 7 (instead of
+    // s_wsp1, and without the barrier after step 6)
+    template <int dim, int nm, int nq, typename Number, bool register_blocking = false>
     void
     KokkosKernel(const DeviceView<Number> d_shape_values,
                  const DeviceView<Number> d_co_shape_gradients,
@@ -717,6 +722,13 @@ namespace BK3
                                               (Utilities::pow(nq, dim - 1) * nelmtPerBatch) :
                                               static_cast<int>(threads_per_block)));
 
+      constexpr bool keep_in_registers =
+        register_blocking && dim == 3 &&
+        !std::is_same_v<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>;
+      if (keep_in_registers)
+        AssertThrow(threadsPerBlock >= Utilities::pow(nq, dim - 1) * nelmtPerBatch,
+                    ExcMessage("register blocking needs one thread per pencil"));
+
       {
         const int ssize = nm * nq + // shape values
                           nq * nq + // co-shape gradients
@@ -734,6 +746,11 @@ namespace BK3
             Number r_p[nq];
             Number r_q[nq];
             Number r_r[nq];
+            // keep_in_registers: the values (step 4), t-fluxes (step 5) and
+            // integrated gradients (step 6) along the thread's pencil
+            Number r_u[nq];
+            Number r_ft[nq];
+            Number r_g[nq];
 
             Number *scratch = (Number *)team_member.team_shmem().get_shmem(shmem_size);
 
@@ -989,6 +1006,10 @@ namespace BK3
                               }
 
                             s_wsp1[e * nq * nq * nq + r * nq * nq + q * nq + p] = tmp;
+                            if (keep_in_registers) // compile-time constant
+                              {
+                                r_u[r] = tmp;
+                              }
                           }
                       }
                     team_member.team_barrier();
@@ -1062,7 +1083,9 @@ namespace BK3
                             {
                               r_p[n] = s_co_shape_gradients[n * nq + p];
                               r_q[n] = s_co_shape_gradients[n * nq + q];
-                              r_r[n] = s_wsp1[e * nq * nq * nq + n * nq * nq + q * nq + p];
+                              r_r[n] = keep_in_registers ?
+                                         r_u[n] :
+                                         s_wsp1[e * nq * nq * nq + n * nq * nq + q * nq + p];
                             }
 
                           Number Grr, Grs, Grt, Gss, Gst, Gtt;
@@ -1104,8 +1127,15 @@ namespace BK3
                               s_rqs[e * nq * nq * nq + r * nq * nq + q * nq + p] =
                                 Grs * qr + Gss * qs + Gst * qt;
 
-                              s_rqt[e * nq * nq * nq + r * nq * nq + q * nq + p] =
-                                Grt * qr + Gst * qs + Gtt * qt;
+                              if (keep_in_registers) // compile-time constant
+                                {
+                                  r_ft[r] = Grt * qr + Gst * qs + Gtt * qt;
+                                }
+                              else
+                                {
+                                  s_rqt[e * nq * nq * nq + r * nq * nq + q * nq + p] =
+                                    Grt * qr + Gst * qs + Gtt * qt;
+                                }
                             }
                         }
                     }
@@ -1156,7 +1186,9 @@ namespace BK3
                               r_p[n] = s_co_shape_gradients[p * nq + n];
                               r_q[n] = s_co_shape_gradients[q * nq + n];
 
-                              r_r[n] = s_rqt[e * nq * nq * nq + n * nq * nq + q * nq + p];
+                              r_r[n] = keep_in_registers ?
+                                         r_ft[n] :
+                                         s_rqt[e * nq * nq * nq + n * nq * nq + q * nq + p];
                             }
 
                           for (int r = 0; r < nq; ++r)
@@ -1172,11 +1204,23 @@ namespace BK3
                               for (int n = 0; n < nq; ++n)
                                 tmp0 += r_r[n] * s_co_shape_gradients[r * nq + n];
 
-                              s_wsp1[e * nq * nq * nq + r * nq * nq + q * nq + p] = tmp0;
+                              if (keep_in_registers) // compile-time constant
+                                {
+                                  r_g[r] = tmp0;
+                                }
+                              else
+                                {
+                                  s_wsp1[e * nq * nq * nq + r * nq * nq + q * nq + p] = tmp0;
+                                }
                             }
                         }
                     }
-                  team_member.team_barrier();
+                  // keep_in_registers: step 7 reads the gradients from registers
+                  // and writes s_wsp0, which step 6 does not read then
+                  if (!keep_in_registers) // compile-time constant
+                    {
+                      team_member.team_barrier();
+                    }
                 }
 
                 /*
@@ -1198,7 +1242,9 @@ namespace BK3
 
                         for (int r = 0; r < nq; ++r)
                           {
-                            r_p[r] = s_wsp1[e * nq * nq * nq + r * nq * nq + q * nq + p];
+                            r_p[r] = keep_in_registers ?
+                                       r_g[r] :
+                                       s_wsp1[e * nq * nq * nq + r * nq * nq + q * nq + p];
                           }
 
                         for (int k = 0; k < nm; ++k)

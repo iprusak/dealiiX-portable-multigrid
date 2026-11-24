@@ -93,6 +93,8 @@ test(const bool overlap)
   check("Tvmult", [&](VectorType &d, const VectorType &s) { op.Tvmult(d, s); });
   check("vmult_dealii", [&](VectorType &d, const VectorType &s) { op.vmult_dealii(d, s); });
   check("vmult_bk3", [&](VectorType &d, const VectorType &s) { op.vmult_bk3(d, s); });
+  check("vmult_bk3_registers",
+        [&](VectorType &d, const VectorType &s) { op.vmult_bk3_registers(d, s); });
   check("vmult_bk3_abstracted",
         [&](VectorType &d, const VectorType &s) { op.vmult_bk3_abstracted(d, s); });
   check("vmult_dealii_batched",
