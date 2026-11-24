@@ -24,6 +24,7 @@
 
 #include "base/portable_laplace_operator_base.h"
 #include "base/portable_operator_info_base.h"
+#include "kernels/bk3_elasticity_kokkos_kernel.h"
 #include "kernels/elasticity_benchmark_kernel.h"
 #include "kernels/portable_local_elasticity_operator.h"
 #include "matrix_free_dealii/portable_batched_cell_loop.h"
@@ -172,6 +173,16 @@ namespace Portable
                             const VectorType  &src,
                             const unsigned int team_size = 0) const;
 
+    // the BK3-style counterpart of the benchmark kernel
+    // (kernels/bk3_elasticity_kokkos_kernel.h: shape data in shared memory,
+    // gather and scatter as steps of their own, BK3's batches and teams),
+    // without and with register blocking
+    void
+    vmult_bk3(VectorType &dst, const VectorType &src) const;
+
+    void
+    vmult_bk3_registers(VectorType &dst, const VectorType &src) const;
+
     // vmult_batched() with the stress computed inside evaluate_and_apply()
     void
     vmult_fused(VectorType &dst, const VectorType &src) const;
@@ -256,10 +267,12 @@ namespace Portable
                  const DeviceVector<number> &dst) const;
 
     using BenchmarkKernel = Benchmark::LinearElasticityKernel<number, fe_degree + 1, n_q_points_1d>;
+    using BK3Kernel       = BK3::Parallel::ElasticityKernel<number, fe_degree + 1, n_q_points_1d>;
 
-    template <bool register_blocking>
+    // the benchmark kernel or (bk3) its BK3-style counterpart
+    template <bool bk3, bool register_blocking>
     void
-    benchmark_vmult(VectorType &dst, const VectorType &src, const unsigned int team_size) const;
+    kernel_vmult(VectorType &dst, const VectorType &src, const unsigned int team_size) const;
 
     static constexpr bool has_benchmark_kernel =
       dim == 3 && std::is_same_v<Material, LinearElasticMaterial<dim, number>>;
@@ -268,6 +281,7 @@ namespace Portable
 
     // per color, for vmult_benchmark()
     std::vector<BenchmarkKernel>                                            benchmark_kernels;
+    std::vector<BK3Kernel>                                                  bk3_kernels;
     std::vector<Kokkos::View<number *, MemorySpace::Default::kokkos_space>> benchmark_geometry;
 
     // matrix_free's colored graph without the FilteredIterator wrapper
@@ -322,8 +336,17 @@ namespace Portable
                                            dbasis,
                                            material.lambda,
                                            material.mu);
+            bk3_kernels.emplace_back(data.n_cells,
+                                     BK3Kernel::default_elements_per_batch(),
+                                     basis,
+                                     dbasis,
+                                     material.lambda,
+                                     material.mu);
+            // both kernels read G of their padded last batch
             benchmark_geometry.push_back(internal::benchmark_geometry<dim, number, n_q_points_1d>(
-              data, benchmark_kernels.back().n_elements_padded()));
+              data,
+              std::max(benchmark_kernels.back().n_elements_padded(),
+                       bk3_kernels.back().n_elements_padded())));
 
             const auto masks =
               Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), data.constraint_mask);
@@ -428,7 +451,7 @@ namespace Portable
     VectorType       &dst,
     const VectorType &src) const
   {
-    benchmark_vmult<true>(dst, src, 0);
+    kernel_vmult<false, true>(dst, src, 0);
   }
 
 
@@ -440,15 +463,37 @@ namespace Portable
     const VectorType  &src,
     const unsigned int team_size) const
   {
-    benchmark_vmult<false>(dst, src, team_size);
+    kernel_vmult<false, false>(dst, src, team_size);
   }
 
 
 
   template <int dim, int fe_degree, typename number, typename Material, int n_q_points_1d>
-  template <bool register_blocking>
   void
-  ElasticityOperator<dim, fe_degree, number, Material, n_q_points_1d>::benchmark_vmult(
+  ElasticityOperator<dim, fe_degree, number, Material, n_q_points_1d>::vmult_bk3(
+    VectorType       &dst,
+    const VectorType &src) const
+  {
+    kernel_vmult<true, false>(dst, src, 0);
+  }
+
+
+
+  template <int dim, int fe_degree, typename number, typename Material, int n_q_points_1d>
+  void
+  ElasticityOperator<dim, fe_degree, number, Material, n_q_points_1d>::vmult_bk3_registers(
+    VectorType       &dst,
+    const VectorType &src) const
+  {
+    kernel_vmult<true, true>(dst, src, 0);
+  }
+
+
+
+  template <int dim, int fe_degree, typename number, typename Material, int n_q_points_1d>
+  template <bool bk3, bool register_blocking>
+  void
+  ElasticityOperator<dim, fe_degree, number, Material, n_q_points_1d>::kernel_vmult(
     VectorType        &dst,
     const VectorType  &src,
     const unsigned int team_size) const
@@ -470,8 +515,14 @@ namespace Portable
                                                                             dst.get_values(),
                                                                             data.n_cells,
                                                                             data.use_coloring};
-        benchmark_kernels[color].template apply<register_blocking>(
-          benchmark_geometry[color], access, benchmark_kernels[color].n_batches(), team_size);
+        if constexpr (bk3)
+          bk3_kernels[color].template apply<register_blocking>(benchmark_geometry[color],
+                                                               access,
+                                                               bk3_kernels[color].default_n_teams(),
+                                                               team_size);
+        else
+          benchmark_kernels[color].template apply<register_blocking>(
+            benchmark_geometry[color], access, benchmark_kernels[color].n_batches(), team_size);
       }
     Kokkos::fence();
 

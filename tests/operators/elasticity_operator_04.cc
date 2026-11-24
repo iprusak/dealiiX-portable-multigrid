@@ -3,7 +3,8 @@
 // the global vectors, on the curved, sheared mesh of deformed_mesh_util.h
 // against the CPU FEValues reference, in 3d with fe_degree + 1 and
 // fe_degree + 2 (the benchmark's) quadrature points per direction; also
-// vmult_benchmark_strided(), without register blocking.
+// vmult_benchmark_strided(), without register blocking, and the BK3-style
+// vmult_bk3() and vmult_bk3_registers().
 
 #include <deal.II/base/function.h>
 
@@ -92,6 +93,14 @@ test()
   op.vmult_benchmark_strided(dst, src, 64);
   Kokkos::fence();
   report("vmult_benchmark_strided(64)", relative_l2_difference(dst, dst_ref), 1e-12);
+
+  // the BK3-style counterpart, without and with register blocking
+  op.vmult_bk3(dst, src);
+  Kokkos::fence();
+  report("vmult_bk3", relative_l2_difference(dst, dst_ref), 1e-12);
+  op.vmult_bk3_registers(dst, src);
+  Kokkos::fence();
+  report("vmult_bk3_registers", relative_l2_difference(dst, dst_ref), 1e-12);
 }
 
 

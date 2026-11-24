@@ -7,6 +7,10 @@
 //   vmult_benchmark  the kernel of the dealii-X benchmarks
 //   vmult_bench_strided  the same without register blocking (strided loops,
 //                    fluxes in shared memory), one thread per pencil
+//   vmult_bk3        the BK3-style counterpart of the benchmark kernel (shape
+//                    data in shared memory, separate gather and scatter, BK3's
+//                    batches and persistent teams), strided loops
+//   vmult_bk3_registers  the same with register blocking
 // The mesh is a box of 2^k cubes (k = 3 refinements + 0, 1 or 2 directions
 // split once more), deformed so that every cell is a general one and all
 // variants read the geometry per quadrature point; homogeneous Dirichlet
@@ -159,7 +163,9 @@ run(const double target_n_dofs, const int n_repetitions)
     {"vmult_batched", [&]() { op.vmult_batched(dst, src); }},
     {"vmult_fused", [&]() { op.vmult_fused(dst, src); }},
     {"vmult_benchmark", [&]() { op.vmult_benchmark(dst, src); }},
-    {"vmult_bench_strided", [&]() { op.vmult_benchmark_strided(dst, src); }}};
+    {"vmult_bench_strided", [&]() { op.vmult_benchmark_strided(dst, src); }},
+    {"vmult_bk3", [&]() { op.vmult_bk3(dst, src); }},
+    {"vmult_bk3_registers", [&]() { op.vmult_bk3_registers(dst, src); }}};
 
   double reference_norm = 0.;
   for (const auto &[name, vmult] : variants)
