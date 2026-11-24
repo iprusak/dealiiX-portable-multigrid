@@ -97,7 +97,7 @@ run() {
   kill $sampler_gpu $sampler_apps
   wait $sampler_gpu $sampler_apps 2> /dev/null
   echo "--- $label: GPU memory lines of the program"
-  grep -A22 "GPU memory in use" $OUT/$label.log | grep "GPU memory in use\|Live Kokkos\| MiB "
+  grep -A22 "GPU memory in use" $OUT/$label.log | grep "GPU memory in use\|Live Kokkos\|not returned\| MiB "
   echo "--- $label: peak per GPU"
   awk -F', ' '{if ($2 + 0 > m[$1]) m[$1] = $2 + 0} END {for (g in m) printf "GPU %s: %d MiB\n", g, m[g]}' $OUT/$label.gpu | sort
   echo "--- $label: processes per GPU (peak of each process)"

@@ -88,17 +88,74 @@ namespace multigrid
                const std::uint64_t              size)
       {
         const std::lock_guard<std::mutex> lock(mutex());
+        // the hook runs after the allocation
+        check_pending(std::string(space.name) == "Cuda" ? size : 0);
         entries()[ptr] = Entry{space.name, label, size};
       }
 
+      // the hook runs before the memory is freed
       static void
-      deallocate(const Kokkos::Tools::SpaceHandle,
-                 const char *,
-                 const void *ptr,
-                 const std::uint64_t)
+      deallocate(const Kokkos::Tools::SpaceHandle space,
+                 const char                      *label,
+                 const void                      *ptr,
+                 const std::uint64_t              size)
       {
         const std::lock_guard<std::mutex> lock(mutex());
+        check_pending(0);
         entries().erase(ptr);
+        if (std::string(space.name) == "Cuda" && size >= min_checked_size)
+          pending() = Pending{label, size, device_free_bytes(), true};
+      }
+
+      // Freed blocks of at least min_checked_size bytes after which the free
+      // memory of the GPU did not grow: label, size -> count.
+      static std::map<std::pair<std::string, std::uint64_t>, std::uint64_t> &
+      not_returned()
+      {
+        static std::map<std::pair<std::string, std::uint64_t>, std::uint64_t> map;
+        return map;
+      }
+
+      // Call with the mutex held. n_allocated: bytes allocated on the GPU
+      // since the pending block was freed.
+      static void
+      check_pending(const std::uint64_t n_allocated)
+      {
+        if (!pending().valid)
+          return;
+        pending().valid = false;
+        if (device_free_bytes() + n_allocated < pending().free_before + pending().size / 2)
+          not_returned()[{pending().label, pending().size}] += 1;
+      }
+
+      static constexpr std::uint64_t min_checked_size = 16 * 1048576;
+
+    private:
+      struct Pending
+      {
+        std::string   label;
+        std::uint64_t size;
+        std::uint64_t free_before;
+        bool          valid = false;
+      };
+
+      static Pending &
+      pending()
+      {
+        static Pending p;
+        return p;
+      }
+
+      static std::uint64_t
+      device_free_bytes()
+      {
+#ifdef KOKKOS_ENABLE_CUDA
+        std::size_t free_bytes = 0, total_bytes = 0;
+        cudaMemGetInfo(&free_bytes, &total_bytes);
+        return free_bytes;
+#else
+        return 0;
+#endif
       }
     };
   } // namespace internal
@@ -151,6 +208,34 @@ namespace multigrid
       out << "    " << sorted[i].first / 1048576. << " MiB = " << groups[sorted[i].second] << " x "
           << std::get<2>(sorted[i].second) / 1048576. << " MiB  [" << std::get<0>(sorted[i].second)
           << "] " << std::get<1>(sorted[i].second) << std::endl;
+  }
+
+
+
+  // The blocks this rank has freed since the last call without the GPU
+  // getting the memory back (blocks of 16 MiB and more; the other processes
+  // on the GPU must be idle). Not collective.
+  inline void
+  print_unreturned_kokkos_allocations(const std::string &label, std::ostream &out)
+  {
+    const std::lock_guard<std::mutex> lock(internal::LiveAllocations::mutex());
+    internal::LiveAllocations::check_pending(0);
+
+    std::vector<std::tuple<std::uint64_t, std::uint64_t, std::string>> sorted;
+    std::uint64_t                                                      total = 0;
+    for (const auto &[key, count] : internal::LiveAllocations::not_returned())
+      {
+        sorted.emplace_back(count * key.second, count, key.first);
+        total += count * key.second;
+      }
+    std::sort(sorted.rbegin(), sorted.rend());
+
+    out << "Freed by this rank and not returned to the GPU, " << label << ": "
+        << total / 1048576. << " MiB" << std::endl;
+    for (const auto &[bytes, count, name] : sorted)
+      out << "    " << bytes / 1048576. << " MiB = " << count << " x " << bytes / count / 1048576.
+          << " MiB  " << name << std::endl;
+    internal::LiveAllocations::not_returned().clear();
   }
 
 

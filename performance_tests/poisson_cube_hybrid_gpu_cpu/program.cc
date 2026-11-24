@@ -363,6 +363,8 @@ namespace hybrid
               multigrid::print_live_kokkos_allocations("cycle destroyed", std::cout);
             multigrid::release_device_vector_pools();
             multigrid::print_device_memory("vector pools released", layout.comm_gpu, std::cout);
+            if (is_root)
+              multigrid::print_unreturned_kokkos_allocations("this cycle", std::cout);
           }
 
         if (is_root)
