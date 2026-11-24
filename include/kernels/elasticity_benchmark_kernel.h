@@ -436,16 +436,18 @@ namespace Benchmark
                       r_f2t[p] = wdetJ * (sigma_xz * dtdx + sigma_yz * dtdy + sigma_zz * dtdz);
                     }
 
-                  if constexpr (one_thread_per_team)
-                    for (int p = 0; p < nq; ++p)
-                      {
-                        s_f[(tid * 6 + 0) * nq + p] = r_f1r[p];
-                        s_f[(tid * 6 + 1) * nq + p] = r_f1s[p];
-                        s_f[(tid * 6 + 2) * nq + p] = r_f1t[p];
-                        s_f[(tid * 6 + 3) * nq + p] = r_f2r[p];
-                        s_f[(tid * 6 + 4) * nq + p] = r_f2s[p];
-                        s_f[(tid * 6 + 5) * nq + p] = r_f2t[p];
-                      }
+                  if (one_thread_per_team) // compile-time constant
+                    {
+                      for (int p = 0; p < nq; ++p)
+                        {
+                          s_f[(tid * 6 + 0) * nq + p] = r_f1r[p];
+                          s_f[(tid * 6 + 1) * nq + p] = r_f1s[p];
+                          s_f[(tid * 6 + 2) * nq + p] = r_f1t[p];
+                          s_f[(tid * 6 + 3) * nq + p] = r_f2r[p];
+                          s_f[(tid * 6 + 4) * nq + p] = r_f2s[p];
+                          s_f[(tid * 6 + 5) * nq + p] = r_f2t[p];
+                        }
+                    }
                 }
               team_member.team_barrier();
 
@@ -466,14 +468,16 @@ namespace Benchmark
                           const int q = tid % (nq * nq) / nq;
                           const int r = tid % nq;
 
-                          if constexpr (one_thread_per_team)
-                            for (int p = 0; p < nq; ++p)
-                              {
-                                r_f1s[p] = s_f[(tid * 6 + 1) * nq + p];
-                                r_f1t[p] = s_f[(tid * 6 + 2) * nq + p];
-                                r_f2s[p] = s_f[(tid * 6 + 4) * nq + p];
-                                r_f2t[p] = s_f[(tid * 6 + 5) * nq + p];
-                              }
+                          if (one_thread_per_team) // compile-time constant
+                            {
+                              for (int p = 0; p < nq; ++p)
+                                {
+                                  r_f1s[p] = s_f[(tid * 6 + 1) * nq + p];
+                                  r_f1t[p] = s_f[(tid * 6 + 2) * nq + p];
+                                  r_f2s[p] = s_f[(tid * 6 + 4) * nq + p];
+                                  r_f2t[p] = s_f[(tid * 6 + 5) * nq + p];
+                                }
+                            }
 
 #pragma unroll
                           for (int p = 0; p < nq; ++p)
@@ -496,12 +500,14 @@ namespace Benchmark
                       int q = tid % (nq * nq) / nq;
                       int r = tid % nq;
 
-                      if constexpr (one_thread_per_team)
-                        for (int n = 0; n < nq; ++n)
-                          {
-                            r_f1r[n] = s_f[(tid * 6 + 0) * nq + n];
-                            r_f2r[n] = s_f[(tid * 6 + 3) * nq + n];
-                          }
+                      if (one_thread_per_team) // compile-time constant
+                        {
+                          for (int n = 0; n < nq; ++n)
+                            {
+                              r_f1r[n] = s_f[(tid * 6 + 0) * nq + n];
+                              r_f2r[n] = s_f[(tid * 6 + 3) * nq + n];
+                            }
+                        }
 
 // copy to register
 #pragma unroll
