@@ -2,7 +2,8 @@
 // benchmarks with the geometry of Portable::MatrixFree and gather/scatter on
 // the global vectors, on the curved, sheared mesh of deformed_mesh_util.h
 // against the CPU FEValues reference, in 3d with fe_degree + 1 and
-// fe_degree + 2 (the benchmark's) quadrature points per direction.
+// fe_degree + 2 (the benchmark's) quadrature points per direction; also
+// vmult_benchmark_strided(), without register blocking.
 
 #include <deal.II/base/function.h>
 
@@ -83,6 +84,14 @@ test()
   op.vmult_benchmark(dst, src);
   Kokkos::fence();
   report("vmult_benchmark", relative_l2_difference(dst, dst_ref), 1e-12);
+
+  // without register blocking, one thread per pencil and teams of 64 threads
+  op.vmult_benchmark_strided(dst, src);
+  Kokkos::fence();
+  report("vmult_benchmark_strided", relative_l2_difference(dst, dst_ref), 1e-12);
+  op.vmult_benchmark_strided(dst, src, 64);
+  Kokkos::fence();
+  report("vmult_benchmark_strided(64)", relative_l2_difference(dst, dst_ref), 1e-12);
 }
 
 

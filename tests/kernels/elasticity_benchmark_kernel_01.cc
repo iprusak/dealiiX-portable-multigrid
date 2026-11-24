@@ -5,6 +5,8 @@
 // cells, QGauss(nq), for element-local vectors u: nq = nm + 1 as in the
 // benchmark, and nq = nm, nm + 2. Two elements per batch, so the last batch
 // is padded, and one or two teams, so a team goes through several batches.
+// Then the same without register blocking (strided loops), with one thread
+// per pencil and with teams of 7 threads (on a host backend: one thread).
 
 #include <deal.II/base/quadrature_lib.h>
 
@@ -36,9 +38,9 @@ using namespace dealii;
 constexpr double lambda = 1.7;
 constexpr double mu     = 0.6;
 
-template <unsigned int nm, unsigned int nq>
+template <unsigned int nm, unsigned int nq, bool register_blocking = true>
 void
-test(const unsigned int n_teams)
+test(const unsigned int n_teams, const unsigned int team_size = 0)
 {
   using Kernel                    = Benchmark::LinearElasticityKernel<double, nm, nq>;
   constexpr unsigned int dim      = 3;
@@ -46,8 +48,10 @@ test(const unsigned int n_teams)
   constexpr unsigned int n_nodes  = nm * nm * nm;
   constexpr unsigned int n_points = nq * nq * nq;
 
-  deallog << "degree = " << degree << ", n_q_points_1d = " << nq << ", teams = " << n_teams
-          << std::endl;
+  deallog << "degree = " << degree << ", n_q_points_1d = " << nq << ", teams = " << n_teams;
+  if (!register_blocking)
+    deallog << ", strided, requested team size " << team_size;
+  deallog << std::endl;
 
   Triangulation<dim> tria;
   GridGenerator::subdivided_hyper_rectangle(tria, {3u, 1u, 1u}, Point<dim>(), Point<dim>(3, 1, 1));
@@ -145,7 +149,7 @@ test(const unsigned int n_teams)
 
   Kokkos::deep_copy(d_G, G);
   Kokkos::deep_copy(d_in, in);
-  kernel.apply(d_G, d_in, d_out, n_teams);
+  kernel.template apply<register_blocking>(d_G, d_in, d_out, n_teams, team_size);
   Kokkos::fence();
   Kokkos::deep_copy(out, d_out);
 
@@ -190,4 +194,13 @@ main(int argc, char *argv[])
       test<2, 4>(n_teams);
       test<3, 5>(n_teams);
     }
+
+  for (const unsigned int team_size : {0u, 7u})
+    for (const unsigned int n_teams : {1u, 2u})
+      {
+        test<2, 3, false>(n_teams, team_size);
+        test<3, 4, false>(n_teams, team_size);
+        test<3, 3, false>(n_teams, team_size);
+        test<2, 4, false>(n_teams, team_size);
+      }
 }

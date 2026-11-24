@@ -164,6 +164,14 @@ namespace Portable
     void
     vmult_benchmark(VectorType &dst, const VectorType &src) const;
 
+    // vmult_benchmark() without register blocking: strided loops as in the BK3
+    // kernels, the fluxes of components 1 and 2 in shared memory; team_size = 0
+    // is one thread per pencil as in vmult_benchmark()
+    void
+    vmult_benchmark_strided(VectorType        &dst,
+                            const VectorType  &src,
+                            const unsigned int team_size = 0) const;
+
     // vmult_batched() with the stress computed inside evaluate_and_apply()
     void
     vmult_fused(VectorType &dst, const VectorType &src) const;
@@ -248,6 +256,10 @@ namespace Portable
                  const DeviceVector<number> &dst) const;
 
     using BenchmarkKernel = Benchmark::LinearElasticityKernel<number, fe_degree + 1, n_q_points_1d>;
+
+    template <bool register_blocking>
+    void
+    benchmark_vmult(VectorType &dst, const VectorType &src, const unsigned int team_size) const;
 
     static constexpr bool has_benchmark_kernel =
       dim == 3 && std::is_same_v<Material, LinearElasticMaterial<dim, number>>;
@@ -416,6 +428,31 @@ namespace Portable
     VectorType       &dst,
     const VectorType &src) const
   {
+    benchmark_vmult<true>(dst, src, 0);
+  }
+
+
+
+  template <int dim, int fe_degree, typename number, typename Material, int n_q_points_1d>
+  void
+  ElasticityOperator<dim, fe_degree, number, Material, n_q_points_1d>::vmult_benchmark_strided(
+    VectorType        &dst,
+    const VectorType  &src,
+    const unsigned int team_size) const
+  {
+    benchmark_vmult<false>(dst, src, team_size);
+  }
+
+
+
+  template <int dim, int fe_degree, typename number, typename Material, int n_q_points_1d>
+  template <bool register_blocking>
+  void
+  ElasticityOperator<dim, fe_degree, number, Material, n_q_points_1d>::benchmark_vmult(
+    VectorType        &dst,
+    const VectorType  &src,
+    const unsigned int team_size) const
+  {
     static_assert(has_benchmark_kernel,
                   "vmult_benchmark() needs dim == 3 and LinearElasticMaterial");
 
@@ -433,9 +470,8 @@ namespace Portable
                                                                             dst.get_values(),
                                                                             data.n_cells,
                                                                             data.use_coloring};
-        benchmark_kernels[color].apply(benchmark_geometry[color],
-                                       access,
-                                       benchmark_kernels[color].n_batches());
+        benchmark_kernels[color].template apply<register_blocking>(
+          benchmark_geometry[color], access, benchmark_kernels[color].n_batches(), team_size);
       }
     Kokkos::fence();
 

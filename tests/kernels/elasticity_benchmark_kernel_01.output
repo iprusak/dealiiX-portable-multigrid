@@ -23,3 +23,35 @@ DEAL::degree = 1, n_q_points_1d = 4, teams = 2
 DEAL::OK
 DEAL::degree = 2, n_q_points_1d = 5, teams = 2
 DEAL::OK
+DEAL::degree = 1, n_q_points_1d = 3, teams = 1, strided, requested team size 0
+DEAL::OK
+DEAL::degree = 2, n_q_points_1d = 4, teams = 1, strided, requested team size 0
+DEAL::OK
+DEAL::degree = 2, n_q_points_1d = 3, teams = 1, strided, requested team size 0
+DEAL::OK
+DEAL::degree = 1, n_q_points_1d = 4, teams = 1, strided, requested team size 0
+DEAL::OK
+DEAL::degree = 1, n_q_points_1d = 3, teams = 2, strided, requested team size 0
+DEAL::OK
+DEAL::degree = 2, n_q_points_1d = 4, teams = 2, strided, requested team size 0
+DEAL::OK
+DEAL::degree = 2, n_q_points_1d = 3, teams = 2, strided, requested team size 0
+DEAL::OK
+DEAL::degree = 1, n_q_points_1d = 4, teams = 2, strided, requested team size 0
+DEAL::OK
+DEAL::degree = 1, n_q_points_1d = 3, teams = 1, strided, requested team size 7
+DEAL::OK
+DEAL::degree = 2, n_q_points_1d = 4, teams = 1, strided, requested team size 7
+DEAL::OK
+DEAL::degree = 2, n_q_points_1d = 3, teams = 1, strided, requested team size 7
+DEAL::OK
+DEAL::degree = 1, n_q_points_1d = 4, teams = 1, strided, requested team size 7
+DEAL::OK
+DEAL::degree = 1, n_q_points_1d = 3, teams = 2, strided, requested team size 7
+DEAL::OK
+DEAL::degree = 2, n_q_points_1d = 4, teams = 2, strided, requested team size 7
+DEAL::OK
+DEAL::degree = 2, n_q_points_1d = 3, teams = 2, strided, requested team size 7
+DEAL::OK
+DEAL::degree = 1, n_q_points_1d = 4, teams = 2, strided, requested team size 7
+DEAL::OK

@@ -9,12 +9,17 @@
 // write(c, element, i, j, k, value), for element-local arrays
 // (ElementAccess, as in the benchmark) or a global vector with gather and
 // scatter (ElasticityOperator::vmult_benchmark()). The elements of the last
-// batch beyond the number of elements are passed to Access as well. On a
-// host backend (DefaultExecutionSpace == DefaultHostExecutionSpace, as in the
-// BK3 kernels) a team has one thread: the thread-indexed blocks are loops over
-// tid = team_rank, team_rank + team_size, ..., which run once per thread on
-// the device, and the fluxes of components 1 and 2, kept in registers between
-// stages 2 and 3 on the device, go through shared memory.
+// batch beyond the number of elements are passed to Access as well.
+//
+// apply<register_blocking>(): the thread-indexed blocks are loops over
+// tid = team_rank, team_rank + team_size, ... With register_blocking (the
+// benchmark) a team has nelmtPerBatch * nq^2 threads, so every loop runs once
+// per thread, and the fluxes of components 1 and 2 stay in registers between
+// stages 2 and 3. Without it (strided loops as in the BK3 kernels) the team
+// size is free and these fluxes go through shared memory, so no state is kept
+// in registers across a barrier. On a host backend
+// (DefaultExecutionSpace == DefaultHostExecutionSpace, as in the BK3 kernels)
+// a team has one thread and register blocking is off.
 //
 // nm nodes (degree nm - 1) and nq quadrature points per direction, nm <= nq,
 // elements padded to whole batches:
@@ -84,7 +89,7 @@ namespace Benchmark
     static constexpr unsigned int ncomp = 3;
 
     // teams of one thread on a host backend
-    static constexpr bool one_thread_per_team =
+    static constexpr bool host_backend =
       std::is_same_v<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>;
 
     // the batch size of the benchmark driver: a 10 kB budget for the
@@ -135,26 +140,48 @@ namespace Benchmark
       return nbatches;
     }
 
-    // number of threads per team the kernel requires
+    // threads per team: one per pencil (nelmtPerBatch * nq^2) unless a
+    // smaller team is requested, which needs register_blocking = false; one
+    // on a host backend
     unsigned int
-    team_size() const
+    team_size(const unsigned int requested = 0) const
     {
-      return one_thread_per_team ? 1 : nelmtPerBatch * nq * nq;
+      if (host_backend)
+        return 1;
+      return requested > 0 ? requested : nelmtPerBatch * nq * nq;
     }
 
     // out = A in on the element-local arrays of ElementAccess
+    template <bool register_blocking = true>
     void
-    apply(const View &d_G, const View &d_in, const View &d_out, const unsigned int numBlocks) const
+    apply(const View        &d_G,
+          const View        &d_in,
+          const View        &d_out,
+          const unsigned int numBlocks,
+          const unsigned int requested_team_size = 0) const
     {
-      apply(d_G, ElementAccess<T, nm>{d_in, d_out, n_elements_padded()}, numBlocks);
+      apply<register_blocking>(d_G,
+                               ElementAccess<T, nm>{d_in, d_out, n_elements_padded()},
+                               numBlocks,
+                               requested_team_size);
     }
 
     // numBlocks teams, each one going through every numBlocks-th batch. Not
     // fenced.
-    template <typename Access>
+    template <bool register_blocking = true, typename Access>
     void
-    apply(const View &d_G, const Access &access, const unsigned int numBlocks) const
+    apply(const View        &d_G,
+          const Access      &access,
+          const unsigned int numBlocks,
+          const unsigned int requested_team_size = 0) const
     {
+      // fluxes of components 1 and 2 in shared memory between stages 2 and 3
+      constexpr bool fluxes_in_shared = !register_blocking || host_backend;
+      if (register_blocking && !host_backend && requested_team_size > 0 &&
+          requested_team_size != nelmtPerBatch * nq * nq)
+        throw std::invalid_argument(
+          "LinearElasticityKernel: register blocking needs one thread per pencil");
+
       const std::size_t  nbatches      = this->nbatches;
       const unsigned int nelmtPerBatch = this->nelmtPerBatch;
       const auto         c_basis       = this->c_basis;
@@ -163,11 +190,11 @@ namespace Benchmark
       const T            lambda        = this->lambda;
       const T            mu            = this->mu;
 
-      const unsigned int threadsPerBlock = team_size();
+      const unsigned int threadsPerBlock = team_size(requested_team_size);
 
       // Kokkos with shared memory
       unsigned int ssize = nq * nq + 7 * nelmtPerBatch * nq * nq * nq;
-      if constexpr (one_thread_per_team)
+      if constexpr (fluxes_in_shared)
         ssize += 6 * nelmtPerBatch * nq * nq * nq;
 
       const unsigned int shmem_size = ssize * sizeof(T);
@@ -207,7 +234,7 @@ namespace Benchmark
           T *s_u2   = s_u1 + nelmtPerBatch * nq * nq * nq;
           T *s_u[3] = {s_u0, s_u1, s_u2};
 
-          // one_thread_per_team: the fluxes of components 1 and 2 of all
+          // fluxes_in_shared: the fluxes of components 1 and 2 of all
           // pencils, [pencil][6][p]
           T *s_f = s_u2 + nelmtPerBatch * nq * nq * nq;
 
@@ -436,7 +463,7 @@ namespace Benchmark
                       r_f2t[p] = wdetJ * (sigma_xz * dtdx + sigma_yz * dtdy + sigma_zz * dtdz);
                     }
 
-                  if (one_thread_per_team) // compile-time constant
+                  if (fluxes_in_shared) // compile-time constant
                     {
                       for (int p = 0; p < nq; ++p)
                         {
@@ -468,7 +495,7 @@ namespace Benchmark
                           const int q = tid % (nq * nq) / nq;
                           const int r = tid % nq;
 
-                          if (one_thread_per_team) // compile-time constant
+                          if (fluxes_in_shared) // compile-time constant
                             {
                               for (int p = 0; p < nq; ++p)
                                 {
@@ -500,7 +527,7 @@ namespace Benchmark
                       int q = tid % (nq * nq) / nq;
                       int r = tid % nq;
 
-                      if (one_thread_per_team) // compile-time constant
+                      if (fluxes_in_shared) // compile-time constant
                         {
                           for (int n = 0; n < nq; ++n)
                             {

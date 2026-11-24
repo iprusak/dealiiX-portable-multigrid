@@ -5,6 +5,8 @@
 //   vmult_batched    the batched FEEvaluation of this repository
 //   vmult_fused      vmult_batched with the stress inside evaluate_and_apply()
 //   vmult_benchmark  the kernel of the dealii-X benchmarks
+//   vmult_bench_strided  the same without register blocking (strided loops,
+//                    fluxes in shared memory), one thread per pencil
 // The mesh is a box of 2^k cubes (k = 3 refinements + 0, 1 or 2 directions
 // split once more), deformed so that every cell is a general one and all
 // variants read the geometry per quadrature point; homogeneous Dirichlet
@@ -156,7 +158,8 @@ run(const double target_n_dofs, const int n_repetitions)
     {"vmult_dealii", [&]() { op.vmult_dealii(dst, src); }},
     {"vmult_batched", [&]() { op.vmult_batched(dst, src); }},
     {"vmult_fused", [&]() { op.vmult_fused(dst, src); }},
-    {"vmult_benchmark", [&]() { op.vmult_benchmark(dst, src); }}};
+    {"vmult_benchmark", [&]() { op.vmult_benchmark(dst, src); }},
+    {"vmult_bench_strided", [&]() { op.vmult_benchmark_strided(dst, src); }}};
 
   double reference_norm = 0.;
   for (const auto &[name, vmult] : variants)
@@ -183,7 +186,7 @@ run(const double target_n_dofs, const int n_repetitions)
       if (reference_norm == 0.)
         reference_norm = norm;
 
-      pcout << "  " << std::left << std::setw(16) << name << std::right << " median "
+      pcout << "  " << std::left << std::setw(19) << name << std::right << " median "
             << std::setw(9) << std::setprecision(4) << 1e3 * t_median << " ms, min " << std::setw(9)
             << 1e3 * t_min << " ms, " << std::setw(7) << std::setprecision(4)
             << 1e-9 * n_dofs / t_median << " GDoF/s (median), |A src| rel. diff " << std::scientific
