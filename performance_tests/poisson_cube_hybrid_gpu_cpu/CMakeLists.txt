@@ -29,3 +29,6 @@ target_include_directories(${TARGET} PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../common
 )
+
+# function names in the call stacks of mpi_buffer_trace.h
+set_target_properties(${TARGET} PROPERTIES ENABLE_EXPORTS ON)

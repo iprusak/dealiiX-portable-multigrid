@@ -48,6 +48,7 @@
 #include <vector>
 
 #include "device_memory.h"
+#include "mpi_buffer_trace.h"
 #include "hybrid_benchmark.h"
 #include "hybrid_coarse_solver.h"
 #include "hybrid_cpu_side.h"
@@ -364,7 +365,10 @@ namespace hybrid
             multigrid::release_device_vector_pools();
             multigrid::print_device_memory("vector pools released", layout.comm_gpu, std::cout);
             if (is_root)
-              multigrid::print_unreturned_kokkos_allocations("this cycle", std::cout);
+              {
+                multigrid::print_unreturned_kokkos_allocations("this cycle", std::cout);
+                multigrid::print_mpi_buffers("this cycle", std::cout);
+              }
           }
 
         if (is_root)
