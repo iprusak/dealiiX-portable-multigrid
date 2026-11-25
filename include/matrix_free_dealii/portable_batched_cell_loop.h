@@ -253,7 +253,8 @@ namespace Copy
 
           // compile-time indices only: indexing shared_data at run time
           // puts the whole array on the stack (1 kB of local memory per
-          // thread)
+          // thread). Entry 0 unconditionally: under a run-time condition nvcc
+          // loses the shared address space of its Views (generic LD/ST).
           template <std::size_t... d>
           DEAL_II_HOST_DEVICE void
           reinit_shared_data(
@@ -262,11 +263,13 @@ namespace Copy
               &shared_data,
             std::index_sequence<d...>) const
           {
-            ((d < n_dof_handler ? shared_data[d].reinit(team_member,
-                                                        Functor::n_q_points,
-                                                        batch_size,
-                                                        precomputed_data[d]) :
-                                  void()),
+            Assert(n_dof_handler > 0, ExcInternalError());
+            ((d == 0 || d < n_dof_handler ?
+                shared_data[d].reinit(team_member,
+                                      Functor::n_q_points,
+                                      batch_size,
+                                      precomputed_data[d]) :
+                void()),
              ...);
           }
 
