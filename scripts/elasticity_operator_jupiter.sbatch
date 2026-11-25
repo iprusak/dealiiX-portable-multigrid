@@ -24,6 +24,8 @@
 #   REPS=20            repetitions per variant
 #   BATCHES="0"        cells per batch for all but vmult_dealii, one program
 #                      run each; 0 = the benchmark's rule
+#   MATERIAL=linear    or svk: the Saint Venant-Kirchhoff residual (dealii,
+#                      batched and fused only)
 #   BUILD=$HOME/codes/dealiiX-elasticity/build-elasticity-operator
 # A run whose srun fails with a SLURM communication error ("Unable to confirm
 # allocation", "Socket timed out") is retried up to 3 times, 60 s apart.
@@ -35,6 +37,7 @@ MAX_DOFS=${MAX_DOFS:-4.2e9}
 RUN_TIMEOUT=${RUN_TIMEOUT:-1800}
 REPS=${REPS:-20}
 BATCHES=${BATCHES:-0}
+MATERIAL=${MATERIAL:-linear}
 
 cd "$(dirname "$BUILD")"
 source scripts/jupiter/env.sh "${DEAL_II_DIR:-$WORK/dealii/dealii-master}"
@@ -56,10 +59,10 @@ for degree in $DEGREES; do
     for batch in $BATCHES; do
       start_line=$(wc -l < "$SAMPLES")
       echo
-      echo "=============== degree $degree, target $dofs DoFs, cells per batch $batch"
+      echo "=============== degree $degree, target $dofs DoFs, cells per batch $batch, $MATERIAL"
       for attempt in 1 2 3; do
         timeout $RUN_TIMEOUT srun --mpi=pspmix --ntasks=4 --cpus-per-task=72 --cpu-bind=cores \
-          --gpu-bind=closest $PROGRAM $degree $dofs $REPS $batch 2> "$ERRORS"
+          --gpu-bind=closest $PROGRAM $degree $dofs $REPS $batch $MATERIAL 2> "$ERRORS"
         status=$?
         cat "$ERRORS" >&2
         if [ $status -ne 0 ] && grep -q -e "Unable to confirm allocation" -e "Socket timed out" "$ERRORS"; then
