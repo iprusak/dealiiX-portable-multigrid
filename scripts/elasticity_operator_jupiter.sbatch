@@ -24,8 +24,7 @@
 #   REPS=20            repetitions per variant
 #   BATCHES="0"        cells per batch for all but vmult_dealii, one program
 #                      run each; 0 = the benchmark's rule
-#   MATERIAL=linear    or svk: the Saint Venant-Kirchhoff residual (dealii,
-#                      batched and fused only)
+#   MATERIAL=linear    or svk: the Saint Venant-Kirchhoff residual
 #   BUILD=$HOME/codes/dealiiX-elasticity/build-elasticity-operator
 # A run whose srun fails with a SLURM communication error ("Unable to confirm
 # allocation", "Socket timed out") is retried up to 3 times, 60 s apart.

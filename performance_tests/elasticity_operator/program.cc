@@ -19,8 +19,8 @@
 // All variants but vmult_dealii (one cell per team) run with the same batch:
 // cells_per_batch, or with 0 the benchmark's rule (10 kB of shared values per
 // batch, 1 to 32 cells). Every line prints the batch it ran with.
-// material svk: the Saint Venant-Kirchhoff residual R(u) instead, only by the
-// FEEvaluation-based variants (dealii, batched, fused), src scaled by 0.05.
+// material svk: the Saint Venant-Kirchhoff residual R(u) instead, src scaled
+// by 0.05.
 //
 //   ./program degree [n_dofs (default 1e7)] [n_repetitions (default 20)]
 //             [cells_per_batch (default 0)] [material linear|svk (default linear)]
@@ -174,25 +174,16 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
     unsigned int          batch;
     std::function<void()> vmult;
   };
-  std::vector<Variant> variants = {
+  const std::vector<Variant> variants = {
     {"vmult_dealii", 1, [&]() { op.vmult_dealii(dst, src); }},
     {"vmult_batched", op.cells_per_batch_batched(), [&]() { op.vmult_batched(dst, src); }},
-    {"vmult_fused", op.cells_per_batch_batched(), [&]() { op.vmult_fused(dst, src); }}};
-  // the hand-written kernels hard-code the linear material
-  if constexpr (linear)
-    {
-      variants.push_back({"vmult_benchmark", op.cells_per_batch_benchmark(), [&]() {
-                            op.vmult_benchmark(dst, src);
-                          }});
-      variants.push_back({"vmult_bench_strided", op.cells_per_batch_benchmark(), [&]() {
-                            op.vmult_benchmark_strided(dst, src);
-                          }});
-      variants.push_back(
-        {"vmult_bk3", op.cells_per_batch_bk3(), [&]() { op.vmult_bk3(dst, src); }});
-      variants.push_back({"vmult_bk3_registers", op.cells_per_batch_bk3(), [&]() {
-                            op.vmult_bk3_registers(dst, src);
-                          }});
-    }
+    {"vmult_fused", op.cells_per_batch_batched(), [&]() { op.vmult_fused(dst, src); }},
+    {"vmult_benchmark", op.cells_per_batch_benchmark(), [&]() { op.vmult_benchmark(dst, src); }},
+    {"vmult_bench_strided",
+     op.cells_per_batch_benchmark(),
+     [&]() { op.vmult_benchmark_strided(dst, src); }},
+    {"vmult_bk3", op.cells_per_batch_bk3(), [&]() { op.vmult_bk3(dst, src); }},
+    {"vmult_bk3_registers", op.cells_per_batch_bk3(), [&]() { op.vmult_bk3_registers(dst, src); }}};
 
   double reference_norm = 0.;
   for (const auto &[name, batch, vmult] : variants)
