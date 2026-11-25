@@ -52,6 +52,7 @@ set(_benchmarks
   comm_microbench
   elasticity_benchmark_kernel
   elasticity_operator
+  elasticity_residual
   hanging_nodes_comparison
   hanging_nodes_operator
   mg_transfer_comparison

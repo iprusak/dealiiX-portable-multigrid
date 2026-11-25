@@ -19,11 +19,9 @@
 // All variants but vmult_dealii (one cell per team) run with the same batch:
 // cells_per_batch, or with 0 the benchmark's rule (10 kB of shared values per
 // batch, 1 to 32 cells). Every line prints the batch it ran with.
-// material svk: the Saint Venant-Kirchhoff residual R(u) instead, src scaled
-// by 0.05.
 //
 //   ./program degree [n_dofs (default 1e7)] [n_repetitions (default 20)]
-//             [cells_per_batch (default 0)] [material linear|svk (default linear)]
+//             [cells_per_batch (default 0)]
 
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/function.h>
@@ -61,7 +59,6 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 #include "operators/portable_elasticity_operator.h"
@@ -88,13 +85,13 @@ device_memory_used()
 
 
 
-template <int degree, typename Material>
+template <int degree>
 int
 run(const double target_n_dofs, const int n_repetitions, const unsigned int cells_per_batch)
 {
-  constexpr int  dim    = 3;
-  constexpr bool linear = std::is_same_v<Material, Portable::LinearElasticMaterial<dim, Number>>;
-  using Operator        = Portable::ElasticityOperator<dim, degree, Number, Material, degree + 1>;
+  constexpr int dim = 3;
+  using Material    = Portable::LinearElasticMaterial<dim, Number>;
+  using Operator    = Portable::ElasticityOperator<dim, degree, Number, Material, degree + 1>;
 
   const MPI_Comm     comm = MPI_COMM_WORLD;
   ConditionalOStream pcout(std::cout, Utilities::MPI::this_mpi_process(comm) == 0);
@@ -148,8 +145,6 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
       host.local_element(i) = std::sin(0.001 * (host.get_partitioner()->local_to_global(i)));
     constraints.set_zero(host);
     src.import_elements(host, VectorOperation::insert);
-    if (!linear)
-      src *= 0.05;
   }
   Kokkos::fence();
   const double setup_time    = setup_timer.wall_time();
@@ -158,7 +153,7 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
   const double memory_max    = Utilities::MPI::max(memory_after, comm);
 
   const types::global_dof_index n_dofs = dof_handler.n_dofs();
-  pcout << (linear ? "linear" : "svk") << " degree=" << degree << " n_q_points_1d=" << degree + 1
+  pcout << "degree=" << degree << " n_q_points_1d=" << degree + 1
         << " ranks=" << Utilities::MPI::n_mpi_processes(comm)
         << " cells=" << tria.n_global_active_cells() << " (" << repetitions[0] << "x"
         << repetitions[1] << "x" << repetitions[2] << ", " << n_refinements
@@ -229,31 +224,6 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
 
 
 
-template <typename Material>
-int
-run_degree(const int          degree,
-           const double       n_dofs,
-           const int          n_repetitions,
-           const unsigned int cells_per_batch)
-{
-  switch (degree)
-    {
-      case 1:
-        return run<1, Material>(n_dofs, n_repetitions, cells_per_batch);
-      case 2:
-        return run<2, Material>(n_dofs, n_repetitions, cells_per_batch);
-      case 3:
-        return run<3, Material>(n_dofs, n_repetitions, cells_per_batch);
-      case 4:
-        return run<4, Material>(n_dofs, n_repetitions, cells_per_batch);
-      default:
-        std::cerr << "degree must be in [1, 4]" << std::endl;
-        return 1;
-    }
-}
-
-
-
 int
 main(int argc, char *argv[])
 {
@@ -263,8 +233,7 @@ main(int argc, char *argv[])
     {
       std::cerr << "usage: " << argv[0]
                 << " degree [n_dofs (default 1e7)] [n_repetitions (default 20)]"
-                << " [cells_per_batch (default 0)] [material linear|svk (default linear)]"
-                << std::endl;
+                << " [cells_per_batch (default 0)]" << std::endl;
       return 1;
     }
 
@@ -272,15 +241,19 @@ main(int argc, char *argv[])
   const double       n_dofs          = (argc > 2) ? std::atof(argv[2]) : 1e7;
   const int          n_repetitions   = (argc > 3) ? std::atoi(argv[3]) : 20;
   const unsigned int cells_per_batch = (argc > 4) ? std::atoi(argv[4]) : 0;
-  const std::string  material        = (argc > 5) ? argv[5] : "linear";
-  if (material != "linear" && material != "svk")
-    {
-      std::cerr << "material must be linear or svk" << std::endl;
-      return 1;
-    }
 
-  return material == "linear" ? run_degree<Portable::LinearElasticMaterial<3, Number>>(
-                                  degree, n_dofs, n_repetitions, cells_per_batch) :
-                                run_degree<Portable::SaintVenantKirchhoffMaterial<3, Number>>(
-                                  degree, n_dofs, n_repetitions, cells_per_batch);
+  switch (degree)
+    {
+      case 1:
+        return run<1>(n_dofs, n_repetitions, cells_per_batch);
+      case 2:
+        return run<2>(n_dofs, n_repetitions, cells_per_batch);
+      case 3:
+        return run<3>(n_dofs, n_repetitions, cells_per_batch);
+      case 4:
+        return run<4>(n_dofs, n_repetitions, cells_per_batch);
+      default:
+        std::cerr << "degree must be in [1, 4]" << std::endl;
+        return 1;
+    }
 }
