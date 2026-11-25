@@ -509,7 +509,7 @@ namespace multigrid
   {
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default> src, dst_dealii, dst_bk3,
       dst_bk3_abstracted, dst_batched, dst_batched_fused, dst_batched_view, src_new, dst_dealii_new,
-      dst_batched_copy, dst_batched_copy_fused, dst_bk3_registers;
+      dst_batched_copy, dst_batched_copy_fused, dst_batched_copy_fused_G, dst_bk3_registers;
     system_matrix->initialize_dof_vector(src);
     system_matrix->initialize_dof_vector(dst_dealii);
     system_matrix->initialize_dof_vector(dst_bk3);
@@ -519,6 +519,7 @@ namespace multigrid
     system_matrix->initialize_dof_vector(dst_batched_view);
     system_matrix->initialize_dof_vector(dst_batched_copy);
     system_matrix->initialize_dof_vector(dst_batched_copy_fused);
+    system_matrix->initialize_dof_vector(dst_batched_copy_fused_G);
     system_matrix->initialize_dof_vector(dst_bk3_registers);
     // vmult_dealii_new() drives Copy::Portable::MatrixFree, a separate
     // MatrixFree instance from the one above (matrix_free_new vs. matrix_
@@ -562,6 +563,7 @@ namespace multigrid
     system_matrix->vmult_dealii_new(dst_dealii_new, src_new);
     system_matrix->vmult_batched(dst_batched_copy, src);
     system_matrix->vmult_fused(dst_batched_copy_fused, src);
+    system_matrix->vmult_fused_G(dst_batched_copy_fused_G, src);
     system_matrix->vmult_bk3_registers(dst_bk3_registers, src);
 
     // Belt-and-suspenders: each vmult already leaves the constrained entries
@@ -576,6 +578,7 @@ namespace multigrid
     system_matrix->get_matrix_free().set_constrained_values(0., dst_batched_view);
     system_matrix->get_matrix_free().set_constrained_values(0., dst_batched_copy);
     system_matrix->get_matrix_free().set_constrained_values(0., dst_batched_copy_fused);
+    system_matrix->get_matrix_free().set_constrained_values(0., dst_batched_copy_fused_G);
     system_matrix->get_matrix_free().set_constrained_values(0., dst_bk3_registers);
     system_matrix->get_matrix_free_new().set_constrained_values(0., dst_dealii_new);
 
@@ -597,6 +600,7 @@ namespace multigrid
     const double rel_err_dealii_new     = rel_err_vs_bk3(dst_dealii_new);
     const double rel_err_batched_copy   = rel_err_vs_bk3(dst_batched_copy);
     const double rel_err_batched_copy_fused = rel_err_vs_bk3(dst_batched_copy_fused);
+    const double rel_err_batched_copy_fused_G = rel_err_vs_bk3(dst_batched_copy_fused_G);
     const double rel_err_bk3_registers      = rel_err_vs_bk3(dst_bk3_registers);
 
     // -- performance: best-of-5, same methodology as the rest of this file --
@@ -640,6 +644,8 @@ namespace multigrid
       time_vmult([&]() { system_matrix->vmult_batched(dst_batched_copy, src); });
     const double best_batched_copy_fused =
       time_vmult([&]() { system_matrix->vmult_fused(dst_batched_copy_fused, src); });
+    const double best_batched_copy_fused_G =
+      time_vmult([&]() { system_matrix->vmult_fused_G(dst_batched_copy_fused_G, src); });
     // vmult_bk3() with register blocking
     const double best_bk3_registers =
       time_vmult([&]() { system_matrix->vmult_bk3_registers(dst_bk3_registers, src); });
@@ -656,6 +662,7 @@ namespace multigrid
     vmult_timing_table.add_value("t_dealii_new", best_dealii_new);
     vmult_timing_table.add_value("t_batched_copy", best_batched_copy);
     vmult_timing_table.add_value("t_batched_copy_fused", best_batched_copy_fused);
+    vmult_timing_table.add_value("t_batched_copy_fused_G", best_batched_copy_fused_G);
     vmult_timing_table.add_value("t_bk3_registers", best_bk3_registers);
 
     // Speedups are relative to vmult_dealii() (real deal.II kernels) --
@@ -676,6 +683,8 @@ namespace multigrid
     vmult_speedup_table.add_value("batched_copy_fused_vs_dealii",
                                   best_dealii / best_batched_copy_fused);
     vmult_speedup_table.add_value("batched_copy_fused_vs_bk3", best_bk3 / best_batched_copy_fused);
+    vmult_speedup_table.add_value("batched_copy_fused_G_vs_bk3",
+                                  best_bk3 / best_batched_copy_fused_G);
     vmult_speedup_table.add_value("bk3_registers_vs_bk3", best_bk3 / best_bk3_registers);
 
     // Correctness (rel_err) stays relative to vmult_bk3(), the validated
@@ -690,6 +699,7 @@ namespace multigrid
     vmult_norm_table.add_value("rel_err_dealii_new_vs_bk3", rel_err_dealii_new);
     vmult_norm_table.add_value("rel_err_batched_copy_vs_bk3", rel_err_batched_copy);
     vmult_norm_table.add_value("rel_err_batched_copy_fused_vs_bk3", rel_err_batched_copy_fused);
+    vmult_norm_table.add_value("rel_err_batched_copy_fused_G_vs_bk3", rel_err_batched_copy_fused_G);
     vmult_norm_table.add_value("rel_err_bk3_registers_vs_bk3", rel_err_bk3_registers);
   }
 
@@ -819,6 +829,8 @@ namespace multigrid
             vmult_timing_table.set_precision("t_batched_copy", 4);
             vmult_timing_table.set_scientific("t_batched_copy_fused", true);
             vmult_timing_table.set_precision("t_batched_copy_fused", 4);
+            vmult_timing_table.set_scientific("t_batched_copy_fused_G", true);
+            vmult_timing_table.set_precision("t_batched_copy_fused_G", 4);
             vmult_timing_table.set_scientific("t_bk3_registers", true);
             vmult_timing_table.set_precision("t_bk3_registers", 4);
 
@@ -831,6 +843,7 @@ namespace multigrid
             vmult_speedup_table.set_precision("batched_copy_vs_dealii", 3);
             vmult_speedup_table.set_precision("batched_copy_fused_vs_dealii", 3);
             vmult_speedup_table.set_precision("batched_copy_fused_vs_bk3", 3);
+            vmult_speedup_table.set_precision("batched_copy_fused_G_vs_bk3", 3);
             vmult_speedup_table.set_precision("bk3_registers_vs_bk3", 3);
 
             vmult_norm_table.set_scientific("rel_err_dealii_vs_bk3", true);
@@ -849,6 +862,8 @@ namespace multigrid
             vmult_norm_table.set_precision("rel_err_batched_copy_vs_bk3", 3);
             vmult_norm_table.set_scientific("rel_err_batched_copy_fused_vs_bk3", true);
             vmult_norm_table.set_precision("rel_err_batched_copy_fused_vs_bk3", 3);
+            vmult_norm_table.set_scientific("rel_err_batched_copy_fused_G_vs_bk3", true);
+            vmult_norm_table.set_precision("rel_err_batched_copy_fused_G_vs_bk3", 3);
             vmult_norm_table.set_scientific("rel_err_bk3_registers_vs_bk3", true);
             vmult_norm_table.set_precision("rel_err_bk3_registers_vs_bk3", 3);
 
