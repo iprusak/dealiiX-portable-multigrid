@@ -146,7 +146,7 @@ namespace Portable
     using VectorType = LinearAlgebra::distributed::Vector<number, MemorySpace::Default>;
 
     // cells_per_batch: the batch of vmult_batched(), vmult_fused() and the
-    // benchmark and BK3 kernels; 0 = each one's own rule
+    // benchmark and BK3 kernels; 0 = the benchmark's rule for all of them
     ElasticityOperator(const DoFHandler<dim>           &dof_handler,
                        const AffineConstraints<number> &constraints,
                        const Material                  &material,
@@ -178,7 +178,7 @@ namespace Portable
 
     // the BK3-style counterpart of the benchmark kernel
     // (kernels/bk3_elasticity_kokkos_kernel.h: shape data in shared memory,
-    // gather and scatter as steps of their own, BK3's batches and teams),
+    // gather and scatter as steps of their own, BK3's persistent teams),
     // without and with register blocking
     void
     vmult_bk3(VectorType &dst, const VectorType &src) const;
@@ -292,7 +292,7 @@ namespace Portable
 
     MatrixFree<dim, number> matrix_free;
 
-    // for the batched cell loops, numbers::invalid_unsigned_int: own rule
+    // cells per batch of all batched variants
     unsigned int requested_batch_size;
 
     // per color, for vmult_benchmark()
@@ -317,7 +317,8 @@ namespace Portable
     const Material                  &material,
     const bool                       overlap_communication_computation,
     const unsigned int               cells_per_batch)
-    : requested_batch_size(cells_per_batch > 0 ? cells_per_batch : numbers::invalid_unsigned_int)
+    : requested_batch_size(cells_per_batch > 0 ? cells_per_batch :
+                                                 BenchmarkKernel::default_elements_per_batch())
     , material(material)
   {
     AssertDimension(dof_handler.get_fe().n_components(), dim);
@@ -348,21 +349,10 @@ namespace Portable
           {
             const auto data = matrix_free.get_data(color);
 
-            benchmark_kernels.emplace_back(data.n_cells,
-                                           cells_per_batch > 0 ?
-                                             cells_per_batch :
-                                             BenchmarkKernel::default_elements_per_batch(),
-                                           basis,
-                                           dbasis,
-                                           material.lambda,
-                                           material.mu);
-            bk3_kernels.emplace_back(data.n_cells,
-                                     cells_per_batch > 0 ? cells_per_batch :
-                                                           BK3Kernel::default_elements_per_batch(),
-                                     basis,
-                                     dbasis,
-                                     material.lambda,
-                                     material.mu);
+            benchmark_kernels.emplace_back(
+              data.n_cells, requested_batch_size, basis, dbasis, material.lambda, material.mu);
+            bk3_kernels.emplace_back(
+              data.n_cells, requested_batch_size, basis, dbasis, material.lambda, material.mu);
             // both kernels read G of their padded last batch
             benchmark_geometry.push_back(internal::benchmark_geometry<dim, number, n_q_points_1d>(
               data,

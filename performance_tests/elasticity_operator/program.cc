@@ -9,16 +9,16 @@
 //                    fluxes in shared memory), one thread per pencil
 //   vmult_bk3        the BK3-style counterpart of the benchmark kernel (shape
 //                    data in shared memory, separate gather and scatter, BK3's
-//                    batches and persistent teams), strided loops
+//                    persistent teams), strided loops
 //   vmult_bk3_registers  the same with register blocking
 // The mesh is a box of 2^k cubes (k = 3 refinements + 0, 1 or 2 directions
 // split once more), deformed so that every cell is a general one and all
 // variants read the geometry per quadrature point; homogeneous Dirichlet
 // conditions on the boundary. Times are the maximum over the ranks, after
 // warm-up; |A src| relative to vmult_dealii checks that the variants agree.
-// cells_per_batch > 0 sets the same batch for all variants but vmult_dealii
-// (one cell per team); 0 keeps each kernel's own rule. Every line prints the
-// batch it ran with.
+// All variants but vmult_dealii (one cell per team) run with the same batch:
+// cells_per_batch, or with 0 the benchmark's rule (10 kB of shared values per
+// batch, 1 to 32 cells). Every line prints the batch it ran with.
 //
 //   ./program degree [n_dofs (default 1e7)] [n_repetitions (default 20)]
 //             [cells_per_batch (default 0)]

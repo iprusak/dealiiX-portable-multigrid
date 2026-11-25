@@ -22,8 +22,8 @@
 #   MAX_DOFS=4.2e9     upper end of the ladder (total DoFs)
 #   RUN_TIMEOUT=1800   seconds per program run (an OOM can hang the ranks)
 #   REPS=20            repetitions per variant
-#   BATCHES="0"        cells per batch, one program run each; 0 = each
-#                      kernel's own rule, n > 0 = n for all but vmult_dealii
+#   BATCHES="0"        cells per batch for all but vmult_dealii, one program
+#                      run each; 0 = the benchmark's rule
 #   BUILD=$HOME/codes/dealiiX-elasticity/build-elasticity-operator
 # A run whose srun fails with a SLURM communication error ("Unable to confirm
 # allocation", "Socket timed out") is retried up to 3 times, 60 s apart.
