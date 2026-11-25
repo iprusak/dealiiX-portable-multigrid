@@ -293,64 +293,24 @@ namespace Copy
           }
 
           /**
-           * Where the compressed inverse Jacobian and JxW of a cell are
-           * stored, PrecomputedData::data_index_offsets(), and its type.
-           */
-          struct CellGeometry
-          {
-            unsigned int offset;
-            bool         is_general;
-            bool         is_cartesian;
-          };
-
-          /**
-           * The CellGeometry of cell @p cell, read once for all its points.
-           */
-          DEAL_II_HOST_DEVICE CellGeometry
-          cell_geometry(const int cell) const
-          {
-            const auto type = precomputed_data->cell_type(cell);
-            return {precomputed_data->data_index_offsets(cell),
-                    type == ::dealii::internal::MatrixFreeFunctions::general,
-                    type == ::dealii::internal::MatrixFreeFunctions::cartesian};
-          }
-
-          /**
-           * PrecomputedData::inv_jacobian_index() and JxW_value() for point
-           * @p q of a cell with geometry @p g.
-           */
-          DEAL_II_HOST_DEVICE static unsigned int
-          inv_jacobian_index(const CellGeometry &g, const int q)
-          {
-            return g.offset + (g.is_general ? q : 0);
-          }
-
-          DEAL_II_HOST_DEVICE Number
-          JxW_value(const CellGeometry &g, const int q) const
-          {
-            return g.is_general ?
-                     precomputed_data->JxW(g.offset + q) :
-                     precomputed_data->JxW(g.offset) *
-                       precomputed_data->q_weights(q);
-          }
-
-          /**
            * submit_gradient(q_op(get_gradient(q_point), q_point), q_point)
            * with get_gradient() computed from the reference gradient
            * @p grad_ref ([component][direction]) instead of the one stored in
            * shared_data, and the inverse Jacobian loaded once for both.
-           * @p geometry is the one of the cell of @p q_point.
            */
           template <typename QuadOperation>
           DEAL_II_HOST_DEVICE void
           apply_at_point(const Number (&grad_ref)[n_components_][dim],
                          const int            q_point,
-                         const CellGeometry  &geometry,
                          const QuadOperation &q_op) const
           {
-            const int          q           = cell_q_point(q_point);
-            const unsigned int inv_jac_idx = inv_jacobian_index(geometry, q);
-            const bool         is_cartesian = geometry.is_cartesian;
+            const int          cell = cell_id(q_point);
+            const int          q    = cell_q_point(q_point);
+            const unsigned int inv_jac_idx =
+              precomputed_data->inv_jacobian_index(cell, q);
+            const bool is_cartesian =
+              precomputed_data->cell_type(cell) ==
+              ::dealii::internal::MatrixFreeFunctions::cartesian;
 
             Number inv_jac[dim][dim];
             for (unsigned int d_1 = 0; d_1 < dim; ++d_1)
@@ -377,7 +337,7 @@ namespace Copy
             gradient_type flux = q_op(grad, q_point);
 
             // as submit_gradient()
-            const Number JxW = JxW_value(geometry, q);
+            const Number JxW = precomputed_data->JxW_value(cell, q);
             for (unsigned int c = 0; c < n_components_; ++c)
               for (unsigned int d_1 = 0; d_1 < dim; ++d_1)
                 {
@@ -753,21 +713,11 @@ namespace Copy
           Assert(evaluation_flag == EvaluationFlags::gradients,
                  ExcNotImplemented());
 
-          // writes shared_data->gradients, which the fused pass does not
-          // read; the points of a thread's pencil are in one cell, so the cell
-          // geometry is read once per pencil
-          int          cached_cell = -1;
-          CellGeometry geometry{};
-          const auto   apply =
+          // writes shared_data->gradients, which the fused pass does not read
+          const auto apply =
             [&](const int     q_point,
                 const Number (&grad_ref)[n_components_][dim]) {
-              const int cell = cell_id(q_point);
-              if (cell != cached_cell)
-                {
-                  geometry    = cell_geometry(cell);
-                  cached_cell = cell;
-                }
-              apply_at_point(grad_ref, q_point, geometry, q_op);
+              apply_at_point(grad_ref, q_point, q_op);
             };
 
           // the dispatch of evaluate()
@@ -928,10 +878,11 @@ namespace Copy
                  ExcMessage("get_gradient() requires precomputed inv_jacobian"));
           gradient_type grad;
 
-          const CellGeometry geometry = cell_geometry(cell_id(q_point));
+          const int          cell = cell_id(q_point);
           const unsigned int inv_jac_idx =
-            inv_jacobian_index(geometry, cell_q_point(q_point));
-          if (geometry.is_cartesian)
+            precomputed_data->inv_jacobian_index(cell, cell_q_point(q_point));
+          if (precomputed_data->cell_type(cell) ==
+              ::dealii::internal::MatrixFreeFunctions::cartesian)
             {
               if constexpr (n_components_ == 1)
                 {
@@ -994,11 +945,13 @@ namespace Copy
           Assert(precomputed_data->JxW.size() > 0,
                  ExcMessage("submit_gradient() requires precomputed JxW"));
 
-          const CellGeometry geometry    = cell_geometry(cell_id(q_point));
-          const int          q           = cell_q_point(q_point);
-          const unsigned int inv_jac_idx = inv_jacobian_index(geometry, q);
-          const Number       JxW         = JxW_value(geometry, q);
-          if (geometry.is_cartesian)
+          const int          cell = cell_id(q_point);
+          const int          q    = cell_q_point(q_point);
+          const unsigned int inv_jac_idx =
+            precomputed_data->inv_jacobian_index(cell, q);
+          const Number JxW = precomputed_data->JxW_value(cell, q);
+          if (precomputed_data->cell_type(cell) ==
+              ::dealii::internal::MatrixFreeFunctions::cartesian)
             {
               if constexpr (n_components_ == 1)
                 {
