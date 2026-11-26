@@ -27,3 +27,7 @@ target_include_directories(${TARGET} PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/../../include
 )
+
+# 7. Materials and degrees to compile
+include(${CMAKE_CURRENT_SOURCE_DIR}/instantiations.cmake)
+elasticity_residual_instantiations(${TARGET})

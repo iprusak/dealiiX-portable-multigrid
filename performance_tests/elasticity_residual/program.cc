@@ -30,6 +30,10 @@
 //
 //   ./program degree [n_dofs (default 1e7)] [n_repetitions (default 20)]
 //             [cells_per_batch (default 0)] [material svk|linear (default svk)]
+//
+// Only the materials and degrees of the CMake variables
+// ELASTICITY_RESIDUAL_MATERIALS and ELASTICITY_RESIDUAL_DEGREES are compiled
+// (instantiations.cmake), all of them by default.
 
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/function.h>
@@ -71,6 +75,25 @@
 #include <vector>
 
 #include "operators/portable_elasticity_operator.h"
+
+#ifndef ELASTICITY_RESIDUAL_SVK
+#  define ELASTICITY_RESIDUAL_SVK 1
+#endif
+#ifndef ELASTICITY_RESIDUAL_LINEAR
+#  define ELASTICITY_RESIDUAL_LINEAR 1
+#endif
+#ifndef ELASTICITY_RESIDUAL_DEGREE_1
+#  define ELASTICITY_RESIDUAL_DEGREE_1 1
+#endif
+#ifndef ELASTICITY_RESIDUAL_DEGREE_2
+#  define ELASTICITY_RESIDUAL_DEGREE_2 1
+#endif
+#ifndef ELASTICITY_RESIDUAL_DEGREE_3
+#  define ELASTICITY_RESIDUAL_DEGREE_3 1
+#endif
+#ifndef ELASTICITY_RESIDUAL_DEGREE_4
+#  define ELASTICITY_RESIDUAL_DEGREE_4 1
+#endif
 
 using namespace dealii;
 
@@ -265,16 +288,28 @@ run_degree(const int          degree,
 {
   switch (degree)
     {
+#if ELASTICITY_RESIDUAL_DEGREE_1
       case 1:
         return run<1, Material>(n_dofs, n_repetitions, cells_per_batch);
+#endif
+#if ELASTICITY_RESIDUAL_DEGREE_2
       case 2:
         return run<2, Material>(n_dofs, n_repetitions, cells_per_batch);
+#endif
+#if ELASTICITY_RESIDUAL_DEGREE_3
       case 3:
         return run<3, Material>(n_dofs, n_repetitions, cells_per_batch);
+#endif
+#if ELASTICITY_RESIDUAL_DEGREE_4
       case 4:
         return run<4, Material>(n_dofs, n_repetitions, cells_per_batch);
+#endif
       default:
-        std::cerr << "degree must be in [1, 4]" << std::endl;
+        (void)n_dofs;
+        (void)n_repetitions;
+        (void)cells_per_batch;
+        std::cerr << "degree " << degree
+                  << " not compiled (ELASTICITY_RESIDUAL_DEGREES, degrees 1 to 4)" << std::endl;
         return 1;
     }
 }
@@ -306,8 +341,21 @@ main(int argc, char *argv[])
       return 1;
     }
 
-  return material == "linear" ? run_degree<Portable::LinearElasticMaterial<3, Number>>(
-                                  degree, n_dofs, n_repetitions, cells_per_batch) :
-                                run_degree<Portable::SaintVenantKirchhoffMaterial<3, Number>>(
-                                  degree, n_dofs, n_repetitions, cells_per_batch);
+#if ELASTICITY_RESIDUAL_LINEAR
+  if (material == "linear")
+    return run_degree<Portable::LinearElasticMaterial<3, Number>>(degree,
+                                                                  n_dofs,
+                                                                  n_repetitions,
+                                                                  cells_per_batch);
+#endif
+#if ELASTICITY_RESIDUAL_SVK
+  if (material == "svk")
+    return run_degree<Portable::SaintVenantKirchhoffMaterial<3, Number>>(degree,
+                                                                         n_dofs,
+                                                                         n_repetitions,
+                                                                         cells_per_batch);
+#endif
+  std::cerr << "material " << material << " not compiled (ELASTICITY_RESIDUAL_MATERIALS)"
+            << std::endl;
+  return 1;
 }
