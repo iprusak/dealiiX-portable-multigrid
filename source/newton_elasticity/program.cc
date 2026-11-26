@@ -13,7 +13,8 @@
 //   ./program [degree (default 2)] [n_refinements (default 2)] [n_load_steps (default 4)]
 //             [g (default 3e-3)] [cg_tolerance (default 1e-10, relative)]
 //             [output (default 1)] [--mesh=file.msh] [--stretch=delta] [--no-predictor]
-//             [--cg-monitor=N]
+//             [--cg-monitor=N] [--pmg] [--outer=cg|fcg] [--coarse-tol=tol]
+//             [--smoothing-degree=k]
 //
 // --mesh reads a hex mesh (Gmsh) in place of the beam; boundary ids are set by
 // position on the bounding box: 0/1 at x_min/x_max, 2/3 y, 4/5 z, 6 elsewhere,
@@ -23,6 +24,11 @@
 // |R| <= 1e-10 |R_jump|, R_jump the residual after adding the boundary values
 // alone. --cg-monitor=N prints the CG residual every N
 // iterations.
+//
+// --pmg preconditions CG by polynomial multigrid (tangent_pmg.h): degrees
+// p, p / 2, ..., 1, Chebyshev of degree --smoothing-degree (default 5), CG to
+// the relative --coarse-tol (default 1e-3) on degree 1, flexible CG outside
+// (--outer=fcg, default) or plain CG (--outer=cg).
 //
 // meshes/alveolar_hex_small.msh: 55200 hexes of an idealized alveolar
 // (Kelvin foam) geometry in [0, 1]^3, e.g.
@@ -71,6 +77,8 @@
 #include <vector>
 
 #include "operators/portable_elasticity_operator.h"
+#include "operators/portable_elasticity_tangent_level_operator.h"
+#include "tangent_pmg.h"
 
 using namespace dealii;
 
@@ -96,52 +104,43 @@ struct PositionFunction : public Function<dim, Number>
 
 
 
-// the operator linearized at the u of the last evaluate_residual(), for CG;
-// with prescribed DoFs (indicator S, D = 1 - S), which the operator does not
-// know about, D A D + S
-template <typename Operator>
-struct LinearizedOperator
+struct Options
 {
-  const Operator    &op;
-  const VectorType  *prescribed = nullptr;
-  const VectorType  *free       = nullptr;
-  mutable VectorType tmp;
-
-  void
-  vmult(VectorType &dst, const VectorType &src) const
-  {
-    if (prescribed == nullptr)
-      {
-        op.vmult_linearized(dst, src);
-        return;
-      }
-    tmp = src;
-    tmp.scale(*free);
-    op.vmult_linearized(dst, tmp);
-    dst.scale(*free);
-    tmp = src;
-    tmp.scale(*prescribed);
-    dst += tmp;
-  }
+  unsigned int n_refinements = 2;
+  unsigned int n_load_steps  = 4;
+  double       g             = 3e-3;
+  double       cg_tolerance  = 1e-10;
+  bool         output        = true;
+  std::string  mesh_file;
+  unsigned int cg_monitor       = 0;
+  double       stretch          = 0.;
+  bool         predictor        = true;
+  bool         pmg              = false;
+  bool         flexible_cg      = true;
+  double       coarse_tolerance = 1e-3;
+  unsigned int smoothing_degree = 5;
 };
 
 
 
 template <int degree>
 int
-run(const unsigned int n_refinements,
-    const unsigned int n_load_steps,
-    const double       g,
-    const double       cg_tolerance,
-    const bool         output,
-    const std::string &mesh_file,
-    const unsigned int cg_monitor,
-    const double       stretch,
-    const bool         predictor)
+run(const Options &options)
 {
   constexpr int dim = 3;
   using Material    = Portable::SaintVenantKirchhoffMaterial<dim, Number>;
   using Operator    = Portable::ElasticityOperator<dim, degree, Number, Material>;
+  using FineLevel   = Portable::ElasticityTangentLevelOperator<dim, degree, Number, Material>;
+
+  const unsigned int n_refinements = options.n_refinements;
+  const unsigned int n_load_steps  = options.n_load_steps;
+  const double       g             = options.g;
+  const double       cg_tolerance  = options.cg_tolerance;
+  const bool         output        = options.output;
+  const std::string &mesh_file     = options.mesh_file;
+  const unsigned int cg_monitor    = options.cg_monitor;
+  const double       stretch       = options.stretch;
+  const bool         predictor     = options.predictor;
 
   const MPI_Comm     comm = MPI_COMM_WORLD;
   ConditionalOStream pcout(std::cout, Utilities::MPI::this_mpi_process(comm) == 0);
@@ -194,26 +193,74 @@ run(const unsigned int n_refinements,
   // symmetry, u_d = 0 on the face at the lower bound in direction d, and with
   // a stretch u_d prescribed on the face at the upper bound, by the driver:
   // Portable::MatrixFree reads constrained DoFs as zero, so the operator gets
-  // the symmetry constraints only
-  AffineConstraints<Number> constraints(locally_owned_dofs, locally_relevant_dofs);
-  if (mesh_file.empty())
-    VectorTools::interpolate_boundary_values(
-      mapping, dof_handler, 0, Functions::ZeroFunction<dim, Number>(dim), constraints);
-  else
-    for (unsigned int d = 0; d < dim; ++d)
-      {
-        ComponentMask mask(dim, false);
-        mask.set(d, true);
-        VectorTools::interpolate_boundary_values(mapping,
-                                                 dof_handler,
-                                                 2 * d,
-                                                 Functions::ZeroFunction<dim, Number>(dim),
-                                                 constraints,
-                                                 mask);
-      }
-  constraints.close();
+  // the symmetry constraints only. The same for every multigrid level.
+  const auto level_setup = [&](const DoFHandler<dim>     &level_dof_handler,
+                               AffineConstraints<Number> &level_constraints,
+                               IndexSet                  &prescribed)
+  {
+    const MappingQ<dim> level_mapping(1);
+    level_constraints.reinit(level_dof_handler.locally_owned_dofs(),
+                             DoFTools::extract_locally_relevant_dofs(level_dof_handler));
+    prescribed = IndexSet(level_dof_handler.n_dofs());
+    if (mesh_file.empty())
+      VectorTools::interpolate_boundary_values(level_mapping,
+                                               level_dof_handler,
+                                               0,
+                                               Functions::ZeroFunction<dim, Number>(dim),
+                                               level_constraints);
+    else
+      for (unsigned int d = 0; d < dim; ++d)
+        {
+          ComponentMask mask(dim, false);
+          mask.set(d, true);
+          VectorTools::interpolate_boundary_values(level_mapping,
+                                                   level_dof_handler,
+                                                   2 * d,
+                                                   Functions::ZeroFunction<dim, Number>(dim),
+                                                   level_constraints,
+                                                   mask);
+          if (stretch != 0.)
+            {
+              std::map<types::global_dof_index, Number> values;
+              VectorTools::interpolate_boundary_values(
+                level_mapping,
+                level_dof_handler,
+                2 * d + 1,
+                Functions::ConstantFunction<dim, Number>(1., dim),
+                values,
+                mask);
+              for (const auto &[i, value] : values)
+                prescribed.add_index(i);
+            }
+        }
+    level_constraints.close();
+  };
 
-  Operator op(dof_handler, constraints, material, false);
+  AffineConstraints<Number> constraints;
+  IndexSet                  prescribed;
+  level_setup(dof_handler, constraints, prescribed);
+
+  FineLevel fine_level(dof_handler, constraints, material, prescribed);
+  Operator &op = fine_level.get_operator();
+
+  std::unique_ptr<TangentPMG<dim, Number, Material>> pmg;
+  if (options.pmg)
+    {
+      pmg = std::make_unique<TangentPMG<dim, Number, Material>>(fine_level,
+                                                                constraints,
+                                                                prescribed,
+                                                                material,
+                                                                level_setup,
+                                                                options.smoothing_degree,
+                                                                options.coarse_tolerance);
+      pcout << "p-multigrid: degrees";
+      for (unsigned int l = pmg->n_levels(); l-- > 0;)
+        pcout << " " << pmg->degree(l);
+      pcout << ", Chebyshev degree " << options.smoothing_degree << ", coarse CG to "
+            << options.coarse_tolerance << ", outer " << (options.flexible_cg ? "FCG" : "CG")
+            << std::endl;
+    }
+
 
   VectorType u, residual, du, force, free_mask, stretch_direction, stretch_free;
   for (VectorType *v : {&u, &residual, &du, &force, &free_mask, &stretch_direction, &stretch_free})
@@ -230,23 +277,9 @@ run(const unsigned int n_refinements,
         rw_mask(i)    = constraints.is_constrained(i) ? 0. : 1.;
         rw_stretch(i) = 0.;
       }
-    if (stretch != 0.)
-      for (unsigned int d = 0; d < dim; ++d)
-        {
-          ComponentMask mask(dim, false);
-          mask.set(d, true);
-          std::map<types::global_dof_index, Number> values;
-          VectorTools::interpolate_boundary_values(mapping,
-                                                   dof_handler,
-                                                   2 * d + 1,
-                                                   Functions::ConstantFunction<dim, Number>(1.,
-                                                                                            dim),
-                                                   values,
-                                                   mask);
-          for (const auto &[i, value] : values)
-            if (locally_owned_dofs.is_element(i))
-              rw_stretch(i) = value;
-        }
+    for (const auto i : locally_owned_dofs)
+      if (prescribed.is_element(i))
+        rw_stretch(i) = 1.;
     for (const auto i : locally_owned_dofs)
       if (rw_stretch(i) != 0.)
         rw_mask(i) = 0.;
@@ -301,17 +334,10 @@ run(const unsigned int n_refinements,
         << " mu=" << material.mu << " g=" << g << " stretch=" << stretch
         << " load_steps=" << n_load_steps << " cg_tolerance=" << cg_tolerance << std::endl;
 
-  LinearizedOperator<Operator> linearized{op};
-  if (stretch != 0.)
-    {
-      linearized.prescribed = &stretch_direction;
-      linearized.free       = &stretch_free;
-      op.initialize_dof_vector(linearized.tmp);
-    }
   const PreconditionIdentity identity;
 
   double       time_residual = 0., time_cg = 0.;
-  unsigned int n_newton_total = 0, n_cg_total = 0;
+  unsigned int n_newton_total = 0, n_cg_total = 0, n_coarse_total = 0;
 
   constexpr unsigned int max_newton       = 30;
   constexpr double       newton_tolerance = 1e-10;
@@ -395,10 +421,13 @@ run(const unsigned int n_refinements,
             }
 
           residual *= -1.;
-          SolverControl        control(100000, cg_tolerance * residual_norm);
-          SolverCG<VectorType> cg(control);
+          SolverControl                control(100000, cg_tolerance * residual_norm);
+          SolverCG<VectorType>         cg(control);
+          SolverFlexibleCG<VectorType> fcg(control);
+          SolverBase<VectorType>      &solver =
+            (pmg && options.flexible_cg) ? static_cast<SolverBase<VectorType> &>(fcg) : cg;
           if (cg_monitor > 0)
-            cg.connect(
+            solver.connect(
               [&](const unsigned int i, const double r, const VectorType &)
               {
                 if (i % cg_monitor == 0)
@@ -410,12 +439,28 @@ run(const unsigned int n_refinements,
               });
           du = 0.;
           timer.restart();
-          cg.solve(linearized, du, residual, identity);
+          if (pmg)
+            {
+              pmg->update(u);
+              pmg->n_coarse_iterations = 0;
+              if (options.flexible_cg)
+                fcg.solve(fine_level, du, residual, *pmg);
+              else
+                cg.solve(fine_level, du, residual, *pmg);
+            }
+          else
+            cg.solve(fine_level, du, residual, identity);
           Kokkos::fence();
           time_cg += timer.wall_time();
           u += du;
 
-          pcout << "  CG " << control.last_step() << std::endl;
+          pcout << "  CG " << control.last_step();
+          if (pmg)
+            {
+              pcout << " (coarse CG " << pmg->n_coarse_iterations << ")";
+              n_coarse_total += pmg->n_coarse_iterations;
+            }
+          pcout << std::endl;
           n_cg_total += control.last_step();
           ++n_newton_total;
           previous_norm = residual_norm;
@@ -426,7 +471,10 @@ run(const unsigned int n_refinements,
     }
 
   pcout << "max |u| = " << u.linfty_norm() << ", Newton iterations " << n_newton_total
-        << ", CG iterations " << n_cg_total << std::endl
+        << ", CG iterations " << n_cg_total;
+  if (pmg)
+    pcout << ", coarse CG iterations " << n_coarse_total;
+  pcout << std::endl
         << "time: residual " << time_residual << " s, CG " << time_cg << " s ("
         << (n_cg_total > 0 ? 1e3 * time_cg / n_cg_total : 0.) << " ms per CG iteration)"
         << std::endl;
@@ -441,77 +489,57 @@ main(int argc, char *argv[])
 {
   Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
 
-  std::string         mesh_file;
-  unsigned int        cg_monitor = 0;
-  double              stretch    = 0.;
-  bool                predictor  = true;
+  Options             options;
   std::vector<char *> args;
   for (int i = 0; i < argc; ++i)
     {
       const std::string a = argv[i];
       if (a.rfind("--mesh=", 0) == 0)
-        mesh_file = a.substr(7);
+        options.mesh_file = a.substr(7);
       else if (a == "--no-predictor")
-        predictor = false;
+        options.predictor = false;
       else if (a.rfind("--stretch=", 0) == 0)
-        stretch = std::stod(a.substr(10));
+        options.stretch = std::stod(a.substr(10));
       else if (a.rfind("--cg-monitor=", 0) == 0)
-        cg_monitor = std::stoi(a.substr(13));
+        options.cg_monitor = std::stoi(a.substr(13));
+      else if (a == "--pmg")
+        options.pmg = true;
+      else if (a == "--outer=cg")
+        options.flexible_cg = false;
+      else if (a == "--outer=fcg")
+        options.flexible_cg = true;
+      else if (a.rfind("--coarse-tol=", 0) == 0)
+        options.coarse_tolerance = std::stod(a.substr(13));
+      else if (a.rfind("--smoothing-degree=", 0) == 0)
+        options.smoothing_degree = std::stoi(a.substr(19));
       else
         args.push_back(argv[i]);
     }
   argc = args.size();
   argv = args.data();
 
-  const int          degree        = (argc > 1) ? std::atoi(argv[1]) : 2;
-  const unsigned int n_refinements = (argc > 2) ? std::atoi(argv[2]) : 2;
-  const unsigned int n_load_steps  = (argc > 3) ? std::atoi(argv[3]) : 4;
-  const double       g             = (argc > 4) ? std::atof(argv[4]) : 3e-3;
-  const double       cg_tolerance  = (argc > 5) ? std::atof(argv[5]) : 1e-10;
-  const bool         output        = (argc > 6) ? std::atoi(argv[6]) != 0 : true;
+  const int degree = (argc > 1) ? std::atoi(argv[1]) : 2;
+  if (argc > 2)
+    options.n_refinements = std::atoi(argv[2]);
+  if (argc > 3)
+    options.n_load_steps = std::atoi(argv[3]);
+  if (argc > 4)
+    options.g = std::atof(argv[4]);
+  if (argc > 5)
+    options.cg_tolerance = std::atof(argv[5]);
+  if (argc > 6)
+    options.output = std::atoi(argv[6]) != 0;
 
   switch (degree)
     {
       case 1:
-        return run<1>(n_refinements,
-                      n_load_steps,
-                      g,
-                      cg_tolerance,
-                      output,
-                      mesh_file,
-                      cg_monitor,
-                      stretch,
-                      predictor);
+        return run<1>(options);
       case 2:
-        return run<2>(n_refinements,
-                      n_load_steps,
-                      g,
-                      cg_tolerance,
-                      output,
-                      mesh_file,
-                      cg_monitor,
-                      stretch,
-                      predictor);
+        return run<2>(options);
       case 3:
-        return run<3>(n_refinements,
-                      n_load_steps,
-                      g,
-                      cg_tolerance,
-                      output,
-                      mesh_file,
-                      cg_monitor,
-                      stretch,
-                      predictor);
+        return run<3>(options);
       case 4:
-        return run<4>(n_refinements,
-                      n_load_steps,
-                      g,
-                      cg_tolerance,
-                      output,
-                      mesh_file,
-                      cg_monitor,
-                      stretch,
-                      predictor);
+        return run<4>(options);
       default:
         if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
           std::cerr << "usage: " << argv[0]
@@ -519,6 +547,7 @@ main(int argc, char *argv[])
                     << " [n_load_steps (default 4)] [g (default 3e-3)]"
                     << " [cg_tolerance (default 1e-10)] [output (default 1)]"
                     << " [--mesh=file.msh] [--stretch=delta] [--no-predictor] [--cg-monitor=N]"
+                    << " [--pmg] [--outer=cg|fcg] [--coarse-tol=tol] [--smoothing-degree=k]"
                     << std::endl;
         return 1;
     }
