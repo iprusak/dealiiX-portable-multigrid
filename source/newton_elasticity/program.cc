@@ -12,13 +12,16 @@
 //
 //   ./program [degree (default 2)] [n_refinements (default 2)] [n_load_steps (default 4)]
 //             [g (default 3e-3)] [cg_tolerance (default 1e-10, relative)]
-//             [output (default 1)] [--mesh=file.msh] [--stretch=delta] [--cg-monitor=N]
+//             [output (default 1)] [--mesh=file.msh] [--stretch=delta] [--no-predictor]
+//             [--cg-monitor=N]
 //
 // --mesh reads a hex mesh (Gmsh) in place of the beam; boundary ids are set by
 // position on the bounding box: 0/1 at x_min/x_max, 2/3 y, 4/5 z, 6 elsewhere,
 // with symmetry conditions u_d = 0 on id 2 d; --stretch=delta adds u_d = delta
-// on id 2 d + 1, in load steps, Newton then stops at |R| <= 1e-10 |R_0| of the
-// step. --cg-monitor=N prints the CG residual every N
+// on id 2 d + 1, in load steps; each step adds delta / n_load_steps x on the
+// free DoFs as predictor (off with --no-predictor), and Newton stops at
+// |R| <= 1e-10 |R_jump|, R_jump the residual after adding the boundary values
+// alone. --cg-monitor=N prints the CG residual every N
 // iterations.
 //
 // meshes/alveolar_hex_small.msh: 55200 hexes of an idealized alveolar
@@ -76,6 +79,23 @@ using VectorType = LinearAlgebra::distributed::Vector<Number, MemorySpace::Defau
 
 
 
+// the position x as a vector field
+template <int dim>
+struct PositionFunction : public Function<dim, Number>
+{
+  PositionFunction()
+    : Function<dim, Number>(dim)
+  {}
+
+  Number
+  value(const Point<dim> &p, const unsigned int component) const override
+  {
+    return p[component];
+  }
+};
+
+
+
 // the operator linearized at the u of the last evaluate_residual(), for CG;
 // with prescribed DoFs (indicator S, D = 1 - S), which the operator does not
 // know about, D A D + S
@@ -116,7 +136,8 @@ run(const unsigned int n_refinements,
     const bool         output,
     const std::string &mesh_file,
     const unsigned int cg_monitor,
-    const double       stretch)
+    const double       stretch,
+    const bool         predictor)
 {
   constexpr int dim = 3;
   using Material    = Portable::SaintVenantKirchhoffMaterial<dim, Number>;
@@ -236,6 +257,23 @@ run(const unsigned int n_refinements,
     stretch_free.import_elements(rw_stretch, VectorOperation::insert);
   }
 
+  // affine predictor: x on the free DoFs, the homogeneous stretch u = delta x
+  // is added per load step, so the step does not start from a jump of the
+  // boundary values
+  VectorType affine;
+  op.initialize_dof_vector(affine);
+  if (stretch != 0. && predictor)
+    {
+      LinearAlgebra::distributed::Vector<Number, MemorySpace::Host> x_host(locally_owned_dofs,
+                                                                           locally_relevant_dofs,
+                                                                           comm);
+      VectorTools::interpolate(mapping, dof_handler, PositionFunction<dim>(), x_host);
+      LinearAlgebra::ReadWriteVector<Number> rw(locally_owned_dofs);
+      rw.import_elements(x_host, VectorOperation::insert);
+      affine.import_elements(rw, VectorOperation::insert);
+      affine.scale(free_mask);
+    }
+
   // F = (v, (0, 0, -g)), zero on the constrained DoFs
   {
     LinearAlgebra::distributed::Vector<Number, MemorySpace::Host> force_host(locally_owned_dofs,
@@ -319,6 +357,16 @@ run(const unsigned int n_refinements,
       pcout << "load step " << step << ", lambda = " << load << std::endl;
       u.add(stretch / n_load_steps, stretch_direction);
       double reference_norm = load * force_norm;
+      // the residual of the boundary jump alone as reference, as without the
+      // predictor
+      if (stretch != 0.)
+        {
+          op.evaluate_residual(residual, u);
+          residual.add(-load, force);
+          residual.scale(free_mask);
+          reference_norm = std::max(reference_norm, residual.l2_norm());
+          u.add(stretch / n_load_steps, affine);
+        }
 
       double       previous_norm = 0.;
       bool         converged     = false;
@@ -330,8 +378,6 @@ run(const unsigned int n_refinements,
           residual.add(-load, force);
           residual.scale(free_mask);
           const double residual_norm = residual.l2_norm();
-          if (it == 0 && stretch != 0.)
-            reference_norm = std::max(reference_norm, residual_norm);
           Kokkos::fence();
           time_residual += timer.wall_time();
 
@@ -398,12 +444,15 @@ main(int argc, char *argv[])
   std::string         mesh_file;
   unsigned int        cg_monitor = 0;
   double              stretch    = 0.;
+  bool                predictor  = true;
   std::vector<char *> args;
   for (int i = 0; i < argc; ++i)
     {
       const std::string a = argv[i];
       if (a.rfind("--mesh=", 0) == 0)
         mesh_file = a.substr(7);
+      else if (a == "--no-predictor")
+        predictor = false;
       else if (a.rfind("--stretch=", 0) == 0)
         stretch = std::stod(a.substr(10));
       else if (a.rfind("--cg-monitor=", 0) == 0)
@@ -424,24 +473,53 @@ main(int argc, char *argv[])
   switch (degree)
     {
       case 1:
-        return run<1>(
-          n_refinements, n_load_steps, g, cg_tolerance, output, mesh_file, cg_monitor, stretch);
+        return run<1>(n_refinements,
+                      n_load_steps,
+                      g,
+                      cg_tolerance,
+                      output,
+                      mesh_file,
+                      cg_monitor,
+                      stretch,
+                      predictor);
       case 2:
-        return run<2>(
-          n_refinements, n_load_steps, g, cg_tolerance, output, mesh_file, cg_monitor, stretch);
+        return run<2>(n_refinements,
+                      n_load_steps,
+                      g,
+                      cg_tolerance,
+                      output,
+                      mesh_file,
+                      cg_monitor,
+                      stretch,
+                      predictor);
       case 3:
-        return run<3>(
-          n_refinements, n_load_steps, g, cg_tolerance, output, mesh_file, cg_monitor, stretch);
+        return run<3>(n_refinements,
+                      n_load_steps,
+                      g,
+                      cg_tolerance,
+                      output,
+                      mesh_file,
+                      cg_monitor,
+                      stretch,
+                      predictor);
       case 4:
-        return run<4>(
-          n_refinements, n_load_steps, g, cg_tolerance, output, mesh_file, cg_monitor, stretch);
+        return run<4>(n_refinements,
+                      n_load_steps,
+                      g,
+                      cg_tolerance,
+                      output,
+                      mesh_file,
+                      cg_monitor,
+                      stretch,
+                      predictor);
       default:
         if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
           std::cerr << "usage: " << argv[0]
                     << " [degree in [1, 4] (default 2)] [n_refinements (default 2)]"
                     << " [n_load_steps (default 4)] [g (default 3e-3)]"
                     << " [cg_tolerance (default 1e-10)] [output (default 1)]"
-                    << " [--mesh=file.msh] [--stretch=delta] [--cg-monitor=N]" << std::endl;
+                    << " [--mesh=file.msh] [--stretch=delta] [--no-predictor] [--cg-monitor=N]"
+                    << std::endl;
         return 1;
     }
 }
