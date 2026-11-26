@@ -10,7 +10,7 @@
 // With output = 1, u after each load step goes to solution_<step>.pvtu, and
 // solution.pvd collects the steps for ParaView ("Warp By Vector" on u).
 //
-//   ./program degree [n_refinements (default 2)] [n_load_steps (default 4)]
+//   ./program [degree (default 2)] [n_refinements (default 2)] [n_load_steps (default 4)]
 //             [g (default 3e-3)] [cg_tolerance (default 1e-10, relative)]
 //             [output (default 1)]
 
@@ -255,16 +255,7 @@ main(int argc, char *argv[])
 {
   Utilities::MPI::MPI_InitFinalize mpi_init(argc, argv, 1);
 
-  if (argc < 2)
-    {
-      std::cerr << "usage: " << argv[0]
-                << " degree [n_refinements (default 2)] [n_load_steps (default 4)]"
-                << " [g (default 3e-3)] [cg_tolerance (default 1e-10)] [output (default 1)]"
-                << std::endl;
-      return 1;
-    }
-
-  const int          degree        = std::atoi(argv[1]);
+  const int          degree        = (argc > 1) ? std::atoi(argv[1]) : 2;
   const unsigned int n_refinements = (argc > 2) ? std::atoi(argv[2]) : 2;
   const unsigned int n_load_steps  = (argc > 3) ? std::atoi(argv[3]) : 4;
   const double       g             = (argc > 4) ? std::atof(argv[4]) : 3e-3;
@@ -282,7 +273,11 @@ main(int argc, char *argv[])
       case 4:
         return run<4>(n_refinements, n_load_steps, g, cg_tolerance, output);
       default:
-        std::cerr << "degree must be in [1, 4]" << std::endl;
+        if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+          std::cerr << "usage: " << argv[0]
+                    << " [degree in [1, 4] (default 2)] [n_refinements (default 2)]"
+                    << " [n_load_steps (default 4)] [g (default 3e-3)]"
+                    << " [cg_tolerance (default 1e-10)] [output (default 1)]" << std::endl;
         return 1;
     }
 }
