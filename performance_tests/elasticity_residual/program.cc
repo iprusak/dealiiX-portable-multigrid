@@ -9,11 +9,20 @@
 //   vmult_bench_strided  the same without register blocking
 //   vmult_bk3        the BK3-style counterpart of the benchmark kernel
 //   vmult_bk3_registers  the same with register blocking
+//   residual_store   vmult_batched storing grad u for the linearized operator
+//   residual_fused   the same as vmult_fused
+//   linearized       the operator linearized at u = src, applied to src: as
+//                    vmult_batched, plus the stored grad u (9 doubles per
+//                    quadrature point) read
+//   linearized_fused the same as vmult_fused
+// For the linear material the linearized operator is the operator itself, so
+// linearized - vmult_batched is the cost of reading grad u.
 // The mesh is a box of 2^k cubes (k = 3 refinements + 0, 1 or 2 directions
 // split once more), deformed so that every cell is a general one and all
 // variants read the geometry per quadrature point; homogeneous Dirichlet
 // conditions on the boundary. Times are the maximum over the ranks, after
-// warm-up; |A src - A_dealii src| / |A_dealii src| checks that the variants agree.
+// warm-up; |A src - A_dealii src| / |A_dealii src| checks that the variants agree
+// (for the linearized variants: against linearized).
 // All variants but vmult_dealii (one cell per team) run with the same batch:
 // cells_per_batch, or with 0 the benchmark's rule (10 kB of shared values per
 // batch, 1 to 32 cells). Every line prints the batch it ran with.
@@ -133,7 +142,7 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
 
   const double   memory_before = device_memory_used();
   const Material material{1.7, 0.6};
-  const Operator op(dof_handler, constraints, material, false, cells_per_batch);
+  Operator       op(dof_handler, constraints, material, false, cells_per_batch);
 
   VectorType src, dst, dst_ref;
   op.initialize_dof_vector(src);
@@ -165,11 +174,24 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
         << memory_op_max * (1u << 30) / (n_dofs / double(Utilities::MPI::n_mpi_processes(comm)))
         << " bytes/dof)" << std::endl;
 
+  // grad u, allocated by the first evaluate_residual()
+  {
+    const double memory_before_state = device_memory_used();
+    op.evaluate_residual(dst, src);
+    Kokkos::fence();
+    const double memory_state = Utilities::MPI::max(device_memory_used() - memory_before_state, comm);
+    pcout << "  stored grad u per rank: max " << memory_state << " GiB ("
+          << memory_state * (1u << 30) / (n_dofs / double(Utilities::MPI::n_mpi_processes(comm)))
+          << " bytes/dof)" << std::endl;
+  }
+
+  // new_reference: compare this and the following variants with this one
   struct Variant
   {
     std::string           name;
     unsigned int          batch;
     std::function<void()> vmult;
+    bool                  new_reference = false;
   };
   const std::vector<Variant> variants = {
     {"vmult_dealii", 1, [&]() { op.vmult_dealii(dst, src); }},
@@ -180,10 +202,18 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
      op.cells_per_batch_benchmark(),
      [&]() { op.vmult_benchmark_strided(dst, src); }},
     {"vmult_bk3", op.cells_per_batch_bk3(), [&]() { op.vmult_bk3(dst, src); }},
-    {"vmult_bk3_registers", op.cells_per_batch_bk3(), [&]() { op.vmult_bk3_registers(dst, src); }}};
+    {"vmult_bk3_registers", op.cells_per_batch_bk3(), [&]() { op.vmult_bk3_registers(dst, src); }},
+    {"residual_store", op.cells_per_batch_batched(), [&]() { op.evaluate_residual(dst, src); }},
+    {"residual_fused",
+     op.cells_per_batch_batched(),
+     [&]() { op.evaluate_residual_fused(dst, src); }},
+    {"linearized", op.cells_per_batch_batched(), [&]() { op.vmult_linearized(dst, src); }, true},
+    {"linearized_fused",
+     op.cells_per_batch_batched(),
+     [&]() { op.vmult_linearized_fused(dst, src); }}};
 
   double reference_norm = 0.;
-  for (const auto &[name, batch, vmult] : variants)
+  for (const auto &[name, batch, vmult, new_reference] : variants)
     {
       for (int r = 0; r < 2; ++r)
         vmult();
@@ -204,7 +234,7 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
       const double t_median = times[times.size() / 2];
 
       // the first variant (vmult_dealii) is the reference
-      if (reference_norm == 0.)
+      if (reference_norm == 0. || new_reference)
         {
           dst_ref        = dst;
           reference_norm = dst_ref.l2_norm();
