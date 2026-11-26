@@ -15,8 +15,8 @@
 //                    vmult_batched, plus the stored grad u (9 doubles per
 //                    quadrature point) read
 //   linearized_fused the same as vmult_fused
-// For the linear material the linearized operator is the operator itself, so
-// linearized - vmult_batched is the cost of reading grad u.
+// For the linear material the linearized operator is the operator itself; it
+// ignores grad u, so the compiler drops its loads.
 // The mesh is a box of 2^k cubes (k = 3 refinements + 0, 1 or 2 directions
 // split once more), deformed so that every cell is a general one and all
 // variants read the geometry per quadrature point; homogeneous Dirichlet
