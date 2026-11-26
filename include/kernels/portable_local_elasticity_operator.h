@@ -7,6 +7,10 @@
 #include <deal.II/matrix_free/evaluation_flags.h>
 #include <deal.II/matrix_free/portable_matrix_free.h>
 
+#include <limits>
+
+#include "kernels/portable_symmetric_eigenbasis.h"
+
 DEAL_II_NAMESPACE_OPEN
 
 namespace Portable
@@ -154,6 +158,121 @@ namespace Portable
           S[i][i] += lambda * trace_E;
         }
       return S;
+    }
+  };
+
+
+
+  // Decoupled Ogden hyperelasticity (docs: lung_application ogden_material):
+  // Psi = sum_a sum_p mu_p / alpha_p (lambda_bar_a^alpha_p - 1)
+  //       + kappa / 4 (J^2 - 1 - 2 ln J), lambda_bar_a = J^(-1/3) lambda_a,
+  // P = F S. In 2D plane strain: lambda_3 = 1. NaN for J <= 0.
+  template <int dim, typename Number>
+  struct OgdenMaterial
+  {
+    Number mu1    = 1.;
+    Number alpha1 = 2.;
+    Number mu2    = 0.;
+    Number alpha2 = -2.;
+    Number kappa  = 1.;
+
+    DEAL_II_HOST_DEVICE Tensor<2, dim, Number>
+    stress(const Tensor<2, dim, Number> &grad_u) const
+    {
+      Tensor<2, dim, Number> F = grad_u;
+      for (unsigned int d = 0; d < dim; ++d)
+        F[d][d] += Number(1.);
+      Tensor<2, dim, Number> C;
+      for (unsigned int i = 0; i < dim; ++i)
+        for (unsigned int j = 0; j < dim; ++j)
+          {
+            Number sum = 0.;
+            for (unsigned int k = 0; k < dim; ++k)
+              sum += F[k][i] * F[k][j];
+            C[i][j] = sum;
+          }
+
+      const auto   eigen = symmetric_eigenbasis(C);
+      const Number J     = determinant(F);
+
+      // S = sum_a s_a N_a (x) N_a, C^-1 = sum_a lambda_a^-2 N_a (x) N_a
+      Number s[dim];
+      principal_stresses(eigen.values, J, s);
+      Tensor<2, dim, Number> FN;
+      for (unsigned int i = 0; i < dim; ++i)
+        for (unsigned int a = 0; a < dim; ++a)
+          {
+            Number sum = 0.;
+            for (unsigned int k = 0; k < dim; ++k)
+              sum += F[i][k] * eigen.vectors[a][k];
+            FN[i][a] = sum;
+          }
+      Tensor<2, dim, Number> P;
+      for (unsigned int i = 0; i < dim; ++i)
+        for (unsigned int j = 0; j < dim; ++j)
+          {
+            Number sum = 0.;
+            for (unsigned int a = 0; a < dim; ++a)
+              sum += s[a] * FN[i][a] * eigen.vectors[a][j];
+            P[i][j] = sum;
+          }
+      return P;
+    }
+
+    // not implemented yet: NaN
+    DEAL_II_HOST_DEVICE Tensor<2, dim, Number>
+    linearized_stress(const Tensor<2, dim, Number> &, const Tensor<2, dim, Number> &) const
+    {
+      Tensor<2, dim, Number> dP;
+      for (unsigned int i = 0; i < dim; ++i)
+        for (unsigned int j = 0; j < dim; ++j)
+          dP[i][j] = std::numeric_limits<Number>::quiet_NaN();
+      return dP;
+    }
+
+  private:
+    DEAL_II_HOST_DEVICE static Number
+    determinant(const Tensor<2, dim, Number> &F)
+    {
+      if constexpr (dim == 2)
+        {
+          return F[0][0] * F[1][1] - F[0][1] * F[1][0];
+        }
+      else
+        {
+          return F[0][0] * (F[1][1] * F[2][2] - F[1][2] * F[2][1]) -
+                 F[0][1] * (F[1][0] * F[2][2] - F[1][2] * F[2][0]) +
+                 F[0][2] * (F[1][0] * F[2][1] - F[1][1] * F[2][0]);
+        }
+    }
+
+    // s_a = S_iso_a + kappa / 2 (J^2 - 1) / lambda_a^2, eqs. (4), (5), with
+    // beta_a = sum_p mu_p lambda_bar_a^alpha_p over all three stretches
+    DEAL_II_HOST_DEVICE void
+    principal_stresses(const Tensor<1, dim, Number> &lambda_sq,
+                       const Number                  J,
+                       Number (&s)[dim]) const
+    {
+      // quiet NaN for J <= 0, without the FE_INVALID of pow(J < 0, -2/3)
+      if (!(J > Number(0.)))
+        {
+          for (unsigned int a = 0; a < dim; ++a)
+            s[a] = std::numeric_limits<Number>::quiet_NaN();
+          return;
+        }
+      const Number J_pow = Kokkos::pow(J, Number(-2. / 3.));
+      Number       beta[3];
+      Number       beta_sum = 0.;
+      for (unsigned int a = 0; a < 3; ++a)
+        {
+          const Number lambda_bar_sq = J_pow * (a < dim ? lambda_sq[a] : Number(1.));
+          beta[a]                    = mu1 * Kokkos::pow(lambda_bar_sq, Number(0.5) * alpha1) +
+                    mu2 * Kokkos::pow(lambda_bar_sq, Number(0.5) * alpha2);
+          beta_sum += beta[a];
+        }
+      const Number pressure_term = Number(0.5) * kappa * (J * J - Number(1.));
+      for (unsigned int a = 0; a < dim; ++a)
+        s[a] = (beta[a] - beta_sum / Number(3.) + pressure_term) / lambda_sq[a];
     }
   };
 
