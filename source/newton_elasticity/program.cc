@@ -20,6 +20,10 @@
 // on id 2 d + 1, in load steps, Newton then stops at |R| <= 1e-10 |R_0| of the
 // step. --cg-monitor=N prints the CG residual every N
 // iterations.
+//
+// meshes/alveolar_hex_small.msh: 55200 hexes of an idealized alveolar
+// (Kelvin foam) geometry in [0, 1]^3, e.g.
+//   mpirun -n 8 ./program 1 0 10 0 1e-8 1 --mesh=meshes/alveolar_hex_small.msh --stretch=0.5
 
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/function.h>
