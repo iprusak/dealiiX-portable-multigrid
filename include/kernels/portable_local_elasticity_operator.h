@@ -338,6 +338,70 @@ namespace Portable
 
 
 
+  // The operator linearized at u as LocalElasticityLinearizationOperator, but
+  // with grad u recomputed from u in every application: u is evaluated with
+  // the team memory of dof handler 1, set up for the same DoFHandler as 0.
+  template <int dim,
+            int fe_degree,
+            int n_q_points_1d,
+            typename Number,
+            typename Material,
+            typename FEEvaluationType,
+            bool fused>
+  class LocalElasticityLinearizedRecomputeOperator
+  {
+  public:
+    static constexpr unsigned int n_local_dofs = dim * Utilities::pow(fe_degree + 1, dim);
+    static constexpr unsigned int n_q_points   = Utilities::pow(n_q_points_1d, dim);
+
+    DEAL_II_HOST_DEVICE
+    LocalElasticityLinearizedRecomputeOperator(const Material             &material,
+                                               const DeviceVector<Number> &u)
+      : material(material)
+      , u(u)
+    {}
+
+    DEAL_II_HOST_DEVICE void
+    operator()(const typename FEEvaluationType::data_type *data,
+               const DeviceVector<Number>                 &src,
+               DeviceVector<Number>                       &dst) const
+    {
+      FEEvaluationType fe_eval_u(data, 1);
+      fe_eval_u.read_dof_values(u);
+      fe_eval_u.evaluate(EvaluationFlags::gradients);
+
+      FEEvaluationType fe_eval(data, 0);
+      fe_eval.read_dof_values(src);
+
+      const auto point_operation = [&](const Tensor<2, dim, Number> &grad, const int q_point)
+      { return material.linearized_stress(fe_eval_u.get_gradient(q_point), grad); };
+
+      if constexpr (fused)
+        {
+          fe_eval.evaluate_and_apply(EvaluationFlags::gradients, point_operation);
+        }
+      else
+        {
+          fe_eval.evaluate(EvaluationFlags::gradients);
+          data->for_each_quad_point(
+            [&](const int &q_point)
+            {
+              fe_eval.submit_gradient(point_operation(fe_eval.get_gradient(q_point), q_point),
+                                      q_point);
+            });
+        }
+
+      fe_eval.integrate(EvaluationFlags::gradients);
+      fe_eval.distribute_local_to_global(dst);
+    }
+
+  private:
+    Material             material;
+    DeviceVector<Number> u;
+  };
+
+
+
   // The same form at one quadrature point, for MatrixFreeTools::compute_diagonal().
   template <int dim, int fe_degree, int n_q_points_1d, typename Number, typename Material>
   class ElasticityOperatorQuad

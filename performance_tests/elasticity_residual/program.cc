@@ -15,6 +15,9 @@
 //                    vmult_batched, plus the stored grad u (9 doubles per
 //                    quadrature point) read
 //   linearized_fused the same as vmult_fused
+//   recompute        linearized with grad u recomputed from u (a second
+//                    evaluation in a second set of team memory), not stored
+//   recompute_fused  the same as linearized_fused
 // For the linear material the linearized operator is the operator itself; it
 // ignores grad u, so the compiler drops its loads.
 // The mesh is a box of 2^k cubes (k = 3 refinements + 0, 1 or 2 directions
@@ -184,6 +187,8 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
           << memory_state * (1u << 30) / (n_dofs / double(Utilities::MPI::n_mpi_processes(comm)))
           << " bytes/dof)" << std::endl;
   }
+  // u for the recompute variants
+  op.set_linearization_point(src);
 
   // new_reference: compare this and the following variants with this one
   struct Variant
@@ -210,7 +215,13 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
     {"linearized", op.cells_per_batch_batched(), [&]() { op.vmult_linearized(dst, src); }, true},
     {"linearized_fused",
      op.cells_per_batch_batched(),
-     [&]() { op.vmult_linearized_fused(dst, src); }}};
+     [&]() { op.vmult_linearized_fused(dst, src); }},
+    {"recompute",
+     op.cells_per_batch_batched(),
+     [&]() { op.vmult_linearized_recompute(dst, src); }},
+    {"recompute_fused",
+     op.cells_per_batch_batched(),
+     [&]() { op.vmult_linearized_recompute_fused(dst, src); }}};
 
   double reference_norm = 0.;
   for (const auto &[name, batch, vmult, new_reference] : variants)
