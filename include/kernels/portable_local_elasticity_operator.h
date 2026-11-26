@@ -231,13 +231,15 @@ namespace Portable
 
 
 
-  // grad u at all quadrature points of all colors, entry (i, j) of point q of
-  // cell c at values[(dim i + j) n_points + n_q_points c + q]
+  // grad u at all quadrature points of all colors, point q of cell c at
+  // values(n_q_points c + q, i, j); LayoutLeft: the point index runs fastest
   template <int dim, typename Number>
   struct QuadraturePointGradients
   {
-    Number     *values   = nullptr;
-    std::size_t n_points = 0;
+    using ViewType =
+      Kokkos::View<Number *[dim][dim], Kokkos::LayoutLeft, MemorySpace::Default::kokkos_space>;
+
+    ViewType values;
 
     DEAL_II_HOST_DEVICE Tensor<2, dim, Number>
     get(const std::size_t point) const
@@ -245,7 +247,7 @@ namespace Portable
       Tensor<2, dim, Number> grad;
       for (unsigned int i = 0; i < dim; ++i)
         for (unsigned int j = 0; j < dim; ++j)
-          grad[i][j] = values[(dim * i + j) * n_points + point];
+          grad[i][j] = values(point, i, j);
       return grad;
     }
 
@@ -254,7 +256,7 @@ namespace Portable
     {
       for (unsigned int i = 0; i < dim; ++i)
         for (unsigned int j = 0; j < dim; ++j)
-          values[(dim * i + j) * n_points + point] = grad[i][j];
+          values(point, i, j) = grad[i][j];
     }
   };
 

@@ -321,9 +321,6 @@ namespace Portable
     void
     linearized_vmult(VectorType &dst, const VectorType &src) const;
 
-    QuadraturePointGradients<dim, number>
-    linearization_point_gradients() const;
-
     // owned + ghost entries, what a DeviceVector over vec.get_values() spans
     static unsigned int
     mpi_local_size(const VectorType &vec)
@@ -364,8 +361,8 @@ namespace Portable
     std::vector<BK3Kernel>                                                  bk3_kernels;
     std::vector<Kokkos::View<number *, MemorySpace::Default::kokkos_space>> benchmark_geometry;
 
-    // grad u of the last evaluate_residual*(), see QuadraturePointGradients
-    Kokkos::View<number *, MemorySpace::Default::kokkos_space> linearization_gradients;
+    // grad u of the last evaluate_residual*()
+    QuadraturePointGradients<dim, number> linearization_gradients;
 
     // quadrature points of all colors
     std::size_t n_q_points_total = 0;
@@ -678,15 +675,16 @@ namespace Portable
     VectorType       &residual,
     const VectorType &u)
   {
-    if (linearization_gradients.size() != dim * dim * n_q_points_total)
-      linearization_gradients = Kokkos::View<number *, MemorySpace::Default::kokkos_space>(
-        "ElasticityOperator linearization gradients", dim * dim * n_q_points_total);
+    if (linearization_gradients.values.extent(0) != n_q_points_total)
+      linearization_gradients.values =
+        typename QuadraturePointGradients<dim, number>::ViewType(
+          "ElasticityOperator linearization gradients", n_q_points_total);
 
     residual = 0.;
 
     Copy::Portable::internal::batched::cell_loop(
       matrix_free,
-      LinearizationLocalOperator<fused, false>(material, linearization_point_gradients()),
+      LinearizationLocalOperator<fused, false>(material, linearization_gradients),
       u,
       residual,
       requested_batch_size);
@@ -703,29 +701,19 @@ namespace Portable
     VectorType       &dst,
     const VectorType &src) const
   {
-    AssertThrow(linearization_gradients.size() == dim * dim * n_q_points_total,
+    AssertThrow(linearization_gradients.values.extent(0) == n_q_points_total,
                 ExcMessage("vmult_linearized() needs evaluate_residual() first"));
 
     dst = 0.;
 
     Copy::Portable::internal::batched::cell_loop(
       matrix_free,
-      LinearizationLocalOperator<fused, true>(material, linearization_point_gradients()),
+      LinearizationLocalOperator<fused, true>(material, linearization_gradients),
       src,
       dst,
       requested_batch_size);
 
     matrix_free.copy_constrained_values(src, dst);
-  }
-
-
-
-  template <int dim, int fe_degree, typename number, typename Material, int n_q_points_1d>
-  QuadraturePointGradients<dim, number>
-  ElasticityOperator<dim, fe_degree, number, Material, n_q_points_1d>::
-    linearization_point_gradients() const
-  {
-    return {linearization_gradients.data(), n_q_points_total};
   }
 
 
