@@ -114,6 +114,11 @@ if(PORTABLE_MULTIGRID_BENCHMARKS)
   endforeach()
 endif()
 
+if(TARGET performance_tests.elasticity_residual)
+  include(${CMAKE_SOURCE_DIR}/performance_tests/elasticity_residual/instantiations.cmake)
+  elasticity_residual_instantiations(performance_tests.elasticity_residual)
+endif()
+
 add_subdirectory(tests)
 if(PORTABLE_MULTIGRID_PERFORMANCE_TESTS)
   add_subdirectory(performance_tests)
