@@ -7,8 +7,12 @@
 // preconditioner. Newton stops at |R| <= 1e-10 |lambda F|; the printed
 // |R_k| / |R_{k-1}|^2 shows the quadratic convergence.
 //
+// With output = 1, u after each load step goes to solution_<step>.pvtu, and
+// solution.pvd collects the steps for ParaView ("Warp By Vector" on u).
+//
 //   ./program degree [n_refinements (default 2)] [n_load_steps (default 4)]
 //             [g (default 3e-3)] [cg_tolerance (default 1e-10, relative)]
+//             [output (default 1)]
 
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/function.h>
@@ -34,13 +38,18 @@
 #include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/solver_control.h>
 
+#include <deal.II/numerics/data_component_interpretation.h>
+#include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/vector_tools.h>
 
 #include <Kokkos_Core.hpp>
 
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <utility>
+#include <vector>
 
 #include "operators/portable_elasticity_operator.h"
 
@@ -71,7 +80,8 @@ int
 run(const unsigned int n_refinements,
     const unsigned int n_load_steps,
     const double       g,
-    const double       cg_tolerance)
+    const double       cg_tolerance,
+    const bool         output)
 {
   constexpr int dim = 3;
   using Material    = Portable::SaintVenantKirchhoffMaterial<dim, Number>;
@@ -145,6 +155,40 @@ run(const unsigned int n_refinements,
   constexpr unsigned int max_newton = 30;
   constexpr double       newton_tolerance = 1e-10;
 
+  std::vector<std::pair<double, std::string>> pvd_records;
+  const auto write_solution = [&](const unsigned int step, const double load)
+  {
+    LinearAlgebra::ReadWriteVector<Number> rw(locally_owned_dofs);
+    rw.import_elements(u, VectorOperation::insert);
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Host> u_host(
+      locally_owned_dofs, locally_relevant_dofs, comm);
+    u_host.import_elements(rw, VectorOperation::insert);
+    constraints.distribute(u_host);
+    u_host.update_ghost_values();
+
+    DataOut<dim> data_out;
+    DataOutBase::VtkFlags flags;
+    flags.write_higher_order_cells = true;
+    data_out.set_flags(flags);
+    data_out.attach_dof_handler(dof_handler);
+    data_out.add_data_vector(u_host,
+                             std::vector<std::string>(dim, "u"),
+                             DataOut<dim>::type_dof_data,
+                             std::vector<DataComponentInterpretation::DataComponentInterpretation>(
+                               dim, DataComponentInterpretation::component_is_part_of_vector));
+    data_out.build_patches(mapping, degree, DataOut<dim>::curved_inner_cells);
+
+    pvd_records.emplace_back(load,
+                             data_out.write_vtu_with_pvtu_record("./", "solution", step, comm, 2));
+    if (Utilities::MPI::this_mpi_process(comm) == 0)
+      {
+        std::ofstream pvd("solution.pvd");
+        DataOutBase::write_pvd_record(pvd, pvd_records);
+      }
+  };
+  if (output)
+    write_solution(0, 0.);
+
   for (unsigned int step = 1; step <= n_load_steps; ++step)
     {
       const double load = static_cast<double>(step) / n_load_steps;
@@ -191,6 +235,8 @@ run(const unsigned int n_refinements,
           previous_norm = residual_norm;
         }
       AssertThrow(converged, ExcMessage("Newton did not converge"));
+      if (output)
+        write_solution(step, load);
     }
 
   pcout << "max |u| = " << u.linfty_norm() << ", Newton iterations " << n_newton_total
@@ -213,7 +259,8 @@ main(int argc, char *argv[])
     {
       std::cerr << "usage: " << argv[0]
                 << " degree [n_refinements (default 2)] [n_load_steps (default 4)]"
-                << " [g (default 3e-3)] [cg_tolerance (default 1e-10)]" << std::endl;
+                << " [g (default 3e-3)] [cg_tolerance (default 1e-10)] [output (default 1)]"
+                << std::endl;
       return 1;
     }
 
@@ -222,17 +269,18 @@ main(int argc, char *argv[])
   const unsigned int n_load_steps  = (argc > 3) ? std::atoi(argv[3]) : 4;
   const double       g             = (argc > 4) ? std::atof(argv[4]) : 3e-3;
   const double       cg_tolerance  = (argc > 5) ? std::atof(argv[5]) : 1e-10;
+  const bool         output        = (argc > 6) ? std::atoi(argv[6]) != 0 : true;
 
   switch (degree)
     {
       case 1:
-        return run<1>(n_refinements, n_load_steps, g, cg_tolerance);
+        return run<1>(n_refinements, n_load_steps, g, cg_tolerance, output);
       case 2:
-        return run<2>(n_refinements, n_load_steps, g, cg_tolerance);
+        return run<2>(n_refinements, n_load_steps, g, cg_tolerance, output);
       case 3:
-        return run<3>(n_refinements, n_load_steps, g, cg_tolerance);
+        return run<3>(n_refinements, n_load_steps, g, cg_tolerance, output);
       case 4:
-        return run<4>(n_refinements, n_load_steps, g, cg_tolerance);
+        return run<4>(n_refinements, n_load_steps, g, cg_tolerance, output);
       default:
         std::cerr << "degree must be in [1, 4]" << std::endl;
         return 1;
