@@ -15,7 +15,8 @@
 //             [output (default 1)] [--mesh=file.msh] [--stretch=d or dx,dy,dz]
 //             [--no-predictor] [--cg-monitor=N] [--material=svk|ogden]
 //             [--ogden=mu1,alpha1,mu2,alpha2,kappa] [--pmg] [--outer=cg|fcg]
-//             [--coarse-tol=tol] [--smoothing-degree=k]
+//             [--coarse-tol=tol] [--smoothing-degree=k] [--first-step=f]
+//             [--extrapolate]
 //
 // SVK: E = 1, nu = 0.3. Ogden (decoupled, Portable::OgdenMaterial) by default
 // the alveolar wall of Singh et al. (2024), Table 2, as in ExaDG's
@@ -35,6 +36,11 @@
 // N iterations.
 //
 // CG solves to cg_tolerance |R|, but never beyond 0.1 of Newton's tolerance.
+//
+// --extrapolate takes the initial guess of a load step from the last
+// displacement increment, scaled by the ratio of the load increments, in
+// place of the homogeneous deformation; --first-step=f adds a first load
+// step f / n_load_steps, which gives a first increment to extrapolate.
 //
 // --pmg preconditions CG by polynomial multigrid (tangent_pmg.h): degrees
 // p, p / 2, ..., 1, Chebyshev of degree --smoothing-degree (default 5), CG to
@@ -124,6 +130,8 @@ struct Options
   bool           pmg              = false;
   bool           flexible_cg      = true;
   double         coarse_tolerance = 1e-3;
+  double         first_step       = 1.;
+  bool           extrapolate      = false;
   unsigned int   smoothing_degree = 5;
 };
 
@@ -264,8 +272,9 @@ run(const Options &options, const Material &material, const std::string &materia
             << std::endl;
     }
 
-  VectorType u, residual, du, force, free_mask, stretch_direction;
-  for (VectorType *v : {&u, &residual, &du, &force, &free_mask, &stretch_direction})
+  VectorType u, residual, du, force, free_mask, stretch_direction, u_previous, du_step;
+  for (VectorType *v :
+       {&u, &residual, &du, &force, &free_mask, &stretch_direction, &u_previous, &du_step})
     op.initialize_dof_vector(*v);
 
   // stretch_direction: 1 on the DoFs of u_d at the upper bound in direction d;
@@ -284,8 +293,8 @@ run(const Options &options, const Material &material, const std::string &materia
     stretch_direction.import_elements(rw_stretch, VectorOperation::insert);
   }
 
-  // the load increment of the stretch, the homogeneous deformation
-  // u_d = d_d (x_d - x_min,d) / L_d per step: 0 on the symmetry faces, d_d on
+  // the stretch at load factor 1, the homogeneous deformation
+  // u_d = d_d (x_d - x_min,d) / L_d: 0 on the symmetry faces, d_d on
   // the stretched ones; prescribing it on the faces only puts the whole
   // increment into the first layer of cells (--no-predictor)
   VectorType stretch_increment;
@@ -313,7 +322,6 @@ run(const Options &options, const Material &material, const std::string &materia
       stretch_increment.import_elements(rw, VectorOperation::insert);
       if (!options.predictor)
         stretch_increment.scale(stretch_direction);
-      stretch_increment *= 1. / n_load_steps;
     }
 
   // F = (v, (0, 0, -g)), zero on the constrained DoFs
@@ -342,7 +350,9 @@ run(const Options &options, const Material &material, const std::string &materia
         << " cells=" << tria.n_global_active_cells() << " dofs=" << dof_handler.n_dofs()
         << " ranks=" << Utilities::MPI::n_mpi_processes(comm) << " g=" << g
         << " stretch=" << stretch << (options.predictor ? "" : " (no predictor)")
-        << " load_steps=" << n_load_steps << " cg_tolerance=" << cg_tolerance << std::endl;
+        << " load_steps=" << n_load_steps << " first_step=" << options.first_step
+        << (options.extrapolate ? " (extrapolated guess)" : "") << " cg_tolerance=" << cg_tolerance
+        << std::endl;
 
   const PreconditionIdentity identity;
 
@@ -401,19 +411,48 @@ run(const Options &options, const Material &material, const std::string &materia
   if (output)
     write_solution(0, 0.);
 
+  // load factors 1/n, ..., 1; --first-step=f < 1 puts f/n in front (as the
+  // quasi-static driver of ExaDG with f = 0.01)
+  std::vector<double> loads;
+  if (options.first_step < 1.)
+    loads.push_back(options.first_step / n_load_steps);
   for (unsigned int step = 1; step <= n_load_steps; ++step)
+    loads.push_back(static_cast<double>(step) / n_load_steps);
+
+  for (unsigned int step = 1; step <= loads.size(); ++step)
     {
-      const double load = static_cast<double>(step) / n_load_steps;
+      const double load = loads[step - 1];
       pcout << "load step " << step << ", lambda = " << load << std::endl;
-      u += stretch_increment;
-      double reference_norm = load * force_norm;
+
+      // initial guess: the homogeneous deformation of the load increment, or
+      // (--extrapolate, from the second step on) the last displacement
+      // increment scaled by the ratio of the load increments; both give the
+      // prescribed DoFs their new values
+      const double load_increment = load - (step > 1 ? loads[step - 2] : 0.);
+      if (options.extrapolate && step > 1)
+        {
+          const double last_increment = loads[step - 2] - (step > 2 ? loads[step - 3] : 0.);
+          du_step.sadd(-1., 1., u); // u_n - u_{n-1}
+          u_previous = u;
+          u.add(load_increment / last_increment, du_step);
+        }
+      else
+        {
+          u_previous = u;
+          u.add(load_increment, stretch_increment);
+        }
+      du_step = u_previous;
+      // the tolerance of the small first step is that of a regular step: its
+      // own would be below round-off
+      const double step_scale     = (1. / n_load_steps) / load_increment;
+      double       reference_norm = step_scale * load * force_norm;
 
       double residual_norm = compute_residual(load);
       AssertThrow(std::isfinite(residual_norm),
                   ExcMessage("J <= 0 at the start of load step " + std::to_string(step) +
                              ": more load steps needed"));
       if (has_stretch)
-        reference_norm = std::max(reference_norm, residual_norm);
+        reference_norm = std::max(reference_norm, step_scale * residual_norm);
 
       double       previous_norm = 0.;
       bool         converged     = false;
@@ -546,6 +585,10 @@ main(int argc, char *argv[])
         options.material = a.substr(11);
       else if (a.rfind("--ogden=", 0) == 0)
         options.ogden_parameters = a.substr(8);
+      else if (a.rfind("--first-step=", 0) == 0)
+        options.first_step = std::stod(a.substr(13));
+      else if (a == "--extrapolate")
+        options.extrapolate = true;
       else if (a == "--pmg")
         options.pmg = true;
       else if (a == "--outer=cg")
@@ -584,7 +627,8 @@ main(int argc, char *argv[])
                 << " [--mesh=file.msh] [--stretch=d or dx,dy,dz] [--no-predictor]"
                 << " [--cg-monitor=N] [--material=svk|ogden]"
                 << " [--ogden=mu1,alpha1,mu2,alpha2,kappa] [--pmg] [--outer=cg|fcg]"
-                << " [--coarse-tol=tol] [--smoothing-degree=k]" << std::endl;
+                << " [--coarse-tol=tol] [--smoothing-degree=k] [--first-step=f]"
+                << " [--extrapolate]" << std::endl;
     return 1;
   };
 
