@@ -1,11 +1,11 @@
 # Which materials and degrees program.cc instantiates, e.g.
 #   -DELASTICITY_RESIDUAL_MATERIALS=svk -DELASTICITY_RESIDUAL_DEGREES="2;3"
 # (every combination is a set of nvcc kernels of its own)
-set(ELASTICITY_RESIDUAL_MATERIALS "svk;linear" CACHE STRING "materials to compile: svk, linear")
+set(ELASTICITY_RESIDUAL_MATERIALS "svk;linear;ogden" CACHE STRING "materials to compile: svk, linear, ogden")
 set(ELASTICITY_RESIDUAL_DEGREES "1;2;3;4" CACHE STRING "degrees to compile: 1 to 4")
 
 function(elasticity_residual_instantiations _target)
-  foreach(_material svk linear)
+  foreach(_material svk linear ogden)
     string(TOUPPER ${_material} _upper)
     if(_material IN_LIST ELASTICITY_RESIDUAL_MATERIALS)
       target_compile_definitions(${_target} PRIVATE ELASTICITY_RESIDUAL_${_upper}=1)
