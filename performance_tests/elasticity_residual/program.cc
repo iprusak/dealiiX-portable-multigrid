@@ -26,10 +26,14 @@
 // All variants but vmult_dealii (one cell per team) run with the same batch:
 // cells_per_batch, or with 0 the benchmark's rule (10 kB of shared values per
 // batch, 1 to 32 cells). Every line prints the batch it ran with.
-// With svk, src is scaled by 0.05 (strains of a few percent).
+// With svk, src is scaled by 0.05 (strains of a few percent). With ogden
+// (Singh et al. parameters) src is the interpolant of a smooth field
+// vanishing on the boundary, |grad u| < 0.2, so that J > 0 everywhere
+// (J <= 0 returns NaN early).
+// Every line prints the number of non-finite entries of dst (should be 0).
 //
 //   ./program degree [n_dofs (default 1e7)] [n_repetitions (default 20)]
-//             [cells_per_batch (default 0)] [material svk|linear (default svk)]
+//             [cells_per_batch (default 0)] [material svk|linear|ogden (default svk)]
 //
 // Only the materials and degrees of the CMake variables
 // ELASTICITY_RESIDUAL_MATERIALS and ELASTICITY_RESIDUAL_DEGREES are compiled
@@ -82,6 +86,9 @@
 #ifndef ELASTICITY_RESIDUAL_LINEAR
 #  define ELASTICITY_RESIDUAL_LINEAR 1
 #endif
+#ifndef ELASTICITY_RESIDUAL_OGDEN
+#  define ELASTICITY_RESIDUAL_OGDEN 1
+#endif
 #ifndef ELASTICITY_RESIDUAL_DEGREE_1
 #  define ELASTICITY_RESIDUAL_DEGREE_1 1
 #endif
@@ -117,12 +124,73 @@ device_memory_used()
 
 
 
+// u_c = 0.05 sin(2 x_(c+1) + x_(c+2)) prod_d sin^4(pi x_d / L_d): the bubble
+// keeps the jump to the zero boundary values small, |grad u| < 0.2, J > 0
+template <int dim>
+struct SmoothDisplacement : public Function<dim>
+{
+  SmoothDisplacement(const Point<dim> &extent)
+    : Function<dim>(dim)
+    , extent(extent)
+  {}
+
+  double
+  value(const Point<dim> &p, const unsigned int c) const override
+  {
+    double bubble = 1.;
+    for (unsigned int d = 0; d < dim; ++d)
+      bubble *= Utilities::fixed_power<4>(std::sin(numbers::PI * p[d] / extent[d]));
+    return 0.05 * bubble * std::sin(2. * p[(c + 1) % dim] + p[(c + 2) % dim]);
+  }
+
+  const Point<dim> extent;
+};
+
+
+
+template <typename Material>
+Material
+make_material()
+{
+  if constexpr (std::is_same_v<Material, Portable::OgdenMaterial<3, Number>>)
+    {
+      return Material{6.24, 16.714, 935., 4.456, 2.1e4};
+    }
+  else
+    {
+      return Material{1.7, 0.6};
+    }
+}
+
+
+
+template <typename Material>
+std::string
+material_name()
+{
+  if constexpr (std::is_same_v<Material, Portable::LinearElasticMaterial<3, Number>>)
+    {
+      return "linear";
+    }
+  else if constexpr (std::is_same_v<Material, Portable::OgdenMaterial<3, Number>>)
+    {
+      return "ogden";
+    }
+  else
+    {
+      return "svk";
+    }
+}
+
+
+
 template <int degree, typename Material>
 int
 run(const double target_n_dofs, const int n_repetitions, const unsigned int cells_per_batch)
 {
   constexpr int  dim    = 3;
   constexpr bool linear = std::is_same_v<Material, Portable::LinearElasticMaterial<dim, Number>>;
+  constexpr bool ogden  = std::is_same_v<Material, Portable::OgdenMaterial<dim, Number>>;
   using Operator        = Portable::ElasticityOperator<dim, degree, Number, Material, degree + 1>;
 
   const MPI_Comm     comm = MPI_COMM_WORLD;
@@ -164,7 +232,7 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
   constraints.close();
 
   const double   memory_before = device_memory_used();
-  const Material material{1.7, 0.6};
+  const Material material      = make_material<Material>();
   Operator       op(dof_handler, constraints, material, false, cells_per_batch);
 
   VectorType src, dst, dst_ref;
@@ -173,11 +241,18 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
   op.initialize_dof_vector(dst_ref);
   {
     LinearAlgebra::distributed::Vector<Number, MemorySpace::Host> host(src.get_partitioner());
-    for (unsigned int i = 0; i < host.locally_owned_size(); ++i)
-      host.local_element(i) = std::sin(0.001 * (host.get_partitioner()->local_to_global(i)));
+    if (ogden)
+      VectorTools::interpolate(MappingQ1<dim>(),
+                               dof_handler,
+                               SmoothDisplacement<dim>(
+                                 Point<dim>(repetitions[0], repetitions[1], repetitions[2])),
+                               host);
+    else
+      for (unsigned int i = 0; i < host.locally_owned_size(); ++i)
+        host.local_element(i) = std::sin(0.001 * (host.get_partitioner()->local_to_global(i)));
     constraints.set_zero(host);
     src.import_elements(host, VectorOperation::insert);
-    if (!linear)
+    if (!linear && !ogden)
       src *= 0.05;
   }
   Kokkos::fence();
@@ -187,7 +262,7 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
   const double memory_max    = Utilities::MPI::max(memory_after, comm);
 
   const types::global_dof_index n_dofs = dof_handler.n_dofs();
-  pcout << (linear ? "linear" : "svk") << " degree=" << degree << " n_q_points_1d=" << degree + 1
+  pcout << material_name<Material>() << " degree=" << degree << " n_q_points_1d=" << degree + 1
         << " ranks=" << Utilities::MPI::n_mpi_processes(comm)
         << " cells=" << tria.n_global_active_cells() << " (" << repetitions[0] << "x"
         << repetitions[1] << "x" << repetitions[2] << ", " << n_refinements
@@ -202,7 +277,8 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
     const double memory_before_state = device_memory_used();
     op.evaluate_residual(dst, src);
     Kokkos::fence();
-    const double memory_state = Utilities::MPI::max(device_memory_used() - memory_before_state, comm);
+    const double memory_state =
+      Utilities::MPI::max(device_memory_used() - memory_before_state, comm);
     pcout << "  stored grad u per rank: max " << memory_state << " GiB ("
           << memory_state * (1u << 30) / (n_dofs / double(Utilities::MPI::n_mpi_processes(comm)))
           << " bytes/dof)" << std::endl;
@@ -231,9 +307,9 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
      op.cells_per_batch_batched(),
      [&]() { op.evaluate_residual_fused(dst, src); }},
     {"linearized", op.cells_per_batch_batched(), [&]() { op.vmult_linearized(dst, src); }, true},
-    {"linearized_fused",
-     op.cells_per_batch_batched(),
-     [&]() { op.vmult_linearized_fused(dst, src); }}};
+    {"linearized_fused", op.cells_per_batch_batched(), [&]() {
+       op.vmult_linearized_fused(dst, src);
+     }}};
 
   double reference_norm = 0.;
   for (const auto &[name, batch, vmult, new_reference] : variants)
@@ -262,6 +338,14 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
           dst_ref        = dst;
           reference_norm = dst_ref.l2_norm();
         }
+      unsigned int n_nonfinite = 0;
+      {
+        LinearAlgebra::distributed::Vector<Number, MemorySpace::Host> host(dst.get_partitioner());
+        host.import_elements(dst, VectorOperation::insert);
+        for (unsigned int i = 0; i < host.locally_owned_size(); ++i)
+          n_nonfinite += !std::isfinite(host.local_element(i));
+        n_nonfinite = Utilities::MPI::sum(n_nonfinite, comm);
+      }
       dst -= dst_ref;
       const double difference = dst.l2_norm() / reference_norm;
 
@@ -270,7 +354,7 @@ run(const double target_n_dofs, const int n_repetitions, const unsigned int cell
             << " ms, min " << std::setw(9) << 1e3 * t_min << " ms, " << std::setw(7)
             << std::setprecision(4) << 1e-9 * n_dofs / t_median
             << " GDoF/s (median), rel. difference " << std::scientific << std::setprecision(2)
-            << difference << std::defaultfloat << std::endl;
+            << difference << std::defaultfloat << ", non-finite " << n_nonfinite << std::endl;
     }
   pcout << std::endl;
 
@@ -325,7 +409,7 @@ main(int argc, char *argv[])
     {
       std::cerr << "usage: " << argv[0]
                 << " degree [n_dofs (default 1e7)] [n_repetitions (default 20)]"
-                << " [cells_per_batch (default 0)] [material svk|linear (default svk)]"
+                << " [cells_per_batch (default 0)] [material svk|linear|ogden (default svk)]"
                 << std::endl;
       return 1;
     }
@@ -335,9 +419,9 @@ main(int argc, char *argv[])
   const int          n_repetitions   = (argc > 3) ? std::atoi(argv[3]) : 20;
   const unsigned int cells_per_batch = (argc > 4) ? std::atoi(argv[4]) : 0;
   const std::string  material        = (argc > 5) ? argv[5] : "svk";
-  if (material != "linear" && material != "svk")
+  if (material != "linear" && material != "svk" && material != "ogden")
     {
-      std::cerr << "material must be linear or svk" << std::endl;
+      std::cerr << "material must be linear, svk or ogden" << std::endl;
       return 1;
     }
 
@@ -354,6 +438,13 @@ main(int argc, char *argv[])
                                                                          n_dofs,
                                                                          n_repetitions,
                                                                          cells_per_batch);
+#endif
+#if ELASTICITY_RESIDUAL_OGDEN
+  if (material == "ogden")
+    return run_degree<Portable::OgdenMaterial<3, Number>>(degree,
+                                                          n_dofs,
+                                                          n_repetitions,
+                                                          cells_per_batch);
 #endif
   std::cerr << "material " << material << " not compiled (ELASTICITY_RESIDUAL_MATERIALS)"
             << std::endl;
