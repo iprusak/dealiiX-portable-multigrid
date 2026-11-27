@@ -15,7 +15,7 @@
 //             [output (default 1)] [--mesh=file.msh] [--stretch=d or dx,dy,dz]
 //             [--no-predictor] [--cg-monitor=N] [--material=svk|ogden]
 //             [--ogden=mu1,alpha1,mu2,alpha2,kappa] [--pmg] [--outer=cg|fcg]
-//             [--coarse-tol=tol] [--smoothing-degree=k]
+//             [--coarse-tol=tol] [--smoothing-degree=k] [--macroscopic]
 //
 // SVK: E = 1, nu = 0.3. Ogden (decoupled, Portable::OgdenMaterial) by default
 // the alveolar wall of Singh et al. (2024), Table 2, as in ExaDG's
@@ -35,6 +35,11 @@
 // N iterations.
 //
 // CG solves to cg_tolerance |R|, but never beyond 0.1 of Newton's tolerance.
+//
+// --macroscopic prints after each load step the macroscopic first
+// Piola-Kirchhoff stress (the integral over the solid divided by the volume
+// of the bounding box) and the reference and current solid volume, the
+// macroscopic quantities of ExaDG's alveolar_hex application.
 //
 // --pmg preconditions CG by polynomial multigrid (tangent_pmg.h): degrees
 // p, p / 2, ..., 1, Chebyshev of degree --smoothing-degree (default 5), CG to
@@ -58,6 +63,7 @@
 
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_system.h>
+#include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/mapping_q.h>
 
 #include <deal.II/grid/grid_generator.h>
@@ -124,6 +130,7 @@ struct Options
   bool           pmg              = false;
   bool           flexible_cg      = true;
   double         coarse_tolerance = 1e-3;
+  bool           macroscopic      = false;
   unsigned int   smoothing_degree = 5;
 };
 
@@ -401,6 +408,60 @@ run(const Options &options, const Material &material, const std::string &materia
   if (output)
     write_solution(0, 0.);
 
+  // --macroscopic: the first Piola-Kirchhoff stress integrated over the solid
+  // and divided by the volume of the bounding box, and the reference and
+  // current solid volume (as the macroscopic quantities of ExaDG's
+  // alveolar_hex application)
+  const auto print_macroscopic = [&](const double load)
+  {
+    LinearAlgebra::ReadWriteVector<Number> rw(locally_owned_dofs);
+    rw.import_elements(u, VectorOperation::insert);
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Host> u_host(locally_owned_dofs,
+                                                                         locally_relevant_dofs,
+                                                                         comm);
+    u_host.import_elements(rw, VectorOperation::insert);
+    constraints.distribute(u_host);
+    u_host.update_ghost_values();
+
+    const QGauss<dim> quadrature(degree + 1);
+    FEValues<dim>     fe_values(mapping, fe, quadrature, update_gradients | update_JxW_values);
+    const FEValuesExtractors::Vector    displacement(0);
+    std::vector<Tensor<2, dim, Number>> grad_u(quadrature.size());
+
+    // P (row-major), reference volume, current volume
+    std::vector<double> sums(dim * dim + 2, 0.);
+    for (const auto &cell : dof_handler.active_cell_iterators())
+      if (cell->is_locally_owned())
+        {
+          fe_values.reinit(cell);
+          fe_values[displacement].get_function_gradients(u_host, grad_u);
+          for (const unsigned int q : fe_values.quadrature_point_indices())
+            {
+              const Tensor<2, dim, Number> P = material.stress(grad_u[q]);
+              Tensor<2, dim, Number>       F = grad_u[q];
+              for (unsigned int d = 0; d < dim; ++d)
+                {
+                  F[d][d] += 1.;
+                  for (unsigned int e = 0; e < dim; ++e)
+                    sums[d * dim + e] += P[d][e] * fe_values.JxW(q);
+                }
+              sums[dim * dim] += fe_values.JxW(q);
+              sums[dim * dim + 1] += determinant(F) * fe_values.JxW(q);
+            }
+        }
+    Utilities::MPI::sum(sums, comm, sums);
+
+    double box_volume = 1.;
+    for (unsigned int d = 0; d < dim; ++d)
+      box_volume *= box.side_length(d);
+
+    pcout << "  macroscopic: load " << std::scientific << std::setprecision(10) << load << " P";
+    for (unsigned int i = 0; i < dim * dim; ++i)
+      pcout << " " << sums[i] / box_volume;
+    pcout << " solid volume " << sums[dim * dim] << " -> " << sums[dim * dim + 1]
+          << std::defaultfloat << std::endl;
+  };
+
   for (unsigned int step = 1; step <= n_load_steps; ++step)
     {
       const double load = static_cast<double>(step) / n_load_steps;
@@ -497,6 +558,8 @@ run(const Options &options, const Material &material, const std::string &materia
             }
         }
       AssertThrow(converged, ExcMessage("Newton did not converge"));
+      if (options.macroscopic)
+        print_macroscopic(load);
       if (output)
         write_solution(step, load);
     }
@@ -546,6 +609,8 @@ main(int argc, char *argv[])
         options.material = a.substr(11);
       else if (a.rfind("--ogden=", 0) == 0)
         options.ogden_parameters = a.substr(8);
+      else if (a == "--macroscopic")
+        options.macroscopic = true;
       else if (a == "--pmg")
         options.pmg = true;
       else if (a == "--outer=cg")
@@ -584,7 +649,7 @@ main(int argc, char *argv[])
                 << " [--mesh=file.msh] [--stretch=d or dx,dy,dz] [--no-predictor]"
                 << " [--cg-monitor=N] [--material=svk|ogden]"
                 << " [--ogden=mu1,alpha1,mu2,alpha2,kappa] [--pmg] [--outer=cg|fcg]"
-                << " [--coarse-tol=tol] [--smoothing-degree=k]" << std::endl;
+                << " [--coarse-tol=tol] [--smoothing-degree=k] [--macroscopic]" << std::endl;
     return 1;
   };
 
