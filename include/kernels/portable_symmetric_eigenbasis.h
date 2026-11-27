@@ -160,7 +160,7 @@ namespace Portable
   // coincide), its eigenvector w as the largest cross product of rows of
   // B - beta I, the other two by one Jacobi rotation of B restricted to w^perp;
   // eigenvalues as Rayleigh quotients. In 2D one rotation. Same result type
-  // and ordering as symmetric_eigenbasis().
+  // and ordering as symmetric_eigenbasis(). A diagonal A is only sorted.
   template <int dim, typename Number>
   DEAL_II_HOST_DEVICE SymmetricEigenbasis<dim, Number>
   symmetric_eigenbasis_closed_form(const Tensor<2, dim, Number> &A)
@@ -174,7 +174,9 @@ namespace Portable
       for (unsigned int j = 0; j < dim; ++j)
         {
           a[i][j] = Number(0.5) * (A[i][j] + A[j][i]);
-          scale   = Kokkos::fmax(scale, Kokkos::abs(a[i][j]));
+          // comparisons, not fmax (a libm call on the host)
+          const Number abs_a = Kokkos::abs(a[i][j]);
+          scale              = (abs_a > scale) ? abs_a : scale;
         }
     if (scale == Number(0.))
       {
@@ -185,26 +187,33 @@ namespace Portable
 
     Number value[dim];
     Number vector[dim][dim];
-    if constexpr (dim == 2)
+    Number off_diagonal = 0.;
+    for (unsigned int i = 0; i < dim; ++i)
+      for (unsigned int j = i + 1; j < dim; ++j)
+        {
+          const Number abs_a = Kokkos::abs(a[i][j]);
+          off_diagonal       = (abs_a > off_diagonal) ? abs_a : off_diagonal;
+        }
+    if (off_diagonal == Number(0.))
       {
-        if (a[0][1] == Number(0.))
+        // diagonal, e.g. C of an axis-aligned stretch
+        for (unsigned int i = 0; i < dim; ++i)
           {
-            value[0]     = a[0][0];
-            value[1]     = a[1][1];
-            vector[0][0] = vector[1][1] = 1.;
-            vector[0][1] = vector[1][0] = 0.;
+            value[i] = a[i][i];
+            for (unsigned int d = 0; d < dim; ++d)
+              vector[d][i] = (d == i) ? Number(1.) : Number(0.);
           }
-        else
-          {
-            Number t, c, s;
-            internal::jacobi_rotation(a[0][0], a[0][1], a[1][1], t, c, s);
-            value[0]     = a[0][0] - t * a[0][1];
-            value[1]     = a[1][1] + t * a[0][1];
-            vector[0][0] = c;
-            vector[1][0] = -s;
-            vector[0][1] = s;
-            vector[1][1] = c;
-          }
+      }
+    else if constexpr (dim == 2)
+      {
+        Number t, c, s;
+        internal::jacobi_rotation(a[0][0], a[0][1], a[1][1], t, c, s);
+        value[0]     = a[0][0] - t * a[0][1];
+        value[1]     = a[1][1] + t * a[0][1];
+        vector[0][0] = c;
+        vector[1][0] = -s;
+        vector[0][1] = s;
+        vector[1][1] = c;
       }
     else
       {
@@ -240,9 +249,11 @@ namespace Portable
                              (a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[1][2]) -
                               a[0][1] * (a[0][1] * a[2][2] - a[1][2] * a[0][2]) +
                               a[0][2] * (a[0][1] * a[1][2] - a[1][1] * a[0][2]));
-          const Number half_det =
-            Kokkos::fmin(Number(1.), Kokkos::fmax(Number(-1.), Number(0.5) * det));
-          const Number phi = Kokkos::acos(half_det) / Number(3.);
+          const Number half_det_raw = Number(0.5) * det;
+          const Number half_det     = (half_det_raw > Number(1.))  ? Number(1.) :
+                                      (half_det_raw < Number(-1.)) ? Number(-1.) :
+                                                                     half_det_raw;
+          const Number phi          = Kokkos::acos(half_det) / Number(3.);
           const Number beta =
             Number(2.) *
             Kokkos::cos(half_det >= Number(0.) ? phi : phi + Number(2.0943951023931954923));
