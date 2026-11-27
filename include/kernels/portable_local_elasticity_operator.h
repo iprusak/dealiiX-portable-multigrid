@@ -167,7 +167,9 @@ namespace Portable
   // Psi = sum_a sum_p mu_p / alpha_p (lambda_bar_a^alpha_p - 1)
   //       + kappa / 4 (J^2 - 1 - 2 ln J), lambda_bar_a = J^(-1/3) lambda_a,
   // P = F S. In 2D plane strain: lambda_3 = 1. NaN for J <= 0.
-  template <int dim, typename Number>
+  // eigen_solver: the eigenbasis of C by symmetric_eigenbasis_closed_form()
+  // or symmetric_eigenbasis() (Jacobi)
+  template <int dim, typename Number, EigenSolver eigen_solver = EigenSolver::closed_form>
   struct OgdenMaterial
   {
     Number mu1    = 1.;
@@ -337,7 +339,14 @@ namespace Portable
       if (!pr.valid)
         return pr;
 
-      pr.eigen = symmetric_eigenbasis(C);
+      if constexpr (eigen_solver == EigenSolver::closed_form)
+        {
+          pr.eigen = symmetric_eigenbasis_closed_form(C);
+        }
+      else
+        {
+          pr.eigen = symmetric_eigenbasis(C);
+        }
       for (unsigned int i = 0; i < dim; ++i)
         for (unsigned int a = 0; a < dim; ++a)
           {

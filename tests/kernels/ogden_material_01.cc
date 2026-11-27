@@ -106,11 +106,12 @@ energy_derivative(const Material &m, const Tensor<2, 3> &grad_u)
   return P;
 }
 
-template <int dim>
+template <int dim, Portable::EigenSolver eigen_solver>
 std::vector<double>
 device_stress(const Material &m, const std::vector<Tensor<2, dim>> &grads)
 {
-  const Portable::OgdenMaterial<dim, double> material{m.mu1, m.alpha1, m.mu2, m.alpha2, m.kappa};
+  const Portable::OgdenMaterial<dim, double, eigen_solver> material{
+    m.mu1, m.alpha1, m.mu2, m.alpha2, m.kappa};
 
   const unsigned int n = grads.size();
   using MemorySpace    = MemorySpace::Default::kokkos_space;
@@ -140,11 +141,13 @@ device_stress(const Material &m, const std::vector<Tensor<2, dim>> &grads)
   return std::vector<double>(P.data(), P.data() + n * dim * dim);
 }
 
-template <int dim>
+template <int dim, Portable::EigenSolver eigen_solver>
 void
 test()
 {
-  deallog << "dim = " << dim << std::endl;
+  deallog << "dim = " << dim << ", eigen solver "
+          << (eigen_solver == Portable::EigenSolver::closed_form ? "closed form" : "jacobi")
+          << std::endl;
 
   std::vector<std::pair<std::string, Tensor<2, dim>>> cases;
   const auto diagonal = [](const std::array<double, dim> &d)
@@ -197,7 +200,7 @@ test()
 
   for (const auto &[name, m] : materials)
     {
-      const std::vector<double> P_device = device_stress<dim>(m, grads);
+      const std::vector<double> P_device = device_stress<dim, eigen_solver>(m, grads);
       for (unsigned int c = 0; c < cases.size(); ++c)
         {
           Tensor<2, 3> P;
@@ -248,6 +251,8 @@ main(int argc, char *argv[])
   Kokkos::ScopeGuard kokkos(argc, argv);
   initlog();
 
-  test<2>();
-  test<3>();
+  test<2, Portable::EigenSolver::closed_form>();
+  test<3, Portable::EigenSolver::closed_form>();
+  test<2, Portable::EigenSolver::jacobi>();
+  test<3, Portable::EigenSolver::jacobi>();
 }

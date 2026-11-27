@@ -113,13 +113,14 @@ spectral_derivative(const Material &m, const Tensor<2, 3> &grad_u, const Tensor<
   return (-P(2. * h) + 8. * P(h) - 8. * P(-h) + P(-2. * h)) / (12. * h);
 }
 
-template <int dim>
+template <int dim, Portable::EigenSolver eigen_solver>
 std::vector<Tensor<2, dim>>
 device_linearized(const Material                    &m,
                   const std::vector<Tensor<2, dim>> &grads,
                   const std::vector<Tensor<2, dim>> &directions)
 {
-  const Portable::OgdenMaterial<dim, double> material{m.mu1, m.alpha1, m.mu2, m.alpha2, m.kappa};
+  const Portable::OgdenMaterial<dim, double, eigen_solver> material{
+    m.mu1, m.alpha1, m.mu2, m.alpha2, m.kappa};
 
   const unsigned int n = grads.size();
   using MemorySpace    = MemorySpace::Default::kokkos_space;
@@ -184,11 +185,13 @@ random_tensor(std::mt19937 &gen, const double amplitude)
   return T;
 }
 
-template <int dim>
+template <int dim, Portable::EigenSolver eigen_solver>
 void
 test()
 {
-  deallog << "dim = " << dim << std::endl;
+  deallog << "dim = " << dim << ", eigen solver "
+          << (eigen_solver == Portable::EigenSolver::closed_form ? "closed form" : "jacobi")
+          << std::endl;
 
   const std::vector<std::pair<std::string, Material>> materials = {
     {"Mooney-Rivlin", {0.8, 2., -0.3, -2., 2.5}}, {"Ogden", {0.9, 3.7, -0.2, -1.3, 2.5}}};
@@ -230,7 +233,7 @@ test()
     {
       const double mu     = 0.5 * (m.mu1 * m.alpha1 + m.mu2 * m.alpha2);
       const double lambda = m.kappa - 2. / 3. * mu;
-      const auto   dP     = device_linearized<dim>(m, grads, directions);
+      const auto   dP     = device_linearized<dim, eigen_solver>(m, grads, directions);
       for (unsigned int c = 0; c < cases.size(); ++c)
         {
           const Tensor<2, 3> grad_u = embed<dim>(grads[c]);
@@ -279,7 +282,7 @@ test()
         std::vector<Tensor<2, dim>> sweep_grads, sweep_directions(ts.size(), G);
         for (const double t : ts)
           sweep_grads.push_back(base + t * B);
-        const auto dP = device_linearized<dim>(m, sweep_grads, sweep_directions);
+        const auto dP = device_linearized<dim, eigen_solver>(m, sweep_grads, sweep_directions);
         for (unsigned int k = 0; k < ts.size(); ++k)
           {
             const double error =
@@ -305,6 +308,8 @@ main(int argc, char *argv[])
   Kokkos::ScopeGuard kokkos(argc, argv);
   initlog();
 
-  test<2>();
-  test<3>();
+  test<2, Portable::EigenSolver::closed_form>();
+  test<3, Portable::EigenSolver::closed_form>();
+  test<2, Portable::EigenSolver::jacobi>();
+  test<3, Portable::EigenSolver::jacobi>();
 }

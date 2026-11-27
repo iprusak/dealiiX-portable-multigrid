@@ -1,6 +1,7 @@
-// Portable::symmetric_eigenbasis (kernels/portable_symmetric_eigenbasis.h)
-// evaluated in a device kernel, against deal.II's eigenvectors() (QL with
-// implicit shifts) on the host:
+// Portable::symmetric_eigenbasis (Jacobi) and
+// Portable::symmetric_eigenbasis_closed_form
+// (kernels/portable_symmetric_eigenbasis.h) evaluated in a device kernel, against deal.II's
+// eigenvectors() (QL with implicit shifts) on the host:
 // - eigenvalues
 // - spectral projectors sum_{a in group} N_a (x) N_a over groups of equal
 //   eigenvalues, which do not depend on the basis chosen in a repeated
@@ -66,11 +67,27 @@ rotated_diagonal(const std::array<double, dim> &d, const double angle)
   return R * D * transpose(R);
 }
 
-template <int dim>
+template <Portable::EigenSolver eigen_solver, int dim>
+DEAL_II_HOST_DEVICE Portable::SymmetricEigenbasis<dim, double>
+eigenbasis(const Tensor<2, dim> &T)
+{
+  if constexpr (eigen_solver == Portable::EigenSolver::closed_form)
+    {
+      return Portable::symmetric_eigenbasis_closed_form(T);
+    }
+  else
+    {
+      return Portable::symmetric_eigenbasis(T);
+    }
+}
+
+template <int dim, Portable::EigenSolver eigen_solver>
 void
 test()
 {
-  deallog << "dim = " << dim << std::endl;
+  deallog << "dim = " << dim << ", "
+          << (eigen_solver == Portable::EigenSolver::closed_form ? "closed form" : "jacobi")
+          << std::endl;
 
   std::vector<std::pair<std::string, Tensor<2, dim>>> cases;
   // the reference is computed for cases[c] / factor[c]: deal.II's QL
@@ -138,7 +155,7 @@ test()
       for (unsigned int i = 0; i < dim; ++i)
         for (unsigned int j = 0; j < dim; ++j)
           T[i][j] = d_A(c, i * dim + j);
-      const auto eigen = Portable::symmetric_eigenbasis(T);
+      const auto eigen = eigenbasis<eigen_solver>(T);
       for (unsigned int a = 0; a < dim; ++a)
         {
           d_values(c, a) = eigen.values[a];
@@ -218,6 +235,8 @@ main(int argc, char *argv[])
   Kokkos::ScopeGuard kokkos(argc, argv);
   initlog();
 
-  test<2>();
-  test<3>();
+  test<2, Portable::EigenSolver::jacobi>();
+  test<3, Portable::EigenSolver::jacobi>();
+  test<2, Portable::EigenSolver::closed_form>();
+  test<3, Portable::EigenSolver::closed_form>();
 }
