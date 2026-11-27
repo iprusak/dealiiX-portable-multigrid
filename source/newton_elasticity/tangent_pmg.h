@@ -5,9 +5,9 @@
 // levels of degree p, p / 2, ..., 1 on the same mesh, each an
 // ElasticityTangentLevelOperator linearized at the interpolation of u,
 // PolynomialTransfer between them, Chebyshev smoothing with the inverse
-// diagonal, and CG with the inverse diagonal to a relative tolerance on
-// degree 1. The prescribed DoFs are homogeneous constraints of the transfers
-// and the smoothers.
+// diagonal, and on degree 1 CG with the inverse diagonal to a relative
+// tolerance or MueLu AMG (tangent_muelu.h). The prescribed DoFs are homogeneous constraints of the
+// transfers and the smoothers.
 
 #include <deal.II/base/mg_level_object.h>
 
@@ -24,8 +24,20 @@
 
 #include "multigrid/portable_polynomial_transfer.h"
 #include "operators/portable_elasticity_tangent_level_operator.h"
+#include "tangent_muelu.h"
 
 DEAL_II_NAMESPACE_OPEN
+
+// solver on degree 1: CG with the inverse diagonal, CG with a MueLu V-cycle,
+// or one MueLu V-cycle
+enum class CoarseSolver
+{
+  cg,
+  amg_cg,
+  amg_vcycle
+};
+
+
 
 template <int dim, typename Number, typename Material>
 class TangentPMG
@@ -47,12 +59,14 @@ public:
              const Material                  &material,
              const LevelSetup                &level_setup,
              const unsigned int               smoothing_degree,
-             const double                     coarse_tolerance);
+             const double                     coarse_tolerance,
+             const CoarseSolver               coarse_solver = CoarseSolver::cg);
 
   // linearize the coarser levels at the interpolation of the fine u (the fine
-  // level is linearized by the caller), set up diagonals and smoothers
+  // level is linearized by the caller), set up diagonals and smoothers; the
+  // AMG on the coarse level is rebuilt only if asked to
   void
-  update(const VectorType &u_fine);
+  update(const VectorType &u_fine, const bool rebuild_coarse_amg = true);
 
   void
   vmult(VectorType &dst, const VectorType &src) const;
@@ -72,6 +86,12 @@ public:
   // CG iterations on the coarse level since the last reset
   mutable unsigned int n_coarse_iterations = 0;
   mutable unsigned int n_vcycles           = 0;
+
+  // host assembly and hierarchy setup of the AMG on the coarse level
+  double
+  coarse_assemble_time() const;
+  double
+  coarse_setup_time() const;
 
 private:
   struct Level
@@ -104,8 +124,13 @@ private:
   const LevelSetup   level_setup;
   const unsigned int smoothing_degree;
   const double       coarse_tolerance;
+  const CoarseSolver coarse_solver;
 
   std::vector<SmootherType> smoothers;
+
+#ifdef DEAL_II_TRILINOS_WITH_TPETRA_MUELU
+  std::unique_ptr<TangentMueLu<dim, Number, Material>> coarse_amg;
+#endif
 
   mutable std::vector<VectorType> solution, defect, t;
 };
@@ -121,11 +146,13 @@ TangentPMG<dim, Number, Material>::TangentPMG(
   const Material                                                             &material,
   const LevelSetup                                                           &level_setup,
   const unsigned int                                                          smoothing_degree,
-  const double                                                                coarse_tolerance)
+  const double                                                                coarse_tolerance,
+  const CoarseSolver                                                          coarse_solver)
   : material(material)
   , level_setup(level_setup)
   , smoothing_degree(smoothing_degree)
   , coarse_tolerance(coarse_tolerance)
+  , coarse_solver(coarse_solver)
 {
   add_coarser_levels<fe_degree>(fine.get_dof_handler().get_triangulation());
 
@@ -171,6 +198,46 @@ TangentPMG<dim, Number, Material>::TangentPMG(
       if (l + 1 < n)
         levels[l].matrix->initialize_dof_vector(levels[l].state);
     }
+
+  if (coarse_solver != CoarseSolver::cg)
+    {
+#ifdef DEAL_II_TRILINOS_WITH_TPETRA_MUELU
+      AssertThrow(levels[0].degree == 1,
+                  ExcMessage("The AMG coarse solver needs a level of degree 1."));
+      coarse_amg =
+        std::make_unique<TangentMueLu<dim, Number, Material>>(levels[0].matrix->get_dof_handler(),
+                                                              *levels[0].transfer_constraints,
+                                                              material);
+#else
+      AssertThrow(false, ExcMessage("The AMG coarse solver needs deal.II with Tpetra + MueLu."));
+#endif
+    }
+}
+
+
+
+template <int dim, typename Number, typename Material>
+double
+TangentPMG<dim, Number, Material>::coarse_assemble_time() const
+{
+#ifdef DEAL_II_TRILINOS_WITH_TPETRA_MUELU
+  if (coarse_amg)
+    return coarse_amg->t_assemble;
+#endif
+  return 0.;
+}
+
+
+
+template <int dim, typename Number, typename Material>
+double
+TangentPMG<dim, Number, Material>::coarse_setup_time() const
+{
+#ifdef DEAL_II_TRILINOS_WITH_TPETRA_MUELU
+  if (coarse_amg)
+    return coarse_amg->t_setup;
+#endif
+  return 0.;
 }
 
 
@@ -214,7 +281,7 @@ TangentPMG<dim, Number, Material>::add_coarser_levels(const Triangulation<dim> &
 
 template <int dim, typename Number, typename Material>
 void
-TangentPMG<dim, Number, Material>::update(const VectorType &u_fine)
+TangentPMG<dim, Number, Material>::update(const VectorType &u_fine, const bool rebuild_coarse_amg)
 {
   const unsigned int n = levels.size();
   for (unsigned int l = n - 1; l-- > 0;)
@@ -227,6 +294,11 @@ TangentPMG<dim, Number, Material>::update(const VectorType &u_fine)
                                   levels[l].state);
       levels[l].linearize(levels[l].state);
     }
+
+#ifdef DEAL_II_TRILINOS_WITH_TPETRA_MUELU
+  if (coarse_amg && rebuild_coarse_amg)
+    coarse_amg->rebuild(n > 1 ? levels[0].state : u_fine);
+#endif
 
   for (unsigned int l = 0; l < n; ++l)
     {
@@ -264,13 +336,25 @@ TangentPMG<dim, Number, Material>::v_cycle(const unsigned int level) const
 {
   if (level == 0)
     {
+#ifdef DEAL_II_TRILINOS_WITH_TPETRA_MUELU
+      if (coarse_solver == CoarseSolver::amg_vcycle)
+        {
+          coarse_amg->vmult(solution[0], defect[0]);
+          return;
+        }
+#endif
       SolverControl        control(100000, coarse_tolerance * defect[0].l2_norm());
       SolverCG<VectorType> cg(control);
       solution[0] = 0.;
-      cg.solve(*levels[0].matrix,
-               solution[0],
-               defect[0],
-               *levels[0].matrix->get_matrix_diagonal_inverse());
+#ifdef DEAL_II_TRILINOS_WITH_TPETRA_MUELU
+      if (coarse_solver == CoarseSolver::amg_cg)
+        cg.solve(*levels[0].matrix, solution[0], defect[0], *coarse_amg);
+      else
+#endif
+        cg.solve(*levels[0].matrix,
+                 solution[0],
+                 defect[0],
+                 *levels[0].matrix->get_matrix_diagonal_inverse());
       n_coarse_iterations += control.last_step();
       return;
     }

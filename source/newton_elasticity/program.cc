@@ -15,7 +15,8 @@
 //             [output (default 1)] [--mesh=file.msh] [--stretch=d or dx,dy,dz]
 //             [--no-predictor] [--cg-monitor=N] [--material=svk|ogden]
 //             [--ogden=mu1,alpha1,mu2,alpha2,kappa] [--pmg] [--outer=cg|fcg]
-//             [--coarse-tol=tol] [--smoothing-degree=k]
+//             [--coarse=cg|amg-cg|amg] [--amg-every=K] [--coarse-tol=tol]
+//             [--smoothing-degree=k]
 //
 // SVK: E = 1, nu = 0.3. Ogden (decoupled, Portable::OgdenMaterial) by default
 // the alveolar wall of Singh et al. (2024), Table 2, as in ExaDG's
@@ -39,7 +40,13 @@
 // --pmg preconditions CG by polynomial multigrid (tangent_pmg.h): degrees
 // p, p / 2, ..., 1, Chebyshev of degree --smoothing-degree (default 5), CG to
 // the relative --coarse-tol (default 1e-3) on degree 1, flexible CG outside
-// (--outer=fcg, default) or plain CG (--outer=cg).
+// (--outer=fcg, default) or plain CG (--outer=cg). With a deal.II with
+// Trilinos Tpetra + MueLu, --coarse=amg-cg preconditions that CG by a MueLu
+// V-cycle and --coarse=amg replaces it by one V-cycle (tangent_muelu.h; then
+// the multigrid is a fixed operator and --outer=cg applies); also for
+// degree 1, where the V-cycle is the whole preconditioner. --amg-every=K
+// rebuilds the MueLu hierarchy in every K-th Newton iteration of a load step
+// (default 1; large K: once per load step).
 //
 // E.g. with alveolar_hex_small.msh (not in this repository), 55200 hexes of
 // an idealized alveolar (Kelvin foam) geometry in [0, 1]^3:
@@ -124,6 +131,8 @@ struct Options
   bool           pmg              = false;
   bool           flexible_cg      = true;
   double         coarse_tolerance = 1e-3;
+  CoarseSolver   coarse_solver    = CoarseSolver::cg;
+  unsigned int   amg_every        = 1;
   unsigned int   smoothing_degree = 5;
 };
 
@@ -255,13 +264,18 @@ run(const Options &options, const Material &material, const std::string &materia
                                                                 material,
                                                                 level_setup,
                                                                 options.smoothing_degree,
-                                                                options.coarse_tolerance);
+                                                                options.coarse_tolerance,
+                                                                options.coarse_solver);
       pcout << "p-multigrid: degrees";
       for (unsigned int l = pmg->n_levels(); l-- > 0;)
         pcout << " " << pmg->degree(l);
-      pcout << ", Chebyshev degree " << options.smoothing_degree << ", coarse CG to "
-            << options.coarse_tolerance << ", outer " << (options.flexible_cg ? "FCG" : "CG")
-            << std::endl;
+      pcout << ", Chebyshev degree " << options.smoothing_degree << ", coarse "
+            << (options.coarse_solver == CoarseSolver::cg ?
+                  "CG to " + std::to_string(options.coarse_tolerance) :
+                options.coarse_solver == CoarseSolver::amg_cg ?
+                  "CG + MueLu to " + std::to_string(options.coarse_tolerance) :
+                  std::string("MueLu V-cycle"))
+            << ", outer " << (options.flexible_cg ? "FCG" : "CG") << std::endl;
     }
 
   VectorType u, residual, du, force, free_mask, stretch_direction;
@@ -457,7 +471,7 @@ run(const Options &options, const Material &material, const std::string &materia
           Timer timer;
           if (pmg)
             {
-              pmg->update(u);
+              pmg->update(u, it % options.amg_every == 0);
               pmg->n_coarse_iterations = 0;
               if (options.flexible_cg)
                 fcg.solve(fine_level, du, residual, *pmg);
@@ -505,6 +519,9 @@ run(const Options &options, const Material &material, const std::string &materia
         << ", CG iterations " << n_cg_total;
   if (pmg)
     pcout << ", coarse CG iterations " << n_coarse_total;
+  if (pmg && options.coarse_solver != CoarseSolver::cg)
+    pcout << ", coarse AMG assembly " << pmg->coarse_assemble_time() << " s, setup "
+          << pmg->coarse_setup_time() << " s";
   pcout << ", step cuts " << n_step_cuts << std::endl
         << "time: residual " << time_residual << " s, CG " << time_cg << " s ("
         << (n_cg_total > 0 ? 1e3 * time_cg / n_cg_total : 0.) << " ms per CG iteration)"
@@ -552,6 +569,14 @@ main(int argc, char *argv[])
         options.flexible_cg = false;
       else if (a == "--outer=fcg")
         options.flexible_cg = true;
+      else if (a == "--coarse=cg")
+        options.coarse_solver = CoarseSolver::cg;
+      else if (a == "--coarse=amg-cg")
+        options.coarse_solver = CoarseSolver::amg_cg;
+      else if (a == "--coarse=amg")
+        options.coarse_solver = CoarseSolver::amg_vcycle;
+      else if (a.rfind("--amg-every=", 0) == 0)
+        options.amg_every = std::stoi(a.substr(12));
       else if (a.rfind("--coarse-tol=", 0) == 0)
         options.coarse_tolerance = std::stod(a.substr(13));
       else if (a.rfind("--smoothing-degree=", 0) == 0)
@@ -584,7 +609,8 @@ main(int argc, char *argv[])
                 << " [--mesh=file.msh] [--stretch=d or dx,dy,dz] [--no-predictor]"
                 << " [--cg-monitor=N] [--material=svk|ogden]"
                 << " [--ogden=mu1,alpha1,mu2,alpha2,kappa] [--pmg] [--outer=cg|fcg]"
-                << " [--coarse-tol=tol] [--smoothing-degree=k]" << std::endl;
+                << " [--coarse=cg|amg-cg|amg] [--amg-every=K] [--coarse-tol=tol]"
+                << " [--smoothing-degree=k]" << std::endl;
     return 1;
   };
 
