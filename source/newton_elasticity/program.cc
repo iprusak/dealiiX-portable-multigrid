@@ -15,9 +15,10 @@
 //             [output (default 1)] [--mesh=file.msh] [--stretch=d or dx,dy,dz]
 //             [--no-predictor] [--cg-monitor=N] [--material=svk|ogden]
 //             [--ogden=mu1,alpha1,mu2,alpha2,kappa] [--pmg] [--outer=cg|fcg]
-//             [--coarse-tol=tol] [--smoothing-degree=k]
+//             [--coarse-tol=tol] [--smoothing-degree=k] [--youngs=E]
+//             [--newton-rel=tol] [--newton-abs=tol] [--cg-abs=tol]
 //
-// SVK: E = 1, nu = 0.3. Ogden (decoupled, Portable::OgdenMaterial) by default
+// SVK: E = 1 (--youngs), nu = 0.3. Ogden (decoupled, Portable::OgdenMaterial) by default
 // the alveolar wall of Singh et al. (2024), Table 2, as in ExaDG's
 // alveolar_hex application: mu1 = 6.24, alpha1 = 16.714, mu2 = 935,
 // alpha2 = 4.456 (Pa), kappa = 2.1e4. If an update gives J <= 0 somewhere
@@ -30,11 +31,13 @@
 // d_d = 0: the box [0, L]^3 under the macroscopic deformation gradient
 // F = I + diag(d / L), as BoundaryConditions = Symmetry of ExaDG's alveolar_hex.
 // In load steps, each added to all of u as the homogeneous deformation
-// (--no-predictor: to the prescribed DoFs only); Newton then stops at
-// |R| <= 1e-10 |R_0| of the step. --cg-monitor=N prints the CG residual every
-// N iterations.
+// (--no-predictor: to the prescribed DoFs only); Newton then stops relative
+// to |R_0| of the step. --cg-monitor=N prints the CG residual every N
+// iterations.
 //
-// CG solves to cg_tolerance |R|, but never beyond 0.1 of Newton's tolerance.
+// Newton stops at |R| <= --newton-rel (default 1e-10) times the reference
+// above, or at |R| <= --newton-abs (default 0). CG solves to cg_tolerance |R|
+// or to --cg-abs (default 0), but never beyond 0.1 of Newton's tolerance.
 //
 // --pmg preconditions CG by polynomial multigrid (tangent_pmg.h): degrees
 // p, p / 2, ..., 1, Chebyshev of degree --smoothing-degree (default 5), CG to
@@ -102,19 +105,21 @@ using VectorType = LinearAlgebra::distributed::Vector<Number, MemorySpace::Defau
 constexpr int dim = 3;
 
 // E = 1, nu = 0.3
-constexpr double E = 1., nu = 0.3;
-constexpr double lame_lambda = E * nu / ((1. + nu) * (1. - 2. * nu)),
-                 lame_mu     = E / (2. * (1. + nu));
+constexpr double nu = 0.3;
 
 
 
 struct Options
 {
-  unsigned int   n_refinements = 2;
-  unsigned int   n_load_steps  = 4;
-  double         g             = 3e-3;
-  double         cg_tolerance  = 1e-10;
-  bool           output        = true;
+  unsigned int   n_refinements   = 2;
+  unsigned int   n_load_steps    = 4;
+  double         g               = 3e-3;
+  double         cg_tolerance    = 1e-10;
+  double         cg_absolute     = 0.;
+  double         newton_relative = 1e-10;
+  double         newton_absolute = 0.;
+  double         youngs_modulus  = 1.;
+  bool           output          = true;
   std::string    mesh_file;
   unsigned int   cg_monitor = 0;
   Tensor<1, dim> stretch;
@@ -342,16 +347,17 @@ run(const Options &options, const Material &material, const std::string &materia
         << " cells=" << tria.n_global_active_cells() << " dofs=" << dof_handler.n_dofs()
         << " ranks=" << Utilities::MPI::n_mpi_processes(comm) << " g=" << g
         << " stretch=" << stretch << (options.predictor ? "" : " (no predictor)")
-        << " load_steps=" << n_load_steps << " cg_tolerance=" << cg_tolerance << std::endl;
+        << " load_steps=" << n_load_steps << " cg_tolerance=" << cg_tolerance
+        << " cg_absolute=" << options.cg_absolute << " newton=" << options.newton_relative
+        << " (relative), " << options.newton_absolute << " (absolute)" << std::endl;
 
   const PreconditionIdentity identity;
 
   double       time_residual = 0., time_cg = 0.;
   unsigned int n_newton_total = 0, n_cg_total = 0, n_coarse_total = 0, n_step_cuts = 0;
 
-  constexpr unsigned int max_newton       = 30;
-  constexpr double       newton_tolerance = 1e-10;
-  constexpr unsigned int max_step_cuts    = 10;
+  constexpr unsigned int max_newton    = 30;
+  constexpr unsigned int max_step_cuts = 10;
 
   // R(u) - load F on the free DoFs; NaN where J <= 0 (Ogden)
   const auto compute_residual = [&](const double load)
@@ -426,7 +432,9 @@ run(const Options &options, const Material &material, const std::string &materia
             pcout << "  |R|/|R_prev|^2 = " << residual_norm / (previous_norm * previous_norm);
           pcout << std::defaultfloat;
 
-          if (residual_norm <= newton_tolerance * reference_norm)
+          const double newton_target =
+            std::max(options.newton_relative * reference_norm, options.newton_absolute);
+          if (residual_norm <= newton_target)
             {
               pcout << std::endl;
               converged = true;
@@ -435,9 +443,9 @@ run(const Options &options, const Material &material, const std::string &materia
 
           residual *= -1.;
           // no more accuracy than Newton's stopping criterion needs
-          SolverControl                control(100000,
-                                std::max(cg_tolerance * residual_norm,
-                                         0.1 * newton_tolerance * reference_norm));
+          SolverControl control(
+            100000,
+            std::max({cg_tolerance * residual_norm, options.cg_absolute, 0.1 * newton_target}));
           SolverCG<VectorType>         cg(control);
           SolverFlexibleCG<VectorType> fcg(control);
           SolverBase<VectorType>      &solver =
@@ -546,6 +554,14 @@ main(int argc, char *argv[])
         options.material = a.substr(11);
       else if (a.rfind("--ogden=", 0) == 0)
         options.ogden_parameters = a.substr(8);
+      else if (a.rfind("--youngs=", 0) == 0)
+        options.youngs_modulus = std::stod(a.substr(9));
+      else if (a.rfind("--newton-rel=", 0) == 0)
+        options.newton_relative = std::stod(a.substr(13));
+      else if (a.rfind("--newton-abs=", 0) == 0)
+        options.newton_absolute = std::stod(a.substr(13));
+      else if (a.rfind("--cg-abs=", 0) == 0)
+        options.cg_absolute = std::stod(a.substr(9));
       else if (a == "--pmg")
         options.pmg = true;
       else if (a == "--outer=cg")
@@ -584,7 +600,8 @@ main(int argc, char *argv[])
                 << " [--mesh=file.msh] [--stretch=d or dx,dy,dz] [--no-predictor]"
                 << " [--cg-monitor=N] [--material=svk|ogden]"
                 << " [--ogden=mu1,alpha1,mu2,alpha2,kappa] [--pmg] [--outer=cg|fcg]"
-                << " [--coarse-tol=tol] [--smoothing-degree=k]" << std::endl;
+                << " [--coarse-tol=tol] [--smoothing-degree=k] [--youngs=E]"
+                << " [--newton-rel=tol] [--newton-abs=tol] [--cg-abs=tol]" << std::endl;
     return 1;
   };
 
@@ -608,6 +625,9 @@ main(int argc, char *argv[])
 
   if (options.material == "svk")
     {
+      const double E           = options.youngs_modulus;
+      const double lame_lambda = E * nu / ((1. + nu) * (1. - 2. * nu)),
+                   lame_mu     = E / (2. * (1. + nu));
       const Portable::SaintVenantKirchhoffMaterial<dim, Number> material{lame_lambda, lame_mu};
       return run_degree(material,
                         "SVK lambda=" + std::to_string(lame_lambda) +
